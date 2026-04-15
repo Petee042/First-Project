@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: two-page-website
+    runtime: node
+    plan: free
+    region: oregon
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - public/**
+        - server/**
+        - render.yaml
+    buildCommand: cd server && npm install
+    startCommand: cd server && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: two-page-website-db
+          property: connectionString
+
+databases:
+  - name: two-page-website-db
+    region: oregon
+    postgresMajorVersion: "17"
