@@ -8,10 +8,14 @@ function setCalendarMessage(text, isError) {
 
 function formatDate(iso) {
   if (!iso) return '-';
-  // For all-day dates (YYYY-MM-DD) show as-is, otherwise format as local date/time
-  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
   try {
-    return new Date(iso).toLocaleString();
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const day   = d.getDate();
+    const month = months[d.getMonth()];
+    const year  = d.getFullYear();
+    return day + ' ' + month + ' ' + year;
   } catch {
     return iso;
   }
