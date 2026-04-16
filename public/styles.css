@@ -1,0 +1,197 @@
+/* ── Reset & base ──────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background: #f0f2f5;
+  color: #1a1a2e;
+  min-height: 100vh;
+}
+
+/* ── Layout ───────────────────────────────────────────────── */
+.card-container {
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+  padding: 2.5rem 2rem;
+  width: 100%;
+  max-width: 420px;
+  margin: 5vh auto 0;
+}
+
+.card-container.wide {
+  max-width: 560px;
+}
+
+/* ── Site title ────────────────────────────────────────────── */
+.site-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #4361ee;
+  text-align: center;
+  margin-bottom: 1.5rem;
+  letter-spacing: -0.5px;
+}
+
+/* ── Tabs ─────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  border-bottom: 2px solid #e0e0e0;
+  margin-bottom: 1.75rem;
+}
+
+.tab {
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 0.65rem 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: #666;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.tab.active {
+  color: #4361ee;
+  border-bottom-color: #4361ee;
+}
+
+.tab:focus-visible {
+  outline: 2px solid #4361ee;
+  outline-offset: 2px;
+}
+
+/* ── Forms ────────────────────────────────────────────────── */
+.tab-panel.hidden { display: none; }
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1.1rem;
+}
+
+label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #444;
+}
+
+.hint {
+  font-weight: 400;
+  color: #888;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"] {
+  border: 1.5px solid #d0d0d0;
+  border-radius: 7px;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.95rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  outline: none;
+}
+
+input:focus {
+  border-color: #4361ee;
+  box-shadow: 0 0 0 3px rgba(67,97,238,0.15);
+}
+
+/* ── Buttons ──────────────────────────────────────────────── */
+.btn {
+  display: inline-block;
+  border: none;
+  border-radius: 7px;
+  padding: 0.65rem 1.4rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.btn.primary {
+  background: #4361ee;
+  color: #fff;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+.btn.primary:hover { background: #3451d1; }
+.btn.primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.btn.secondary {
+  background: transparent;
+  color: #4361ee;
+  border: 1.5px solid #4361ee;
+}
+
+.btn.secondary:hover { background: rgba(67,97,238,0.07); }
+
+/* ── Messages ─────────────────────────────────────────────── */
+.message {
+  font-size: 0.88rem;
+  min-height: 1.25rem;
+  margin-bottom: 0.3rem;
+  border-radius: 5px;
+  padding: 0.4rem 0.6rem;
+}
+
+.message.success { background: #d4edda; color: #155724; }
+.message.error   { background: #f8d7da; color: #721c24; }
+.message:empty   { background: transparent; }
+
+/* ── Top bar (protected page) ─────────────────────────────── */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+}
+
+/* ── Dashboard ────────────────────────────────────────────── */
+.dashboard {
+  padding: 2.5rem 1rem;
+}
+
+.dashboard h2 {
+  font-size: 1.35rem;
+  margin-bottom: 1.5rem;
+  color: #1a1a2e;
+}
+
+.user-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 1.75rem;
+}
+
+.user-table th,
+.user-table td {
+  text-align: left;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid #e8e8e8;
+  font-size: 0.95rem;
+}
+
+.user-table th {
+  width: 38%;
+  color: #666;
+  font-weight: 600;
+}
+
+.user-table td { color: #1a1a2e; }
+
+.coming-soon {
+  font-size: 1rem;
+  color: #555;
+  border-left: 3px solid #4361ee;
+  padding: 0.75rem 1rem;
+  background: #f4f6ff;
+  border-radius: 0 6px 6px 0;
+}

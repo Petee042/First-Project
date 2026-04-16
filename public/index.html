@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Welcome &mdash; Sign Up / Log In</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="card-container">
+    <h1 class="site-title">MyApp</h1>
+
+    <!-- Tab bar -->
+    <div class="tabs" role="tablist">
+      <button class="tab active" role="tab" aria-selected="true" data-tab="signup">Sign Up</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="login">Log In</button>
+    </div>
+
+    <!-- Sign-up form -->
+    <section id="signup" class="tab-panel" aria-label="Sign-up form">
+      <form id="signupForm" novalidate>
+        <div class="field">
+          <label for="su-username">Username</label>
+          <input type="text" id="su-username" name="username" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="su-email">Email</label>
+          <input type="email" id="su-email" name="email" autocomplete="email" required />
+        </div>
+        <div class="field">
+          <label for="su-password">Password <span class="hint">(min 8 characters)</span></label>
+          <input type="password" id="su-password" name="password" autocomplete="new-password" required minlength="8" />
+        </div>
+        <p id="signup-message" class="message" aria-live="polite"></p>
+        <button type="submit" class="btn primary">Create Account</button>
+      </form>
+    </section>
+
+    <!-- Log-in form -->
+    <section id="login" class="tab-panel hidden" aria-label="Log-in form">
+      <form id="loginForm" novalidate>
+        <div class="field">
+          <label for="li-email">Email</label>
+          <input type="email" id="li-email" name="email" autocomplete="email" required />
+        </div>
+        <div class="field">
+          <label for="li-password">Password</label>
+          <input type="password" id="li-password" name="password" autocomplete="current-password" required />
+        </div>
+        <p id="login-message" class="message" aria-live="polite"></p>
+        <button type="submit" class="btn primary">Log In</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>

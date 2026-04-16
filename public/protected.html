@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard &mdash; MyApp</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <span class="site-title">MyApp</span>
+    <button id="logoutBtn" class="btn secondary">Log Out</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide">
+      <h2>Welcome back, <span id="displayName"></span>!</h2>
+
+      <table class="user-table">
+        <tbody>
+          <tr>
+            <th>Username</th>
+            <td id="displayUsername"></td>
+          </tr>
+          <tr>
+            <th>Email</th>
+            <td id="displayEmail"></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p class="coming-soon">More content to follow.</p>
+    </div>
+  </main>
+
+  <script src="protected.js"></script>
+</body>
+</html>
