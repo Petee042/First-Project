@@ -75,7 +75,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     const { ok, data } = await postJSON('/api/login', { email, password });
     if (ok) {
       setMessage('login-message', data.message, false);
-      window.location.href = '/protected.html';
+      window.location.href = '/dashboard.html';
     } else {
       setMessage('login-message', data.error, true);
     }

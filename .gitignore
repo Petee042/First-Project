@@ -1,5 +1,6 @@
 server/node_modules/
 server/users.json
+server/listings.json
 .env
 .env.*
 .DS_Store

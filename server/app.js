@@ -12,6 +12,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const SALT_ROUNDS = 12;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'replace-this-secret-in-production';
 const usersFile = path.join(__dirname, 'users.json');
+const listingsFile = path.join(__dirname, 'listings.json');
 const usePostgres = Boolean(process.env.DATABASE_URL);
 
 const pool = usePostgres
@@ -35,11 +36,52 @@ function writeUsersToFile(users) {
   fs.writeFileSync(usersFile, JSON.stringify(users, null, 2), 'utf8');
 }
 
+function ensureLocalListingsStore() {
+  if (!fs.existsSync(listingsFile)) {
+    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [] }, null, 2), 'utf8');
+  }
+}
+
+function readListingsStore() {
+  ensureLocalListingsStore();
+  const content = fs.readFileSync(listingsFile, 'utf8');
+  const parsed = JSON.parse(content);
+  if (!parsed || !Array.isArray(parsed.listings) || !Array.isArray(parsed.feeds)) {
+    return { listings: [], feeds: [] };
+  }
+  return parsed;
+}
+
+function writeListingsStore(store) {
+  fs.writeFileSync(listingsFile, JSON.stringify(store, null, 2), 'utf8');
+}
+
+function normaliseCalendarUrl(rawUrl) {
+  const trimmed = String(rawUrl || '').trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return null;
+  }
+
+  return parsed.toString();
+}
+
 async function initializeUserStore() {
   if (!usePostgres) {
     if (!fs.existsSync(usersFile)) {
       fs.writeFileSync(usersFile, '[]', 'utf8');
     }
+    ensureLocalListingsStore();
     return;
   }
 
@@ -49,6 +91,26 @@ async function initializeUserStore() {
       username TEXT NOT NULL UNIQUE,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS listings (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (user_id, name)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS calendar_feeds (
+      id BIGSERIAL PRIMARY KEY,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      url TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
@@ -134,6 +196,237 @@ async function createUser(username, email, passwordHash) {
   );
 
   return result.rows[0];
+}
+
+async function getListingsForUser(userId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return store.listings
+      .filter((listing) => Number(listing.user_id) === Number(userId))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  }
+
+  const result = await pool.query(
+    'SELECT id, user_id, name, created_at FROM listings WHERE user_id = $1 ORDER BY name ASC',
+    [userId]
+  );
+  return result.rows;
+}
+
+async function getListingByIdForUser(listingId, userId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return store.listings.find(
+      (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
+    );
+  }
+
+  const result = await pool.query(
+    'SELECT id, user_id, name, created_at FROM listings WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [listingId, userId]
+  );
+  return result.rows[0];
+}
+
+async function createListingForUser(userId, name) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const alreadyExists = store.listings.some(
+      (listing) => Number(listing.user_id) === Number(userId) && listing.name.toLowerCase() === name.toLowerCase()
+    );
+
+    if (alreadyExists) {
+      return { error: 'A listing with this name already exists.' };
+    }
+
+    const nextId = store.listings.length
+      ? Math.max(...store.listings.map((listing) => Number(listing.id))) + 1
+      : 1;
+
+    const listing = {
+      id: nextId,
+      user_id: Number(userId),
+      name,
+      created_at: new Date().toISOString()
+    };
+
+    store.listings.push(listing);
+    writeListingsStore(store);
+    return { listing };
+  }
+
+  try {
+    const result = await pool.query(
+      'INSERT INTO listings (user_id, name) VALUES ($1, $2) RETURNING id, user_id, name, created_at',
+      [userId, name]
+    );
+    return { listing: result.rows[0] };
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return { error: 'A listing with this name already exists.' };
+    }
+    throw err;
+  }
+}
+
+async function updateListingNameForUser(listingId, userId, name) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const idx = store.listings.findIndex(
+      (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
+    );
+
+    if (idx === -1) {
+      return { error: 'Listing not found.' };
+    }
+
+    const duplicate = store.listings.some(
+      (listing) =>
+        Number(listing.user_id) === Number(userId) &&
+        Number(listing.id) !== Number(listingId) &&
+        listing.name.toLowerCase() === name.toLowerCase()
+    );
+
+    if (duplicate) {
+      return { error: 'A listing with this name already exists.' };
+    }
+
+    store.listings[idx].name = name;
+    writeListingsStore(store);
+    return { listing: store.listings[idx] };
+  }
+
+  try {
+    const result = await pool.query(
+      'UPDATE listings SET name = $1 WHERE id = $2 AND user_id = $3 RETURNING id, user_id, name, created_at',
+      [name, listingId, userId]
+    );
+
+    if (!result.rows[0]) {
+      return { error: 'Listing not found.' };
+    }
+    return { listing: result.rows[0] };
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return { error: 'A listing with this name already exists.' };
+    }
+    throw err;
+  }
+}
+
+async function getFeedsForListing(listingId, userId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const ownedListing = store.listings.find(
+      (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
+    );
+    if (!ownedListing) {
+      return null;
+    }
+
+    return store.feeds
+      .filter((feed) => Number(feed.listing_id) === Number(listingId))
+      .sort((a, b) => Number(a.id) - Number(b.id));
+  }
+
+  const listingResult = await pool.query(
+    'SELECT id FROM listings WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [listingId, userId]
+  );
+  if (!listingResult.rows[0]) {
+    return null;
+  }
+
+  const result = await pool.query(
+    'SELECT id, listing_id, label, url, created_at FROM calendar_feeds WHERE listing_id = $1 ORDER BY id ASC',
+    [listingId]
+  );
+  return result.rows;
+}
+
+async function createFeedForListing(listingId, userId, label, url) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const ownedListing = store.listings.find(
+      (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
+    );
+    if (!ownedListing) {
+      return { error: 'Listing not found.' };
+    }
+
+    const nextId = store.feeds.length
+      ? Math.max(...store.feeds.map((feed) => Number(feed.id))) + 1
+      : 1;
+
+    const feed = {
+      id: nextId,
+      listing_id: Number(listingId),
+      label,
+      url,
+      created_at: new Date().toISOString()
+    };
+
+    store.feeds.push(feed);
+    writeListingsStore(store);
+    return { feed };
+  }
+
+  const listingResult = await pool.query(
+    'SELECT id FROM listings WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [listingId, userId]
+  );
+  if (!listingResult.rows[0]) {
+    return { error: 'Listing not found.' };
+  }
+
+  const result = await pool.query(
+    'INSERT INTO calendar_feeds (listing_id, label, url) VALUES ($1, $2, $3) RETURNING id, listing_id, label, url, created_at',
+    [listingId, label, url]
+  );
+  return { feed: result.rows[0] };
+}
+
+async function updateFeedForListing(feedId, listingId, userId, label, url) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const ownedListing = store.listings.find(
+      (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
+    );
+    if (!ownedListing) {
+      return { error: 'Listing not found.' };
+    }
+
+    const idx = store.feeds.findIndex(
+      (feed) => Number(feed.id) === Number(feedId) && Number(feed.listing_id) === Number(listingId)
+    );
+    if (idx === -1) {
+      return { error: 'Feed not found.' };
+    }
+
+    store.feeds[idx].label = label;
+    store.feeds[idx].url = url;
+    writeListingsStore(store);
+    return { feed: store.feeds[idx] };
+  }
+
+  const listingResult = await pool.query(
+    'SELECT id FROM listings WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [listingId, userId]
+  );
+  if (!listingResult.rows[0]) {
+    return { error: 'Listing not found.' };
+  }
+
+  const result = await pool.query(
+    'UPDATE calendar_feeds SET label = $1, url = $2 WHERE id = $3 AND listing_id = $4 RETURNING id, listing_id, label, url, created_at',
+    [label, url, feedId, listingId]
+  );
+
+  if (!result.rows[0]) {
+    return { error: 'Feed not found.' };
+  }
+
+  return { feed: result.rows[0] };
 }
 
 function unfoldIcsLines(icsText) {
@@ -244,6 +537,36 @@ function parseIcsEvents(icsText) {
   }
 
   return events;
+}
+
+async function fetchEventsFromCalendarUrl(calendarUrl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const upstream = await fetch(calendarUrl, { signal: controller.signal });
+    if (!upstream.ok) {
+      return { error: 'Unable to fetch calendar feed.' };
+    }
+
+    const icsText = await upstream.text();
+    if (!icsText.includes('BEGIN:VCALENDAR')) {
+      return { error: 'URL did not return a valid ICS calendar.' };
+    }
+
+    const events = parseIcsEvents(icsText)
+      .filter((event) => event.start || event.end || event.title || event.description || event.location)
+      .slice(0, 500);
+
+    return { events };
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      return { error: 'Calendar request timed out.' };
+    }
+    return { error: 'Failed to load calendar entries.' };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ── Middleware ───────────────────────────────────────────────────────────────
@@ -360,49 +683,237 @@ app.get('/api/me', requireAuth, (req, res) => {
   });
 });
 
+// GET /api/listings — all listings for current user
+app.get('/api/listings', requireAuth, async (req, res) => {
+  try {
+    const listings = await getListingsForUser(req.session.userId);
+    return res.json({ listings });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load listings.' });
+  }
+});
+
+// POST /api/listings — create listing (unique name per user)
+app.post('/api/listings', requireAuth, async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) {
+    return res.status(400).json({ error: 'Listing name is required.' });
+  }
+
+  try {
+    const { listing, error } = await createListingForUser(req.session.userId, name);
+    if (error) {
+      return res.status(409).json({ error });
+    }
+    return res.status(201).json({ listing });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create listing.' });
+  }
+});
+
+// GET /api/listings/:listingId — get one listing for current user
+app.get('/api/listings/:listingId', requireAuth, async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.session.userId);
+    if (!listing) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+    return res.json({ listing });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load listing.' });
+  }
+});
+
+// PUT /api/listings/:listingId — rename listing
+app.put('/api/listings/:listingId', requireAuth, async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  const name = String(req.body.name || '').trim();
+
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+  if (!name) {
+    return res.status(400).json({ error: 'Listing name is required.' });
+  }
+
+  try {
+    const { listing, error } = await updateListingNameForUser(listingId, req.session.userId, name);
+    if (error === 'Listing not found.') {
+      return res.status(404).json({ error });
+    }
+    if (error) {
+      return res.status(409).json({ error });
+    }
+    return res.json({ listing });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to update listing.' });
+  }
+});
+
+// GET /api/listings/:listingId/feeds — feeds for a listing
+app.get('/api/listings/:listingId/feeds', requireAuth, async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+
+  try {
+    const feeds = await getFeedsForListing(listingId, req.session.userId);
+    if (feeds === null) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+    return res.json({ feeds });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load feeds.' });
+  }
+});
+
+// POST /api/listings/:listingId/feeds — add a feed
+app.post('/api/listings/:listingId/feeds', requireAuth, async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  const label = String(req.body.label || '').trim();
+  const url = normaliseCalendarUrl(req.body.url);
+
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+  if (!label) {
+    return res.status(400).json({ error: 'Feed label is required.' });
+  }
+  if (!url) {
+    return res.status(400).json({ error: 'Valid feed URL is required (http/https).' });
+  }
+
+  try {
+    const { feed, error } = await createFeedForListing(listingId, req.session.userId, label, url);
+    if (error) {
+      return res.status(404).json({ error });
+    }
+    return res.status(201).json({ feed });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create feed.' });
+  }
+});
+
+// PUT /api/listings/:listingId/feeds/:feedId — edit a feed
+app.put('/api/listings/:listingId/feeds/:feedId', requireAuth, async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  const feedId = Number(req.params.feedId);
+  const label = String(req.body.label || '').trim();
+  const url = normaliseCalendarUrl(req.body.url);
+
+  if (!Number.isInteger(listingId) || listingId <= 0 || !Number.isInteger(feedId) || feedId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing/feed id.' });
+  }
+  if (!label) {
+    return res.status(400).json({ error: 'Feed label is required.' });
+  }
+  if (!url) {
+    return res.status(400).json({ error: 'Valid feed URL is required (http/https).' });
+  }
+
+  try {
+    const { feed, error } = await updateFeedForListing(feedId, listingId, req.session.userId, label, url);
+    if (error === 'Listing not found.') {
+      return res.status(404).json({ error });
+    }
+    if (error === 'Feed not found.') {
+      return res.status(404).json({ error });
+    }
+    return res.json({ feed });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to update feed.' });
+  }
+});
+
+// GET /api/listings/:listingId/events — consolidated events from all listing feeds
+app.get('/api/listings/:listingId/events', requireAuth, async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.session.userId);
+    if (!listing) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const feeds = await getFeedsForListing(listingId, req.session.userId);
+    const safeFeeds = feeds || [];
+    if (!safeFeeds.length) {
+      return res.json({ listing, events: [], feedErrors: [] });
+    }
+
+    const results = await Promise.all(
+      safeFeeds.map(async (feed) => {
+        const fetched = await fetchEventsFromCalendarUrl(feed.url);
+        if (fetched.error) {
+          return { feedId: feed.id, source: feed.label, error: fetched.error, events: [] };
+        }
+
+        const events = fetched.events.map((event) => ({
+          source: feed.label,
+          start: event.start,
+          end: event.end,
+          title: event.title,
+          description: event.description,
+          location: event.location,
+          raw: event.raw
+        }));
+
+        return { feedId: feed.id, source: feed.label, error: null, events };
+      })
+    );
+
+    const feedErrors = results
+      .filter((result) => result.error)
+      .map((result) => ({ source: result.source, error: result.error }));
+
+    const events = results
+      .flatMap((result) => result.events)
+      .sort((a, b) => {
+        const aTime = a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
+        const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
+        return aTime - bTime;
+      });
+
+    return res.json({ listing, events, feedErrors });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load listing events.' });
+  }
+});
+
 // GET /api/calendar-entries?url=... — load and parse ICS events
 app.get('/api/calendar-entries', requireAuth, async (req, res) => {
-  const calendarUrl = String(req.query.url || '').trim();
+  const calendarUrl = normaliseCalendarUrl(req.query.url);
 
   if (!calendarUrl) {
-    return res.status(400).json({ error: 'Calendar URL is required.' });
-  }
-
-  let parsed;
-  try {
-    parsed = new URL(calendarUrl);
-  } catch {
-    return res.status(400).json({ error: 'Invalid calendar URL.' });
-  }
-
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    return res.status(400).json({ error: 'Calendar URL must use http or https.' });
+    return res.status(400).json({ error: 'Valid calendar URL is required (http/https).' });
   }
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    const upstream = await fetch(parsed.toString(), { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!upstream.ok) {
-      return res.status(400).json({ error: 'Unable to fetch calendar feed.' });
+    const fetched = await fetchEventsFromCalendarUrl(calendarUrl);
+    if (fetched.error) {
+      return res.status(400).json({ error: fetched.error });
     }
 
-    const icsText = await upstream.text();
-    if (!icsText.includes('BEGIN:VCALENDAR')) {
-      return res.status(400).json({ error: 'URL did not return a valid ICS calendar.' });
-    }
-
-    const events = parseIcsEvents(icsText)
-      .filter((event) => event.start || event.title || event.location)
-      .slice(0, 200);
-
+    const events = fetched.events;
     return res.json({ events });
   } catch (err) {
-    if (err && err.name === 'AbortError') {
-      return res.status(504).json({ error: 'Calendar request timed out.' });
-    }
     console.error('Calendar fetch error:', err);
     return res.status(500).json({ error: 'Failed to load calendar entries.' });
   }

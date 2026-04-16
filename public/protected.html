@@ -3,79 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dashboard &mdash; MyApp</title>
-  <link rel="stylesheet" href="styles.css" />
+  <title>Redirecting - MyApp</title>
+  <meta http-equiv="refresh" content="0; url=/dashboard.html" />
 </head>
 <body>
-  <header class="top-bar">
-    <span class="site-title">MyApp</span>
-    <button id="logoutBtn" class="btn secondary">Log Out</button>
-  </header>
-
-  <main class="dashboard">
-    <div class="card-container wide">
-      <h2>Welcome back, <span id="displayName"></span>!</h2>
-
-      <table class="user-table">
-        <tbody>
-          <tr>
-            <th>Username</th>
-            <td id="displayUsername"></td>
-          </tr>
-          <tr>
-            <th>Email</th>
-            <td id="displayEmail"></td>
-          </tr>
-        </tbody>
-      </table>
-
-      <section class="calendar-section">
-        <h3>Calendar Entries</h3>
-        <div class="calendar-sources">
-          <div class="calendar-source-row">
-            <label for="airbnbUrl">Airbnb</label>
-            <input
-              id="airbnbUrl"
-              type="url"
-              placeholder="Paste Airbnb ICS URL"
-              autocomplete="off"
-            />
-          </div>
-          <div class="calendar-source-row">
-            <label for="bookingUrl">Booking.com</label>
-            <input
-              id="bookingUrl"
-              type="url"
-              placeholder="Paste Booking.com ICS URL"
-              autocomplete="off"
-            />
-          </div>
-          <button id="loadCalendarBtn" class="btn primary calendar-btn" type="button">Load Calendars</button>
-        </div>
-        <p id="calendarMessage" class="message"></p>
-
-        <div class="table-wrap">
-          <table class="calendar-table" aria-label="Calendar entries">
-            <thead>
-              <tr>
-                <th>Source</th>
-                <th>Start</th>
-                <th>End</th>
-                <th>Title</th>
-                <th>Description</th>
-              </tr>
-            </thead>
-            <tbody id="calendarTableBody">
-              <tr>
-                <td colspan="5">No entries loaded yet.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </div>
-  </main>
-
-  <script src="protected.js"></script>
+  <p>Redirecting to your dashboard...</p>
+  <script>
+    window.location.replace('/dashboard.html');
+  </script>
 </body>
 </html>

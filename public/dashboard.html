@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Listings - MyApp</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <span class="site-title top-title">MyApp</span>
+    <button id="logoutBtn" class="btn secondary">Log Out</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide">
+      <h2>Your Listings</h2>
+      <p id="dashboardMessage" class="message"></p>
+
+      <div class="listings-block">
+        <table class="calendar-table" aria-label="Your listings">
+          <thead>
+            <tr>
+              <th>Listing Name</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="listingsTableBody">
+            <tr>
+              <td colspan="2">No listings yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <section class="listing-form-section">
+        <h3>Add New Listing</h3>
+        <form id="addListingForm" novalidate>
+          <div class="calendar-source-row">
+            <label for="listingName">Listing Name</label>
+            <input id="listingName" type="text" maxlength="120" required />
+          </div>
+          <button type="submit" class="btn primary calendar-btn">Add Listing</button>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
