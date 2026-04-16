@@ -205,13 +205,27 @@ input:focus {
   margin-bottom: 0.8rem;
 }
 
-.calendar-controls {
+.calendar-sources {
   display: flex;
+  flex-direction: column;
   gap: 0.6rem;
   margin-bottom: 0.75rem;
 }
 
-#calendarUrl {
+.calendar-source-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.calendar-source-row label {
+  width: 110px;
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.calendar-source-row input {
   flex: 1;
   min-width: 0;
 }
@@ -219,7 +233,7 @@ input:focus {
 .calendar-btn {
   width: auto;
   margin-top: 0;
-  white-space: nowrap;
+  align-self: flex-start;
 }
 
 .table-wrap {
@@ -245,9 +259,29 @@ input:focus {
   font-weight: 600;
 }
 
+.calendar-table tr:hover td {
+  background: #f4f6ff;
+  cursor: default;
+}
+
+.source-airbnb {
+  color: #ff5a5f;
+  font-weight: 600;
+}
+
+.source-bookingcom {
+  color: #003580;
+  font-weight: 600;
+}
+
 @media (max-width: 620px) {
-  .calendar-controls {
+  .calendar-source-row {
     flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .calendar-source-row label {
+    width: auto;
   }
 
   .calendar-btn {

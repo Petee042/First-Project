@@ -31,14 +31,26 @@
 
       <section class="calendar-section">
         <h3>Calendar Entries</h3>
-        <div class="calendar-controls">
-          <input
-            id="calendarUrl"
-            type="url"
-            placeholder="Paste public ICS calendar URL"
-            autocomplete="off"
-          />
-          <button id="loadCalendarBtn" class="btn primary calendar-btn" type="button">Load Calendar</button>
+        <div class="calendar-sources">
+          <div class="calendar-source-row">
+            <label for="airbnbUrl">Airbnb</label>
+            <input
+              id="airbnbUrl"
+              type="url"
+              placeholder="Paste Airbnb ICS URL"
+              autocomplete="off"
+            />
+          </div>
+          <div class="calendar-source-row">
+            <label for="bookingUrl">Booking.com</label>
+            <input
+              id="bookingUrl"
+              type="url"
+              placeholder="Paste Booking.com ICS URL"
+              autocomplete="off"
+            />
+          </div>
+          <button id="loadCalendarBtn" class="btn primary calendar-btn" type="button">Load Calendars</button>
         </div>
         <p id="calendarMessage" class="message"></p>
 
@@ -46,14 +58,16 @@
           <table class="calendar-table" aria-label="Calendar entries">
             <thead>
               <tr>
+                <th>Source</th>
                 <th>Start</th>
+                <th>End</th>
                 <th>Title</th>
-                <th>Location</th>
+                <th>Description</th>
               </tr>
             </thead>
             <tbody id="calendarTableBody">
               <tr>
-                <td colspan="3">No entries loaded yet.</td>
+                <td colspan="5">No entries loaded yet.</td>
               </tr>
             </tbody>
           </table>

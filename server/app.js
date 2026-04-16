@@ -199,16 +199,19 @@ function parseIcsEvents(icsText) {
 
   for (const line of lines) {
     if (line === 'BEGIN:VEVENT') {
-      current = {};
+      current = { raw: {} };
       continue;
     }
 
     if (line === 'END:VEVENT') {
       if (current) {
         events.push({
-          start: parseIcsDate(current.start),
-          title: current.title || '',
-          location: current.location || ''
+          start:       parseIcsDate(current.start),
+          end:         parseIcsDate(current.end),
+          title:       current.title || '',
+          description: current.description || '',
+          location:    current.location || '',
+          raw:         current.raw
         });
       }
       current = null;
@@ -219,10 +222,22 @@ function parseIcsEvents(icsText) {
       continue;
     }
 
+    // Store every property in raw using the property name before ':'  or ';'
+    const sepIdx = line.indexOf(':');
+    if (sepIdx !== -1) {
+      const key = line.slice(0, sepIdx).split(';')[0].trim();
+      const val = line.slice(sepIdx + 1).trim();
+      current.raw[key] = val;
+    }
+
     if (line.startsWith('DTSTART')) {
       current.start = line;
+    } else if (line.startsWith('DTEND')) {
+      current.end = line;
     } else if (line.startsWith('SUMMARY:')) {
       current.title = line.slice('SUMMARY:'.length).trim();
+    } else if (line.startsWith('DESCRIPTION:')) {
+      current.description = line.slice('DESCRIPTION:'.length).trim();
     } else if (line.startsWith('LOCATION:')) {
       current.location = line.slice('LOCATION:'.length).trim();
     }
