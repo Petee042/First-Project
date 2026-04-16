@@ -29,7 +29,36 @@
         </tbody>
       </table>
 
-      <p class="coming-soon">More content to follow.</p>
+      <section class="calendar-section">
+        <h3>Calendar Entries</h3>
+        <div class="calendar-controls">
+          <input
+            id="calendarUrl"
+            type="url"
+            placeholder="Paste public ICS calendar URL"
+            autocomplete="off"
+          />
+          <button id="loadCalendarBtn" class="btn primary calendar-btn" type="button">Load Calendar</button>
+        </div>
+        <p id="calendarMessage" class="message"></p>
+
+        <div class="table-wrap">
+          <table class="calendar-table" aria-label="Calendar entries">
+            <thead>
+              <tr>
+                <th>Start</th>
+                <th>Title</th>
+                <th>Location</th>
+              </tr>
+            </thead>
+            <tbody id="calendarTableBody">
+              <tr>
+                <td colspan="3">No entries loaded yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   </main>
 

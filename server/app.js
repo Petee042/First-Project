@@ -136,6 +136,101 @@ async function createUser(username, email, passwordHash) {
   return result.rows[0];
 }
 
+function unfoldIcsLines(icsText) {
+  const lines = icsText.replace(/\r/g, '').split('\n');
+  const unfolded = [];
+
+  for (const line of lines) {
+    if (!line) {
+      continue;
+    }
+
+    if ((line.startsWith(' ') || line.startsWith('\t')) && unfolded.length) {
+      unfolded[unfolded.length - 1] += line.trimStart();
+    } else {
+      unfolded.push(line);
+    }
+  }
+
+  return unfolded;
+}
+
+function parseIcsDate(rawValue) {
+  if (!rawValue) {
+    return null;
+  }
+
+  const value = rawValue.split(':').pop() || '';
+
+  if (/^\d{8}$/.test(value)) {
+    const year = value.slice(0, 4);
+    const month = value.slice(4, 6);
+    const day = value.slice(6, 8);
+    return `${year}-${month}-${day}`;
+  }
+
+  if (/^\d{8}T\d{6}Z$/.test(value)) {
+    const year = Number(value.slice(0, 4));
+    const month = Number(value.slice(4, 6)) - 1;
+    const day = Number(value.slice(6, 8));
+    const hour = Number(value.slice(9, 11));
+    const minute = Number(value.slice(11, 13));
+    const second = Number(value.slice(13, 15));
+    return new Date(Date.UTC(year, month, day, hour, minute, second)).toISOString();
+  }
+
+  if (/^\d{8}T\d{6}$/.test(value)) {
+    const year = Number(value.slice(0, 4));
+    const month = Number(value.slice(4, 6)) - 1;
+    const day = Number(value.slice(6, 8));
+    const hour = Number(value.slice(9, 11));
+    const minute = Number(value.slice(11, 13));
+    const second = Number(value.slice(13, 15));
+    return new Date(year, month, day, hour, minute, second).toISOString();
+  }
+
+  return value;
+}
+
+function parseIcsEvents(icsText) {
+  const lines = unfoldIcsLines(icsText);
+  const events = [];
+  let current = null;
+
+  for (const line of lines) {
+    if (line === 'BEGIN:VEVENT') {
+      current = {};
+      continue;
+    }
+
+    if (line === 'END:VEVENT') {
+      if (current) {
+        events.push({
+          start: parseIcsDate(current.start),
+          title: current.title || '',
+          location: current.location || ''
+        });
+      }
+      current = null;
+      continue;
+    }
+
+    if (!current) {
+      continue;
+    }
+
+    if (line.startsWith('DTSTART')) {
+      current.start = line;
+    } else if (line.startsWith('SUMMARY:')) {
+      current.title = line.slice('SUMMARY:'.length).trim();
+    } else if (line.startsWith('LOCATION:')) {
+      current.location = line.slice('LOCATION:'.length).trim();
+    }
+  }
+
+  return events;
+}
+
 // ── Middleware ───────────────────────────────────────────────────────────────
 if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
@@ -248,6 +343,54 @@ app.get('/api/me', requireAuth, (req, res) => {
     username: req.session.username,
     email: req.session.email
   });
+});
+
+// GET /api/calendar-entries?url=... — load and parse ICS events
+app.get('/api/calendar-entries', requireAuth, async (req, res) => {
+  const calendarUrl = String(req.query.url || '').trim();
+
+  if (!calendarUrl) {
+    return res.status(400).json({ error: 'Calendar URL is required.' });
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(calendarUrl);
+  } catch {
+    return res.status(400).json({ error: 'Invalid calendar URL.' });
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return res.status(400).json({ error: 'Calendar URL must use http or https.' });
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const upstream = await fetch(parsed.toString(), { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!upstream.ok) {
+      return res.status(400).json({ error: 'Unable to fetch calendar feed.' });
+    }
+
+    const icsText = await upstream.text();
+    if (!icsText.includes('BEGIN:VCALENDAR')) {
+      return res.status(400).json({ error: 'URL did not return a valid ICS calendar.' });
+    }
+
+    const events = parseIcsEvents(icsText)
+      .filter((event) => event.start || event.title || event.location)
+      .slice(0, 200);
+
+    return res.json({ events });
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      return res.status(504).json({ error: 'Calendar request timed out.' });
+    }
+    console.error('Calendar fetch error:', err);
+    return res.status(500).json({ error: 'Failed to load calendar entries.' });
+  }
 });
 
 // GET /health — simple health check for Render

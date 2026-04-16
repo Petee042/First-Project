@@ -195,3 +195,62 @@ input:focus {
   background: #f4f6ff;
   border-radius: 0 6px 6px 0;
 }
+
+.calendar-section {
+  margin-top: 1rem;
+}
+
+.calendar-section h3 {
+  font-size: 1.1rem;
+  margin-bottom: 0.8rem;
+}
+
+.calendar-controls {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+#calendarUrl {
+  flex: 1;
+  min-width: 0;
+}
+
+.calendar-btn {
+  width: auto;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.calendar-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.calendar-table th,
+.calendar-table td {
+  text-align: left;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid #e8e8e8;
+  font-size: 0.92rem;
+  vertical-align: top;
+}
+
+.calendar-table th {
+  color: #666;
+  font-weight: 600;
+}
+
+@media (max-width: 620px) {
+  .calendar-controls {
+    flex-direction: column;
+  }
+
+  .calendar-btn {
+    width: 100%;
+  }
+}
