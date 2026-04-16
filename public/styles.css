@@ -264,6 +264,14 @@ input:focus {
   cursor: default;
 }
 
+.calendar-table tr.conflict-row td {
+  background: #fff1f1;
+}
+
+.calendar-table tr.conflict-row:hover td {
+  background: #ffe3e3;
+}
+
 .source-airbnb {
   color: #ff5a5f;
   font-weight: 600;

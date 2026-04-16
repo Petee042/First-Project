@@ -28,6 +28,37 @@ function buildTooltip(event) {
     .join('\n');
 }
 
+function toEventTime(value, fallbackValue) {
+  const candidate = value || fallbackValue;
+  if (!candidate) return null;
+  const time = new Date(candidate).getTime();
+  return Number.isNaN(time) ? null : time;
+}
+
+function getOverlapFlags(events) {
+  const flags = new Array(events.length).fill(false);
+
+  for (let i = 0; i < events.length; i += 1) {
+    const aStart = toEventTime(events[i].start, events[i].end);
+    const aEnd = toEventTime(events[i].end, events[i].start);
+    if (aStart === null || aEnd === null) continue;
+
+    for (let j = i + 1; j < events.length; j += 1) {
+      const bStart = toEventTime(events[j].start, events[j].end);
+      const bEnd = toEventTime(events[j].end, events[j].start);
+      if (bStart === null || bEnd === null) continue;
+
+      // Overlap when each event starts before the other one ends.
+      if (aStart < bEnd && bStart < aEnd) {
+        flags[i] = true;
+        flags[j] = true;
+      }
+    }
+  }
+
+  return flags;
+}
+
 function renderCalendarRows(events) {
   const tbody = document.getElementById('calendarTableBody');
   tbody.innerHTML = '';
@@ -42,9 +73,14 @@ function renderCalendarRows(events) {
     return;
   }
 
-  events.forEach((event) => {
+  const overlapFlags = getOverlapFlags(events);
+
+  events.forEach((event, idx) => {
     const row = document.createElement('tr');
     row.title = buildTooltip(event);
+    if (overlapFlags[idx]) {
+      row.classList.add('conflict-row');
+    }
 
     const sourceCell = document.createElement('td');
     sourceCell.textContent = event.source || '-';
