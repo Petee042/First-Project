@@ -358,14 +358,15 @@ input:focus {
 }
 
 .reservation-calendar-wrap {
-  overflow-x: auto;
+  overflow-x: hidden;
 }
 
 .reservation-calendar {
   display: grid;
-  grid-template-columns: repeat(7, minmax(90px, 1fr));
-  gap: 0.45rem;
-  min-width: 690px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.3rem;
+  min-width: 0;
+  width: 100%;
 }
 
 .calendar-weekday {
@@ -379,11 +380,11 @@ input:focus {
   border: 1px solid #e5e8ef;
   border-radius: 8px;
   background: #fafbfe;
-  min-height: 84px;
-  padding: 0.38rem;
+  min-height: 68px;
+  padding: 0.28rem;
   display: flex;
   flex-direction: column;
-  gap: 0.28rem;
+  gap: 0.2rem;
 }
 
 .calendar-day-empty {
@@ -393,7 +394,7 @@ input:focus {
 }
 
 .calendar-day-number {
-  font-size: 0.82rem;
+  font-size: 0.75rem;
   font-weight: 700;
   color: #2e3350;
 }
