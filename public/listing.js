@@ -3,6 +3,220 @@
 const params = new URLSearchParams(window.location.search);
 const listingId = Number(params.get('id'));
 let currentFeeds = [];
+let currentEvents = [];
+let currentMonthDate = new Date();
+
+const sourceColorMap = {};
+const sourcePalette = ['#ff5a5f', '#003580', '#2a9d8f', '#e76f51', '#264653', '#f4a261', '#8a5cf6'];
+
+function normaliseSourceKey(source) {
+  return String(source || 'Unknown').trim().toLowerCase();
+}
+
+function getSourceColor(source) {
+  const key = normaliseSourceKey(source);
+  if (!sourceColorMap[key]) {
+    const idx = Object.keys(sourceColorMap).length % sourcePalette.length;
+    sourceColorMap[key] = sourcePalette[idx];
+  }
+  return sourceColorMap[key];
+}
+
+function pad2(n) {
+  return n < 10 ? '0' + n : String(n);
+}
+
+function keyFromUtcDate(date) {
+  return date.getUTCFullYear() + '-' + pad2(date.getUTCMonth() + 1) + '-' + pad2(date.getUTCDate());
+}
+
+function utcDateFromKey(key) {
+  const parts = key.split('-').map((v) => Number(v));
+  return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+}
+
+function addUtcDays(date, days) {
+  const copy = new Date(date.getTime());
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function toDateKey(value) {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return keyFromUtcDate(d);
+}
+
+function formatMonthLabel(date) {
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  return monthNames[date.getUTCMonth()] + ' ' + date.getUTCFullYear();
+}
+
+function monthStartUtc(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function buildDayIndex(events) {
+  const index = {};
+
+  function ensureDay(key) {
+    if (!index[key]) {
+      index[key] = {
+        stays: new Set(),
+        checkins: new Set(),
+        checkouts: new Set(),
+        events: [],
+        conflict: false
+      };
+    }
+    return index[key];
+  }
+
+  events.forEach((event) => {
+    const source = event.source || 'Unknown';
+    const startKey = toDateKey(event.start);
+    const rawEndKey = toDateKey(event.end);
+    if (!startKey) return;
+
+    const startDate = utcDateFromKey(startKey);
+    let endDate = rawEndKey ? utcDateFromKey(rawEndKey) : addUtcDays(startDate, 1);
+
+    if (endDate <= startDate) {
+      endDate = addUtcDays(startDate, 1);
+    }
+
+    ensureDay(startKey).checkins.add(source);
+    ensureDay(keyFromUtcDate(endDate)).checkouts.add(source);
+
+    for (let cursor = new Date(startDate.getTime()); cursor < endDate; cursor = addUtcDays(cursor, 1)) {
+      const day = ensureDay(keyFromUtcDate(cursor));
+      day.stays.add(source);
+      day.events.push(event);
+    }
+  });
+
+  Object.keys(index).forEach((key) => {
+    if (index[key].stays.size > 1) {
+      index[key].conflict = true;
+    }
+  });
+
+  return index;
+}
+
+function buildDayTooltip(dayEntry) {
+  if (!dayEntry || !dayEntry.events.length) return '';
+
+  return dayEntry.events.map((event) => {
+    const rawLines = Object.entries(event.raw || {}).map(([k, v]) => k + ': ' + v).join(' | ');
+    const title = event.title ? event.title : '(untitled)';
+    return (event.source || 'Unknown') + ' - ' + title + (rawLines ? ' - ' + rawLines : '');
+  }).join('\n');
+}
+
+function renderLegend(events) {
+  const legend = document.getElementById('calendarLegend');
+  legend.innerHTML = '';
+
+  const labels = new Set();
+  currentFeeds.forEach((feed) => labels.add(feed.label));
+  events.forEach((event) => labels.add(event.source || 'Unknown'));
+
+  if (!labels.size) {
+    legend.textContent = 'No feed sources yet.';
+    return;
+  }
+
+  Array.from(labels).forEach((label) => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+
+    const swatch = document.createElement('span');
+    swatch.className = 'legend-swatch';
+    swatch.style.backgroundColor = getSourceColor(label);
+
+    const text = document.createElement('span');
+    text.textContent = label;
+
+    item.appendChild(swatch);
+    item.appendChild(text);
+    legend.appendChild(item);
+  });
+}
+
+function renderReservationCalendar(events) {
+  const calendar = document.getElementById('reservationCalendar');
+  const monthLabel = document.getElementById('monthLabel');
+  const monthStart = monthStartUtc(currentMonthDate);
+  const dayIndex = buildDayIndex(events);
+
+  monthLabel.textContent = formatMonthLabel(monthStart);
+  calendar.innerHTML = '';
+
+  const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  weekdayNames.forEach((name) => {
+    const header = document.createElement('div');
+    header.className = 'calendar-weekday';
+    header.textContent = name;
+    calendar.appendChild(header);
+  });
+
+  const firstDayOfWeek = monthStart.getUTCDay();
+  const nextMonthStart = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1));
+  const daysInMonth = Math.round((nextMonthStart - monthStart) / 86400000);
+
+  for (let i = 0; i < firstDayOfWeek; i += 1) {
+    const emptyCell = document.createElement('div');
+    emptyCell.className = 'calendar-day calendar-day-empty';
+    calendar.appendChild(emptyCell);
+  }
+
+  for (let dayNum = 1; dayNum <= daysInMonth; dayNum += 1) {
+    const date = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), dayNum));
+    const key = keyFromUtcDate(date);
+    const dayEntry = dayIndex[key];
+
+    const cell = document.createElement('div');
+    cell.className = 'calendar-day';
+    if (dayEntry && dayEntry.conflict) {
+      cell.classList.add('calendar-day-conflict');
+    }
+    cell.title = buildDayTooltip(dayEntry);
+
+    const num = document.createElement('div');
+    num.className = 'calendar-day-number';
+    num.textContent = String(dayNum);
+    cell.appendChild(num);
+
+    const bars = document.createElement('div');
+    bars.className = 'calendar-day-bars';
+
+    if (dayEntry) {
+      if (dayEntry.checkouts.size && dayEntry.checkins.size) {
+        const checkoutSource = Array.from(dayEntry.checkouts)[0];
+        const checkinSource = Array.from(dayEntry.checkins)[0];
+        const transition = document.createElement('div');
+        transition.className = 'day-bar day-transition-bar';
+        transition.style.background = 'linear-gradient(90deg, ' + getSourceColor(checkoutSource) + ' 0 50%, ' + getSourceColor(checkinSource) + ' 50% 100%)';
+        bars.appendChild(transition);
+      }
+
+      Array.from(dayEntry.stays).forEach((source) => {
+        const bar = document.createElement('div');
+        bar.className = 'day-bar';
+        bar.style.backgroundColor = getSourceColor(source);
+        bar.title = source;
+        bars.appendChild(bar);
+      });
+    }
+
+    cell.appendChild(bars);
+    calendar.appendChild(cell);
+  }
+}
 
 function setListingMessage(text, isError) {
   const el = document.getElementById('listingMessage');
@@ -14,53 +228,6 @@ function setCalendarMessage(text, isError) {
   const el = document.getElementById('calendarMessage');
   el.textContent = text;
   el.className = text ? 'message ' + (isError ? 'error' : 'success') : 'message';
-}
-
-function formatDate(iso) {
-  if (!iso) return '-';
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return d.getDate() + ' ' + months[d.getMonth()] + ' ' + d.getFullYear();
-  } catch {
-    return iso;
-  }
-}
-
-function buildTooltip(event) {
-  const raw = event.raw || {};
-  return Object.entries(raw).map(([k, v]) => k + ': ' + v).join('\n');
-}
-
-function toEventTime(value, fallbackValue) {
-  const candidate = value || fallbackValue;
-  if (!candidate) return null;
-  const time = new Date(candidate).getTime();
-  return Number.isNaN(time) ? null : time;
-}
-
-function getOverlapFlags(events) {
-  const flags = new Array(events.length).fill(false);
-
-  for (let i = 0; i < events.length; i += 1) {
-    const aStart = toEventTime(events[i].start, events[i].end);
-    const aEnd = toEventTime(events[i].end, events[i].start);
-    if (aStart === null || aEnd === null) continue;
-
-    for (let j = i + 1; j < events.length; j += 1) {
-      const bStart = toEventTime(events[j].start, events[j].end);
-      const bEnd = toEventTime(events[j].end, events[j].start);
-      if (bStart === null || bEnd === null) continue;
-
-      if (aStart < bEnd && bStart < aEnd) {
-        flags[i] = true;
-        flags[j] = true;
-      }
-    }
-  }
-
-  return flags;
 }
 
 function renderFeeds(feeds) {
@@ -107,53 +274,8 @@ function renderFeeds(feeds) {
     row.appendChild(actionCell);
     tbody.appendChild(row);
   });
-}
 
-function renderEvents(events) {
-  const tbody = document.getElementById('calendarTableBody');
-  tbody.innerHTML = '';
-
-  if (!events.length) {
-    const row = document.createElement('tr');
-    const cell = document.createElement('td');
-    cell.colSpan = 5;
-    cell.textContent = 'No events found for this listing.';
-    row.appendChild(cell);
-    tbody.appendChild(row);
-    return;
-  }
-
-  const overlapFlags = getOverlapFlags(events);
-
-  events.forEach((event, idx) => {
-    const row = document.createElement('tr');
-    row.title = buildTooltip(event);
-    if (overlapFlags[idx]) {
-      row.classList.add('conflict-row');
-    }
-
-    const sourceCell = document.createElement('td');
-    sourceCell.textContent = event.source || '-';
-
-    const startCell = document.createElement('td');
-    startCell.textContent = formatDate(event.start);
-
-    const endCell = document.createElement('td');
-    endCell.textContent = formatDate(event.end);
-
-    const titleCell = document.createElement('td');
-    titleCell.textContent = event.title || '(untitled)';
-
-    const descCell = document.createElement('td');
-    descCell.textContent = event.description || '-';
-
-    row.appendChild(sourceCell);
-    row.appendChild(startCell);
-    row.appendChild(endCell);
-    row.appendChild(titleCell);
-    row.appendChild(descCell);
-    tbody.appendChild(row);
-  });
+  renderLegend(currentEvents);
 }
 
 function clearFeedEditMode() {
@@ -191,6 +313,7 @@ async function loadListing() {
   }
 
   renderFeeds(feedsData.feeds || []);
+  renderReservationCalendar(currentEvents);
 }
 
 async function updateCalendars() {
@@ -207,13 +330,15 @@ async function updateCalendars() {
       return;
     }
 
-    renderEvents(data.events || []);
+    currentEvents = data.events || [];
+    renderLegend(currentEvents);
+    renderReservationCalendar(currentEvents);
 
     if (data.feedErrors && data.feedErrors.length) {
       const parts = data.feedErrors.map((e) => e.source + ': ' + e.error);
       setCalendarMessage('Loaded with feed issues: ' + parts.join(' | '), true);
     } else {
-      setCalendarMessage('Loaded ' + (data.events || []).length + ' events.', false);
+      setCalendarMessage('Loaded ' + currentEvents.length + ' events.', false);
     }
   } catch {
     setCalendarMessage('Network error loading events.', true);
@@ -236,6 +361,8 @@ async function updateCalendars() {
     }
 
     await loadListing();
+    renderLegend(currentEvents);
+    renderReservationCalendar(currentEvents);
   } catch (err) {
     setListingMessage(err.message || 'Failed to load listing page.', true);
   }
@@ -323,6 +450,16 @@ document.getElementById('cancelFeedEditBtn').addEventListener('click', () => {
 });
 
 document.getElementById('updateCalendarsBtn').addEventListener('click', updateCalendars);
+
+document.getElementById('prevMonthBtn').addEventListener('click', () => {
+  currentMonthDate = new Date(Date.UTC(currentMonthDate.getUTCFullYear(), currentMonthDate.getUTCMonth() - 1, 1));
+  renderReservationCalendar(currentEvents);
+});
+
+document.getElementById('nextMonthBtn').addEventListener('click', () => {
+  currentMonthDate = new Date(Date.UTC(currentMonthDate.getUTCFullYear(), currentMonthDate.getUTCMonth() + 1, 1));
+  renderReservationCalendar(currentEvents);
+});
 
 document.getElementById('backBtn').addEventListener('click', () => {
   window.location.href = '/dashboard.html';

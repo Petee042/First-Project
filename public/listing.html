@@ -68,27 +68,20 @@
       </section>
 
       <section class="calendar-section">
-        <h3>Consolidated Events</h3>
+        <h3>Reservation Calendar</h3>
         <button type="button" id="updateCalendarsBtn" class="btn primary calendar-btn">Update Calendars</button>
         <p id="calendarMessage" class="message"></p>
 
-        <div class="table-wrap">
-          <table class="calendar-table" aria-label="Consolidated events">
-            <thead>
-              <tr>
-                <th>Source</th>
-                <th>Start</th>
-                <th>End</th>
-                <th>Title</th>
-                <th>Description</th>
-              </tr>
-            </thead>
-            <tbody id="calendarTableBody">
-              <tr>
-                <td colspan="5">Press Update Calendars to load events.</td>
-              </tr>
-            </tbody>
-          </table>
+        <div class="calendar-month-header">
+          <button type="button" id="prevMonthBtn" class="btn secondary">Prev</button>
+          <h4 id="monthLabel" class="month-label">Month</h4>
+          <button type="button" id="nextMonthBtn" class="btn secondary">Next</button>
+        </div>
+
+        <div id="calendarLegend" class="calendar-legend"></div>
+
+        <div class="reservation-calendar-wrap">
+          <div id="reservationCalendar" class="reservation-calendar" aria-label="Reservation month view"></div>
         </div>
       </section>
     </div>
