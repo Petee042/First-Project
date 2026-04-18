@@ -5,6 +5,7 @@ const listingId = Number(params.get('id'));
 let currentFeeds = [];
 let currentEvents = [];
 let currentMonthDate = new Date();
+let sourceColorPreferences = {};
 
 const sourceColorMap = {};
 const sourcePalette = ['#ff5a5f', '#003580', '#2a9d8f', '#e76f51', '#264653', '#f4a261', '#8a5cf6'];
@@ -13,13 +14,47 @@ function normaliseSourceKey(source) {
   return String(source || 'Unknown').trim().toLowerCase();
 }
 
+function normaliseHexColor(value) {
+  const color = String(value || '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toLowerCase() : null;
+}
+
+function setSourceColorPreferences(sources) {
+  sourceColorPreferences = {};
+  (sources || []).forEach((source) => {
+    const key = normaliseSourceKey(source.label);
+    const color = normaliseHexColor(source.color);
+    if (key && color) {
+      sourceColorPreferences[key] = color;
+    }
+  });
+}
+
 function getSourceColor(source) {
   const key = normaliseSourceKey(source);
+  if (sourceColorPreferences[key]) {
+    return sourceColorPreferences[key];
+  }
   if (!sourceColorMap[key]) {
     const idx = Object.keys(sourceColorMap).length % sourcePalette.length;
     sourceColorMap[key] = sourcePalette[idx];
   }
   return sourceColorMap[key];
+}
+
+async function loadSourceColorPreferences() {
+  const res = await fetch('/api/feed-sources');
+  if (res.status === 401) {
+    window.location.href = '/';
+    return;
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to load feed source colors.');
+  }
+
+  setSourceColorPreferences(data.sources || []);
 }
 
 function pad2(n) {
@@ -427,6 +462,8 @@ function clearFeedEditMode() {
 }
 
 async function loadListing() {
+  await loadSourceColorPreferences();
+
   const listingRes = await fetch('/api/listings/' + listingId);
   if (listingRes.status === 401) {
     window.location.href = '/';

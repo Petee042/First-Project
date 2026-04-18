@@ -14,6 +14,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || 'replace-this-secret-in-pro
 const usersFile = path.join(__dirname, 'users.json');
 const listingsFile = path.join(__dirname, 'listings.json');
 const usePostgres = Boolean(process.env.DATABASE_URL);
+const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 
 const pool = usePostgres
   ? new Pool({
@@ -38,7 +39,7 @@ function writeUsersToFile(users) {
 
 function ensureLocalListingsStore() {
   if (!fs.existsSync(listingsFile)) {
-    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [] }, null, 2), 'utf8');
+    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [] }, null, 2), 'utf8');
   }
 }
 
@@ -47,7 +48,10 @@ function readListingsStore() {
   const content = fs.readFileSync(listingsFile, 'utf8');
   const parsed = JSON.parse(content);
   if (!parsed || !Array.isArray(parsed.listings) || !Array.isArray(parsed.feeds)) {
-    return { listings: [], feeds: [] };
+    return { listings: [], feeds: [], source_colors: [] };
+  }
+  if (!Array.isArray(parsed.source_colors)) {
+    parsed.source_colors = [];
   }
   return parsed;
 }
@@ -74,6 +78,14 @@ function normaliseCalendarUrl(rawUrl) {
   }
 
   return parsed.toString();
+}
+
+function normaliseColor(value) {
+  const color = String(value || '').trim();
+  if (!HEX_COLOR_REGEX.test(color)) {
+    return null;
+  }
+  return color.toLowerCase();
 }
 
 async function initializeUserStore() {
@@ -112,6 +124,18 @@ async function initializeUserStore() {
       label TEXT NOT NULL,
       url TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS feed_source_colors (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      color TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (user_id, label)
     )
   `);
 
@@ -427,6 +451,115 @@ async function updateFeedForListing(feedId, listingId, userId, label, url) {
   }
 
   return { feed: result.rows[0] };
+}
+
+async function getFeedSourcesForUser(userId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const listingIds = new Set(
+      store.listings
+        .filter((listing) => Number(listing.user_id) === Number(userId))
+        .map((listing) => Number(listing.id))
+    );
+
+    const uniqueLabels = new Map();
+    store.feeds
+      .filter((feed) => listingIds.has(Number(feed.listing_id)))
+      .forEach((feed) => {
+        const label = String(feed.label || '').trim();
+        if (!label) return;
+        const key = label.toLowerCase();
+        if (!uniqueLabels.has(key)) {
+          uniqueLabels.set(key, label);
+        }
+      });
+
+    const colorByKey = new Map();
+    store.source_colors
+      .filter((row) => Number(row.user_id) === Number(userId))
+      .forEach((row) => {
+        const label = String(row.label || '').trim();
+        const color = normaliseColor(row.color);
+        if (!label || !color) return;
+        colorByKey.set(label.toLowerCase(), color);
+      });
+
+    return Array.from(uniqueLabels.entries())
+      .map(([key, label]) => ({ label, color: colorByKey.get(key) || null }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  const labelsResult = await pool.query(
+    `
+      SELECT DISTINCT cf.label AS label
+      FROM listings l
+      INNER JOIN calendar_feeds cf ON cf.listing_id = l.id
+      WHERE l.user_id = $1
+      ORDER BY cf.label ASC
+    `,
+    [userId]
+  );
+
+  const colorsResult = await pool.query(
+    'SELECT label, color FROM feed_source_colors WHERE user_id = $1',
+    [userId]
+  );
+
+  const colorByKey = new Map();
+  colorsResult.rows.forEach((row) => {
+    const label = String(row.label || '').trim();
+    const color = normaliseColor(row.color);
+    if (!label || !color) return;
+    colorByKey.set(label.toLowerCase(), color);
+  });
+
+  return labelsResult.rows.map((row) => {
+    const label = String(row.label || '').trim();
+    return {
+      label,
+      color: colorByKey.get(label.toLowerCase()) || null
+    };
+  });
+}
+
+async function upsertFeedSourceColorForUser(userId, label, color) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const key = label.toLowerCase();
+    const idx = store.source_colors.findIndex(
+      (row) => Number(row.user_id) === Number(userId) && String(row.label || '').trim().toLowerCase() === key
+    );
+
+    if (idx >= 0) {
+      store.source_colors[idx].label = label;
+      store.source_colors[idx].color = color;
+      store.source_colors[idx].updated_at = new Date().toISOString();
+    } else {
+      store.source_colors.push({
+        user_id: Number(userId),
+        label,
+        color,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+    }
+
+    writeListingsStore(store);
+    return { label, color };
+  }
+
+  const result = await pool.query(
+    `
+      INSERT INTO feed_source_colors (user_id, label, color)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (user_id, label)
+      DO UPDATE SET color = EXCLUDED.color, updated_at = CURRENT_TIMESTAMP
+      RETURNING label, color
+    `,
+    [userId, label, color]
+  );
+
+  return result.rows[0];
 }
 
 function unfoldIcsLines(icsText) {
@@ -775,6 +908,44 @@ app.get('/api/listings/:listingId/feeds', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load feeds.' });
+  }
+});
+
+// GET /api/feed-sources — all configured feed source labels + chosen colors
+app.get('/api/feed-sources', requireAuth, async (req, res) => {
+  try {
+    const sources = await getFeedSourcesForUser(req.session.userId);
+    return res.json({ sources });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load feed sources.' });
+  }
+});
+
+// PUT /api/feed-sources/color — set color for one feed source label
+app.put('/api/feed-sources/color', requireAuth, async (req, res) => {
+  const label = String(req.body.label || '').trim();
+  const color = normaliseColor(req.body.color);
+
+  if (!label) {
+    return res.status(400).json({ error: 'Feed source label is required.' });
+  }
+  if (!color) {
+    return res.status(400).json({ error: 'Valid color is required (#RRGGBB).' });
+  }
+
+  try {
+    const sources = await getFeedSourcesForUser(req.session.userId);
+    const exists = sources.some((source) => source.label.toLowerCase() === label.toLowerCase());
+    if (!exists) {
+      return res.status(404).json({ error: 'Feed source not found.' });
+    }
+
+    const saved = await upsertFeedSourceColorForUser(req.session.userId, label, color);
+    return res.json({ source: saved });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to save source color.' });
   }
 });
 

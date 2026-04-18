@@ -88,7 +88,8 @@ label {
 input[type="text"],
 input[type="email"],
 input[type="password"],
-input[type="url"] {
+input[type="url"],
+select {
   border: 1.5px solid #d0d0d0;
   border-radius: 7px;
   padding: 0.6rem 0.85rem;
@@ -98,6 +99,11 @@ input[type="url"] {
 }
 
 input:focus {
+  border-color: #4361ee;
+  box-shadow: 0 0 0 3px rgba(67,97,238,0.15);
+}
+
+select:focus {
   border-color: #4361ee;
   box-shadow: 0 0 0 3px rgba(67,97,238,0.15);
 }
@@ -316,6 +322,25 @@ input:focus {
   display: flex;
   gap: 0.6rem;
   margin-top: 0.35rem;
+}
+
+.source-color-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.source-color-select {
+  min-width: 120px;
+  padding-right: 1.9rem;
+}
+
+.source-color-preview {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
 }
 
 .feed-actions .btn {
