@@ -1,5 +1,7 @@
 'use strict';
 
+const LAST_LOGIN_EMAIL_KEY = 'lastLoginEmail';
+
 // ── Tab switching ────────────────────────────────────────────
 document.querySelectorAll('.tab').forEach(tab => {
   tab.addEventListener('click', () => {
@@ -22,6 +24,28 @@ function setMessage(id, text, isError) {
   el.className = 'message ' + (isError ? 'error' : 'success');
 }
 
+function rememberLoginEmail(email) {
+  try {
+    localStorage.setItem(LAST_LOGIN_EMAIL_KEY, email);
+  } catch {
+    // Ignore storage failures (private mode, disabled storage, etc.)
+  }
+}
+
+function prefillRememberedLoginEmail() {
+  try {
+    const remembered = localStorage.getItem(LAST_LOGIN_EMAIL_KEY);
+    if (!remembered) return;
+
+    const emailInput = document.getElementById('li-email');
+    emailInput.value = remembered;
+    // Show login tab when we have remembered credentials context.
+    document.querySelector('[data-tab="login"]').click();
+  } catch {
+    // Ignore storage read failures
+  }
+}
+
 async function postJSON(url, data) {
   const res = await fetch(url, {
     method: 'POST',
@@ -31,6 +55,8 @@ async function postJSON(url, data) {
   const json = await res.json();
   return { ok: res.ok, data: json };
 }
+
+prefillRememberedLoginEmail();
 
 // ── Signup ───────────────────────────────────────────────────
 document.getElementById('signupForm').addEventListener('submit', async (e) => {
@@ -51,6 +77,7 @@ document.getElementById('signupForm').addEventListener('submit', async (e) => {
       setTimeout(() => {
         document.querySelector('[data-tab="login"]').click();
         document.getElementById('li-email').value = email;
+        rememberLoginEmail(email);
       }, 1200);
     } else {
       setMessage('signup-message', data.error, true);
@@ -74,6 +101,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
   try {
     const { ok, data } = await postJSON('/api/login', { email, password });
     if (ok) {
+      rememberLoginEmail(email);
       setMessage('login-message', data.message, false);
       window.location.href = '/dashboard.html';
     } else {
