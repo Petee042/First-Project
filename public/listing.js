@@ -215,6 +215,12 @@ function renderReservationCalendar(events) {
   calendar.innerHTML = '';
 
   const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  const corner = document.createElement('div');
+  corner.className = 'calendar-weekday calendar-weekday-corner';
+  corner.textContent = 'Channels';
+  calendar.appendChild(corner);
+
   weekdayNames.forEach((name) => {
     const header = document.createElement('div');
     header.className = 'calendar-weekday';
@@ -226,83 +232,122 @@ function renderReservationCalendar(events) {
   const nextMonthStart = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1));
   const daysInMonth = Math.round((nextMonthStart - monthStart) / 86400000);
 
+  const dayNumbers = [];
   for (let i = 0; i < firstDayOfWeek; i += 1) {
-    const emptyCell = document.createElement('div');
-    emptyCell.className = 'calendar-day calendar-day-empty';
-    calendar.appendChild(emptyCell);
+    dayNumbers.push(null);
   }
 
   for (let dayNum = 1; dayNum <= daysInMonth; dayNum += 1) {
-    const date = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), dayNum));
-    const key = keyFromUtcDate(date);
-    const dayEntry = dayIndex[key];
+    dayNumbers.push(dayNum);
+  }
 
-    const cell = document.createElement('div');
-    cell.className = 'calendar-day';
-    if (dayEntry && dayEntry.conflict) {
-      cell.classList.add('calendar-day-conflict');
-    }
-    cell.title = buildDayTooltip(dayEntry);
+  while (dayNumbers.length % 7 !== 0) {
+    dayNumbers.push(null);
+  }
 
-    const num = document.createElement('div');
-    num.className = 'calendar-day-number';
-    num.textContent = String(dayNum);
-    cell.appendChild(num);
+  const daySources = sources.length ? sources : ['Unknown'];
 
-    const bars = document.createElement('div');
-    bars.className = 'calendar-day-bars';
-
-    const daySources = sources.length
-      ? sources
-      : (dayEntry ? Array.from(dayEntry.stays) : []);
+  for (let weekStart = 0; weekStart < dayNumbers.length; weekStart += 7) {
+    const labelsCell = document.createElement('div');
+    labelsCell.className = 'calendar-channel-labels';
 
     daySources.forEach((source) => {
-      const slot = document.createElement('div');
-      slot.className = 'day-bar-slot';
+      const row = document.createElement('div');
+      row.className = 'calendar-channel-label-row';
 
-      const bar = document.createElement('div');
-      bar.className = 'day-bar';
+      const swatch = document.createElement('span');
+      swatch.className = 'calendar-channel-label-swatch';
+      swatch.style.backgroundColor = getSourceColor(source);
 
-      if (!dayEntry) {
-        bar.classList.add('day-bar-empty');
-        slot.appendChild(bar);
-        bars.appendChild(slot);
-        return;
-      }
+      const text = document.createElement('span');
+      text.className = 'calendar-channel-label-text';
+      text.textContent = source;
+      text.title = source;
 
-      const hasCheckout = dayEntry.checkouts.has(source);
-      const hasCheckin = dayEntry.checkins.has(source);
-      const hasStay = dayEntry.stays.has(source);
-      const color = getSourceColor(source);
-      const transparentStop = color.length === 7
-        ? color + '00'
-        : 'rgba(0,0,0,0)';
-
-      if (hasCheckout && hasCheckin) {
-        bar.classList.add('day-transition-bar');
-        bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + color + ' 50% 100%)';
-        bar.title = buildBarTooltip((dayEntry.checkoutEventsBySource[source] || []).concat(dayEntry.checkinEventsBySource[source] || []));
-      } else if (hasCheckout) {
-        bar.classList.add('day-transition-bar');
-        bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + transparentStop + ' 50% 100%)';
-        bar.title = buildBarTooltip(dayEntry.checkoutEventsBySource[source] || []);
-      } else if (hasCheckin) {
-        bar.classList.add('day-transition-bar');
-        bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 50%, ' + color + ' 50% 100%)';
-        bar.title = buildBarTooltip(dayEntry.checkinEventsBySource[source] || []);
-      } else if (hasStay) {
-        bar.style.backgroundColor = color;
-        bar.title = buildBarTooltip(dayEntry.stayEventsBySource[source] || []);
-      } else {
-        bar.classList.add('day-bar-empty');
-      }
-
-      slot.appendChild(bar);
-      bars.appendChild(slot);
+      row.appendChild(swatch);
+      row.appendChild(text);
+      labelsCell.appendChild(row);
     });
 
-    cell.appendChild(bars);
-    calendar.appendChild(cell);
+    calendar.appendChild(labelsCell);
+
+    for (let dayOffset = 0; dayOffset < 7; dayOffset += 1) {
+      const dayNum = dayNumbers[weekStart + dayOffset];
+
+      if (dayNum === null) {
+        const emptyCell = document.createElement('div');
+        emptyCell.className = 'calendar-day calendar-day-empty';
+        calendar.appendChild(emptyCell);
+        continue;
+      }
+
+      const date = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), dayNum));
+      const key = keyFromUtcDate(date);
+      const dayEntry = dayIndex[key];
+
+      const cell = document.createElement('div');
+      cell.className = 'calendar-day';
+      if (dayEntry && dayEntry.conflict) {
+        cell.classList.add('calendar-day-conflict');
+      }
+      cell.title = buildDayTooltip(dayEntry);
+
+      const num = document.createElement('div');
+      num.className = 'calendar-day-number';
+      num.textContent = String(dayNum);
+      cell.appendChild(num);
+
+      const bars = document.createElement('div');
+      bars.className = 'calendar-day-bars';
+
+      daySources.forEach((source) => {
+        const slot = document.createElement('div');
+        slot.className = 'day-bar-slot';
+
+        const bar = document.createElement('div');
+        bar.className = 'day-bar';
+
+        if (!dayEntry) {
+          bar.classList.add('day-bar-empty');
+          slot.appendChild(bar);
+          bars.appendChild(slot);
+          return;
+        }
+
+        const hasCheckout = dayEntry.checkouts.has(source);
+        const hasCheckin = dayEntry.checkins.has(source);
+        const hasStay = dayEntry.stays.has(source);
+        const color = getSourceColor(source);
+        const transparentStop = color.length === 7
+          ? color + '00'
+          : 'rgba(0,0,0,0)';
+
+        if (hasCheckout && hasCheckin) {
+          bar.classList.add('day-transition-bar');
+          bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + color + ' 50% 100%)';
+          bar.title = buildBarTooltip((dayEntry.checkoutEventsBySource[source] || []).concat(dayEntry.checkinEventsBySource[source] || []));
+        } else if (hasCheckout) {
+          bar.classList.add('day-transition-bar');
+          bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + transparentStop + ' 50% 100%)';
+          bar.title = buildBarTooltip(dayEntry.checkoutEventsBySource[source] || []);
+        } else if (hasCheckin) {
+          bar.classList.add('day-transition-bar');
+          bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 50%, ' + color + ' 50% 100%)';
+          bar.title = buildBarTooltip(dayEntry.checkinEventsBySource[source] || []);
+        } else if (hasStay) {
+          bar.style.backgroundColor = color;
+          bar.title = buildBarTooltip(dayEntry.stayEventsBySource[source] || []);
+        } else {
+          bar.classList.add('day-bar-empty');
+        }
+
+        slot.appendChild(bar);
+        bars.appendChild(slot);
+      });
+
+      cell.appendChild(bars);
+      calendar.appendChild(cell);
+    }
   }
 }
 

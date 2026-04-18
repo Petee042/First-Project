@@ -363,7 +363,7 @@ input:focus {
 
 .reservation-calendar {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: minmax(88px, 0.95fr) repeat(7, minmax(0, 1fr));
   gap: 0.3rem;
   min-width: 0;
   width: 100%;
@@ -374,6 +374,43 @@ input:focus {
   font-weight: 700;
   color: #666;
   padding: 0.2rem 0.1rem;
+}
+
+.calendar-weekday-corner {
+  color: #4f5878;
+}
+
+.calendar-channel-labels {
+  border: 1px solid #e5e8ef;
+  border-radius: 8px;
+  background: #f4f6fb;
+  min-height: 68px;
+  padding: 0.28rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.calendar-channel-label-row {
+  min-height: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.calendar-channel-label-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.calendar-channel-label-text {
+  font-size: 0.65rem;
+  color: #2e3350;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .calendar-day {
@@ -456,5 +493,13 @@ input:focus {
 
   .month-label {
     width: 100%;
+  }
+
+  .reservation-calendar {
+    grid-template-columns: minmax(72px, 0.85fr) repeat(7, minmax(0, 1fr));
+  }
+
+  .calendar-channel-label-text {
+    font-size: 0.6rem;
   }
 }
