@@ -55,6 +55,29 @@ function formatMonthLabel(date) {
   return monthNames[date.getUTCMonth()] + ' ' + date.getUTCFullYear();
 }
 
+function formatDateKeyForTooltip(key) {
+  if (!key) return 'Unknown';
+  const date = utcDateFromKey(key);
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return date.getUTCDate() + ' ' + monthNames[date.getUTCMonth()] + ' ' + date.getUTCFullYear();
+}
+
+function getEventSummary(event) {
+  return event.title || (event.raw && event.raw.SUMMARY) || '(untitled)';
+}
+
+function buildBarTooltip(events) {
+  if (!events || !events.length) return '';
+
+  return events.map((event) => {
+    const checkin = formatDateKeyForTooltip(toDateKey(event.start));
+    const checkout = formatDateKeyForTooltip(toDateKey(event.end));
+    return 'Summary: ' + getEventSummary(event)
+      + '\nCheck-in: ' + checkin
+      + '\nCheck-out: ' + checkout;
+  }).join('\n\n');
+}
+
 function monthStartUtc(date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 }
@@ -68,11 +91,21 @@ function buildDayIndex(events) {
         stays: new Set(),
         checkins: new Set(),
         checkouts: new Set(),
+        stayEventsBySource: {},
+        checkinEventsBySource: {},
+        checkoutEventsBySource: {},
         events: [],
         conflict: false
       };
     }
     return index[key];
+  }
+
+  function addSourceEvent(day, fieldName, source, event) {
+    if (!day[fieldName][source]) {
+      day[fieldName][source] = [];
+    }
+    day[fieldName][source].push(event);
   }
 
   events.forEach((event) => {
@@ -88,13 +121,20 @@ function buildDayIndex(events) {
       endDate = addUtcDays(startDate, 1);
     }
 
-    ensureDay(startKey).checkins.add(source);
-    ensureDay(keyFromUtcDate(endDate)).checkouts.add(source);
+    const checkinDay = ensureDay(startKey);
+    checkinDay.checkins.add(source);
+    addSourceEvent(checkinDay, 'checkinEventsBySource', source, event);
+
+    const checkoutKey = keyFromUtcDate(endDate);
+    const checkoutDay = ensureDay(checkoutKey);
+    checkoutDay.checkouts.add(source);
+    addSourceEvent(checkoutDay, 'checkoutEventsBySource', source, event);
 
     for (let cursor = new Date(startDate.getTime()); cursor < endDate; cursor = addUtcDays(cursor, 1)) {
       const day = ensureDay(keyFromUtcDate(cursor));
       day.stays.add(source);
       day.events.push(event);
+      addSourceEvent(day, 'stayEventsBySource', source, event);
     }
   });
 
@@ -204,6 +244,9 @@ function renderReservationCalendar(events) {
         const transition = document.createElement('div');
         transition.className = 'day-bar day-transition-bar';
         transition.style.background = 'linear-gradient(90deg, ' + getSourceColor(checkoutSource) + ' 0 50%, ' + getSourceColor(checkinSource) + ' 50% 100%)';
+        const checkoutEvents = dayEntry.checkoutEventsBySource[checkoutSource] || [];
+        const checkinEvents = dayEntry.checkinEventsBySource[checkinSource] || [];
+        transition.title = buildBarTooltip(checkoutEvents.concat(checkinEvents));
         bars.appendChild(transition);
         transitionSources.add(checkoutSource);
         transitionSources.add(checkinSource);
@@ -218,7 +261,21 @@ function renderReservationCalendar(events) {
           const bar = document.createElement('div');
           bar.className = 'day-bar day-transition-bar';
           bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + transparentStop + ' 50% 100%)';
-          bar.title = source + ' (checkout)';
+          bar.title = buildBarTooltip(dayEntry.checkoutEventsBySource[source] || []);
+          bars.appendChild(bar);
+          transitionSources.add(source);
+        });
+      } else if (dayEntry.checkins.size && !dayEntry.checkouts.size) {
+        // Check-in only: left half transparent, right half coloured
+        Array.from(dayEntry.checkins).forEach((source) => {
+          const color = getSourceColor(source);
+          const transparentStop = color.length === 7
+            ? color + '00'
+            : 'rgba(0,0,0,0)';
+          const bar = document.createElement('div');
+          bar.className = 'day-bar day-transition-bar';
+          bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 50%, ' + color + ' 50% 100%)';
+          bar.title = buildBarTooltip(dayEntry.checkinEventsBySource[source] || []);
           bars.appendChild(bar);
           transitionSources.add(source);
         });
@@ -231,7 +288,7 @@ function renderReservationCalendar(events) {
           const bar = document.createElement('div');
           bar.className = 'day-bar';
           bar.style.backgroundColor = getSourceColor(source);
-          bar.title = source;
+          bar.title = buildBarTooltip(dayEntry.stayEventsBySource[source] || []);
           bars.appendChild(bar);
         });
     }
