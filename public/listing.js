@@ -195,6 +195,8 @@ function renderReservationCalendar(events) {
     bars.className = 'calendar-day-bars';
 
     if (dayEntry) {
+      const transitionSources = new Set();
+
       if (dayEntry.checkouts.size && dayEntry.checkins.size) {
         const checkoutSource = Array.from(dayEntry.checkouts)[0];
         const checkinSource = Array.from(dayEntry.checkins)[0];
@@ -202,15 +204,20 @@ function renderReservationCalendar(events) {
         transition.className = 'day-bar day-transition-bar';
         transition.style.background = 'linear-gradient(90deg, ' + getSourceColor(checkoutSource) + ' 0 50%, ' + getSourceColor(checkinSource) + ' 50% 100%)';
         bars.appendChild(transition);
+        transitionSources.add(checkoutSource);
+        transitionSources.add(checkinSource);
       }
 
-      Array.from(dayEntry.stays).forEach((source) => {
-        const bar = document.createElement('div');
-        bar.className = 'day-bar';
-        bar.style.backgroundColor = getSourceColor(source);
-        bar.title = source;
-        bars.appendChild(bar);
-      });
+      // Skip stay bars for sources already shown in the transition bar
+      Array.from(dayEntry.stays)
+        .filter((source) => !transitionSources.has(source))
+        .forEach((source) => {
+          const bar = document.createElement('div');
+          bar.className = 'day-bar';
+          bar.style.backgroundColor = getSourceColor(source);
+          bar.title = source;
+          bars.appendChild(bar);
+        });
     }
 
     cell.appendChild(bars);
