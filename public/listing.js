@@ -198,6 +198,7 @@ function renderReservationCalendar(events) {
       const transitionSources = new Set();
 
       if (dayEntry.checkouts.size && dayEntry.checkins.size) {
+        // Same-day checkout + checkin: split two-colour bar
         const checkoutSource = Array.from(dayEntry.checkouts)[0];
         const checkinSource = Array.from(dayEntry.checkins)[0];
         const transition = document.createElement('div');
@@ -206,6 +207,16 @@ function renderReservationCalendar(events) {
         bars.appendChild(transition);
         transitionSources.add(checkoutSource);
         transitionSources.add(checkinSource);
+      } else if (dayEntry.checkouts.size && !dayEntry.checkins.size) {
+        // Checkout only: left half bar, right half transparent
+        Array.from(dayEntry.checkouts).forEach((source) => {
+          const bar = document.createElement('div');
+          bar.className = 'day-bar day-transition-bar';
+          bar.style.background = 'linear-gradient(90deg, ' + getSourceColor(source) + ' 0 50%, transparent 50% 100%)';
+          bar.title = source + ' (checkout)';
+          bars.appendChild(bar);
+          transitionSources.add(source);
+        });
       }
 
       // Skip stay bars for sources already shown in the transition bar
