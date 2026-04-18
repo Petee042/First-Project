@@ -187,11 +187,29 @@ function renderLegend(events) {
   });
 }
 
+function getCalendarSources(events) {
+  const sources = [];
+  const seen = new Set();
+
+  function addSource(source) {
+    const label = String(source || 'Unknown').trim() || 'Unknown';
+    const key = normaliseSourceKey(label);
+    if (seen.has(key)) return;
+    seen.add(key);
+    sources.push(label);
+  }
+
+  currentFeeds.forEach((feed) => addSource(feed.label));
+  events.forEach((event) => addSource(event.source || 'Unknown'));
+  return sources;
+}
+
 function renderReservationCalendar(events) {
   const calendar = document.getElementById('reservationCalendar');
   const monthLabel = document.getElementById('monthLabel');
   const monthStart = monthStartUtc(currentMonthDate);
   const dayIndex = buildDayIndex(events);
+  const sources = getCalendarSources(events);
 
   monthLabel.textContent = formatMonthLabel(monthStart);
   calendar.innerHTML = '';
@@ -234,64 +252,54 @@ function renderReservationCalendar(events) {
     const bars = document.createElement('div');
     bars.className = 'calendar-day-bars';
 
-    if (dayEntry) {
-      const transitionSources = new Set();
+    const daySources = sources.length
+      ? sources
+      : (dayEntry ? Array.from(dayEntry.stays) : []);
 
-      if (dayEntry.checkouts.size && dayEntry.checkins.size) {
-        // Same-day checkout + checkin: split two-colour bar
-        const checkoutSource = Array.from(dayEntry.checkouts)[0];
-        const checkinSource = Array.from(dayEntry.checkins)[0];
-        const transition = document.createElement('div');
-        transition.className = 'day-bar day-transition-bar';
-        transition.style.background = 'linear-gradient(90deg, ' + getSourceColor(checkoutSource) + ' 0 50%, ' + getSourceColor(checkinSource) + ' 50% 100%)';
-        const checkoutEvents = dayEntry.checkoutEventsBySource[checkoutSource] || [];
-        const checkinEvents = dayEntry.checkinEventsBySource[checkinSource] || [];
-        transition.title = buildBarTooltip(checkoutEvents.concat(checkinEvents));
-        bars.appendChild(transition);
-        transitionSources.add(checkoutSource);
-        transitionSources.add(checkinSource);
-      } else if (dayEntry.checkouts.size && !dayEntry.checkins.size) {
-        // Checkout only: left half bar, right half transparent (hard stop, no colour fringe)
-        Array.from(dayEntry.checkouts).forEach((source) => {
-          const color = getSourceColor(source);
-          // Build a zero-alpha version of the same colour to avoid CSS gradient colour bleeding
-          const transparentStop = color.length === 7
-            ? color + '00'
-            : 'rgba(0,0,0,0)';
-          const bar = document.createElement('div');
-          bar.className = 'day-bar day-transition-bar';
-          bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + transparentStop + ' 50% 100%)';
-          bar.title = buildBarTooltip(dayEntry.checkoutEventsBySource[source] || []);
-          bars.appendChild(bar);
-          transitionSources.add(source);
-        });
-      } else if (dayEntry.checkins.size && !dayEntry.checkouts.size) {
-        // Check-in only: left half transparent, right half coloured
-        Array.from(dayEntry.checkins).forEach((source) => {
-          const color = getSourceColor(source);
-          const transparentStop = color.length === 7
-            ? color + '00'
-            : 'rgba(0,0,0,0)';
-          const bar = document.createElement('div');
-          bar.className = 'day-bar day-transition-bar';
-          bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 50%, ' + color + ' 50% 100%)';
-          bar.title = buildBarTooltip(dayEntry.checkinEventsBySource[source] || []);
-          bars.appendChild(bar);
-          transitionSources.add(source);
-        });
+    daySources.forEach((source) => {
+      const slot = document.createElement('div');
+      slot.className = 'day-bar-slot';
+
+      const bar = document.createElement('div');
+      bar.className = 'day-bar';
+
+      if (!dayEntry) {
+        bar.classList.add('day-bar-empty');
+        slot.appendChild(bar);
+        bars.appendChild(slot);
+        return;
       }
 
-      // Skip stay bars for sources already shown in the transition bar
-      Array.from(dayEntry.stays)
-        .filter((source) => !transitionSources.has(source))
-        .forEach((source) => {
-          const bar = document.createElement('div');
-          bar.className = 'day-bar';
-          bar.style.backgroundColor = getSourceColor(source);
-          bar.title = buildBarTooltip(dayEntry.stayEventsBySource[source] || []);
-          bars.appendChild(bar);
-        });
-    }
+      const hasCheckout = dayEntry.checkouts.has(source);
+      const hasCheckin = dayEntry.checkins.has(source);
+      const hasStay = dayEntry.stays.has(source);
+      const color = getSourceColor(source);
+      const transparentStop = color.length === 7
+        ? color + '00'
+        : 'rgba(0,0,0,0)';
+
+      if (hasCheckout && hasCheckin) {
+        bar.classList.add('day-transition-bar');
+        bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + color + ' 50% 100%)';
+        bar.title = buildBarTooltip((dayEntry.checkoutEventsBySource[source] || []).concat(dayEntry.checkinEventsBySource[source] || []));
+      } else if (hasCheckout) {
+        bar.classList.add('day-transition-bar');
+        bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + transparentStop + ' 50% 100%)';
+        bar.title = buildBarTooltip(dayEntry.checkoutEventsBySource[source] || []);
+      } else if (hasCheckin) {
+        bar.classList.add('day-transition-bar');
+        bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 50%, ' + color + ' 50% 100%)';
+        bar.title = buildBarTooltip(dayEntry.checkinEventsBySource[source] || []);
+      } else if (hasStay) {
+        bar.style.backgroundColor = color;
+        bar.title = buildBarTooltip(dayEntry.stayEventsBySource[source] || []);
+      } else {
+        bar.classList.add('day-bar-empty');
+      }
+
+      slot.appendChild(bar);
+      bars.appendChild(slot);
+    });
 
     cell.appendChild(bars);
     calendar.appendChild(cell);

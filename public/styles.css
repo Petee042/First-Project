@@ -405,10 +405,18 @@ input:focus {
   gap: 0.2rem;
 }
 
+.day-bar-slot {
+  min-height: 8px;
+}
+
 .day-bar {
   height: 8px;
   border-radius: 4px;
   background: #cfd5e3;
+}
+
+.day-bar-empty {
+  background: transparent;
 }
 
 .day-transition-bar {
