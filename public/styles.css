@@ -318,6 +318,53 @@ select:focus {
   margin-bottom: 0.8rem;
 }
 
+.cleaning-listings {
+  border: 1px solid #e3e7f1;
+  border-radius: 8px;
+  background: #f8faff;
+  padding: 0.6rem 0.7rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.cleaning-listing-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.32rem 0;
+  cursor: pointer;
+}
+
+.cleaning-listing-checkbox {
+  width: 15px;
+  height: 15px;
+}
+
+.cleaning-listing-name {
+  font-size: 0.92rem;
+  color: #24304b;
+}
+
+.cleaning-empty {
+  font-size: 0.9rem;
+  color: #59627d;
+}
+
+.cleaning-actions-row {
+  display: flex;
+  align-items: end;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+.cleaning-actions-row label {
+  width: auto;
+}
+
+#cleaningDays {
+  width: 120px;
+}
+
 .feed-actions {
   display: flex;
   gap: 0.6rem;
@@ -512,6 +559,15 @@ select:focus {
 
   .feed-actions {
     flex-direction: column;
+  }
+
+  .cleaning-actions-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #cleaningDays {
+    width: 100%;
   }
 
   .top-bar {

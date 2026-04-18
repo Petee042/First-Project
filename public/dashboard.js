@@ -10,6 +10,9 @@ const SOURCE_COLOR_OPTIONS = [
   { name: 'Pink', value: '#db2777' },
   { name: 'Yellow', value: '#ca8a04' }
 ];
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTH_SHORT_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+let currentListings = [];
 
 function setMessage(text, isError) {
   const el = document.getElementById('dashboardMessage');
@@ -51,6 +54,146 @@ function renderListings(listings) {
     row.appendChild(actionCell);
     tbody.appendChild(row);
   });
+}
+
+function pad2(n) {
+  return n < 10 ? '0' + n : String(n);
+}
+
+function keyFromUtcDate(date) {
+  return date.getUTCFullYear() + '-' + pad2(date.getUTCMonth() + 1) + '-' + pad2(date.getUTCDate());
+}
+
+function utcDateFromKey(key) {
+  const parts = key.split('-').map((v) => Number(v));
+  return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+}
+
+function addUtcDays(date, days) {
+  const copy = new Date(date.getTime());
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function toDateKey(value) {
+  if (!value) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return keyFromUtcDate(d);
+}
+
+function renderCleaningListings(listings) {
+  const container = document.getElementById('cleaningListings');
+  container.innerHTML = '';
+
+  if (!listings.length) {
+    const text = document.createElement('p');
+    text.className = 'cleaning-empty';
+    text.textContent = 'No listings available.';
+    container.appendChild(text);
+    return;
+  }
+
+  listings.forEach((listing) => {
+    const row = document.createElement('label');
+    row.className = 'cleaning-listing-row';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'cleaning-listing-checkbox';
+    checkbox.value = String(listing.id);
+    checkbox.setAttribute('data-listing-name', listing.name);
+
+    const name = document.createElement('span');
+    name.className = 'cleaning-listing-name';
+    name.textContent = listing.name;
+
+    row.appendChild(checkbox);
+    row.appendChild(name);
+    container.appendChild(row);
+  });
+}
+
+function getSelectedCleaningListings() {
+  const checked = Array.from(document.querySelectorAll('.cleaning-listing-checkbox:checked'));
+  return checked.map((box) => ({
+    id: Number(box.value),
+    name: box.getAttribute('data-listing-name') || 'Listing'
+  }));
+}
+
+function formatCleaningScheduleLine(dayKey, listingNames) {
+  const date = utcDateFromKey(dayKey);
+  const weekday = WEEKDAY_NAMES[date.getUTCDay()];
+  const day = date.getUTCDate();
+  const month = MONTH_SHORT_NAMES[date.getUTCMonth()];
+  const year = date.getUTCFullYear();
+  const text = listingNames.length ? listingNames.join(', ') : 'No checkouts';
+  return weekday + ' ' + day + ' ' + month + ' ' + year + ': ' + text;
+}
+
+function downloadTextFile(fileName, content) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+async function buildCleaningSchedule(selectedListings, days) {
+  const today = new Date();
+  const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const rangeKeys = [];
+  const checkoutsByDay = {};
+
+  for (let i = 0; i < days; i += 1) {
+    const dayKey = keyFromUtcDate(addUtcDays(todayUtc, i));
+    rangeKeys.push(dayKey);
+    checkoutsByDay[dayKey] = new Set();
+  }
+
+  const errors = [];
+
+  await Promise.all(selectedListings.map(async (listing) => {
+    try {
+      const res = await fetch('/api/listings/' + encodeURIComponent(listing.id) + '/events');
+      if (res.status === 401) {
+        window.location.href = '/';
+        return;
+      }
+
+      const data = await res.json();
+      if (!res.ok) {
+        errors.push(listing.name + ': ' + (data.error || 'Failed to load events.'));
+        return;
+      }
+
+      (data.events || []).forEach((event) => {
+        const checkoutKey = toDateKey(event.end);
+        if (checkoutKey && checkoutsByDay[checkoutKey]) {
+          checkoutsByDay[checkoutKey].add(listing.name);
+        }
+      });
+    } catch {
+      errors.push(listing.name + ': Network error while loading events.');
+    }
+  }));
+
+  const lines = rangeKeys.map((dayKey) => {
+    const names = Array.from(checkoutsByDay[dayKey]).sort((a, b) => a.localeCompare(b));
+    return formatCleaningScheduleLine(dayKey, names);
+  });
+
+  return {
+    text: lines.join('\n'),
+    errors
+  };
 }
 
 function renderFeedSources(sources) {
@@ -144,7 +287,9 @@ async function fetchListings() {
     throw new Error(data.error || 'Failed to load listings.');
   }
 
-  renderListings(data.listings || []);
+  currentListings = data.listings || [];
+  renderListings(currentListings);
+  renderCleaningListings(currentListings);
 }
 
 async function fetchFeedSources() {
@@ -215,4 +360,42 @@ document.getElementById('addListingForm').addEventListener('submit', async (e) =
 document.getElementById('logoutBtn').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/';
+});
+
+document.getElementById('cleaningScheduleForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const button = document.getElementById('downloadCleaningScheduleBtn');
+  const daysValue = Number(document.getElementById('cleaningDays').value);
+  const selectedListings = getSelectedCleaningListings();
+
+  if (!selectedListings.length) {
+    setMessage('Select at least one listing for the cleaning schedule.', true);
+    return;
+  }
+
+  if (!Number.isInteger(daysValue) || daysValue < 1 || daysValue > 365) {
+    setMessage('Number of days must be between 1 and 365.', true);
+    return;
+  }
+
+  button.disabled = true;
+  setMessage('Building cleaning schedule from latest feeds...', false);
+
+  try {
+    const result = await buildCleaningSchedule(selectedListings, daysValue);
+    const todayKey = keyFromUtcDate(new Date());
+    const fileName = 'cleaning-schedule-' + todayKey + '.txt';
+    downloadTextFile(fileName, result.text + '\n');
+
+    if (result.errors.length) {
+      setMessage('Downloaded with some issues: ' + result.errors.join(' | '), true);
+    } else {
+      setMessage('Cleaning schedule downloaded.', false);
+    }
+  } catch {
+    setMessage('Failed to build cleaning schedule.', true);
+  } finally {
+    button.disabled = false;
+  }
 });
