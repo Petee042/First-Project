@@ -208,11 +208,16 @@ function renderReservationCalendar(events) {
         transitionSources.add(checkoutSource);
         transitionSources.add(checkinSource);
       } else if (dayEntry.checkouts.size && !dayEntry.checkins.size) {
-        // Checkout only: left half bar, right half transparent
+        // Checkout only: left half bar, right half transparent (hard stop, no colour fringe)
         Array.from(dayEntry.checkouts).forEach((source) => {
+          const color = getSourceColor(source);
+          // Build a zero-alpha version of the same colour to avoid CSS gradient colour bleeding
+          const transparentStop = color.length === 7
+            ? color + '00'
+            : 'rgba(0,0,0,0)';
           const bar = document.createElement('div');
           bar.className = 'day-bar day-transition-bar';
-          bar.style.background = 'linear-gradient(90deg, ' + getSourceColor(source) + ' 0 50%, transparent 50% 100%)';
+          bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + transparentStop + ' 50% 100%)';
           bar.title = source + ' (checkout)';
           bars.appendChild(bar);
           transitionSources.add(source);
