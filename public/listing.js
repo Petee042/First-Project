@@ -248,28 +248,34 @@ function renderReservationCalendar(events) {
   const daySources = sources.length ? sources : ['Unknown'];
 
   for (let weekStart = 0; weekStart < dayNumbers.length; weekStart += 7) {
-    const labelsCell = document.createElement('div');
-    labelsCell.className = 'calendar-channel-labels';
+    if (weekStart === 0) {
+      const labelsCell = document.createElement('div');
+      labelsCell.className = 'calendar-channel-labels';
 
-    daySources.forEach((source) => {
-      const row = document.createElement('div');
-      row.className = 'calendar-channel-label-row';
+      daySources.forEach((source) => {
+        const row = document.createElement('div');
+        row.className = 'calendar-channel-label-row';
 
-      const swatch = document.createElement('span');
-      swatch.className = 'calendar-channel-label-swatch';
-      swatch.style.backgroundColor = getSourceColor(source);
+        const swatch = document.createElement('span');
+        swatch.className = 'calendar-channel-label-swatch';
+        swatch.style.backgroundColor = getSourceColor(source);
 
-      const text = document.createElement('span');
-      text.className = 'calendar-channel-label-text';
-      text.textContent = source;
-      text.title = source;
+        const text = document.createElement('span');
+        text.className = 'calendar-channel-label-text';
+        text.textContent = source;
+        text.title = source;
 
-      row.appendChild(swatch);
-      row.appendChild(text);
-      labelsCell.appendChild(row);
-    });
+        row.appendChild(swatch);
+        row.appendChild(text);
+        labelsCell.appendChild(row);
+      });
 
-    calendar.appendChild(labelsCell);
+      calendar.appendChild(labelsCell);
+    } else {
+      const spacer = document.createElement('div');
+      spacer.className = 'calendar-channel-labels-spacer';
+      calendar.appendChild(spacer);
+    }
 
     for (let dayOffset = 0; dayOffset < 7; dayOffset += 1) {
       const dayNum = dayNumbers[weekStart + dayOffset];

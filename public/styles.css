@@ -391,6 +391,12 @@ input:focus {
   gap: 0.2rem;
 }
 
+.calendar-channel-labels-spacer {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  min-height: 68px;
+}
+
 .calendar-channel-label-row {
   min-height: 8px;
   display: flex;
