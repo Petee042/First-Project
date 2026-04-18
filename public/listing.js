@@ -330,7 +330,8 @@ function renderReservationCalendar(events) {
 
         if (hasCheckout && hasCheckin) {
           bar.classList.add('day-transition-bar');
-          bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + color + ' 50% 100%)';
+          // Same-channel checkout + checkin on one day: show a thin center split/gap.
+          bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 47%, ' + transparentStop + ' 47% 53%, ' + color + ' 53% 100%)';
           bar.title = buildBarTooltip((dayEntry.checkoutEventsBySource[source] || []).concat(dayEntry.checkinEventsBySource[source] || []));
         } else if (hasCheckout) {
           bar.classList.add('day-transition-bar');
