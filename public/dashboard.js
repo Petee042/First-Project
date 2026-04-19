@@ -160,6 +160,7 @@ function renderCleaningListings(listings) {
     checkbox.className = 'cleaning-listing-checkbox';
     checkbox.value = String(listing.id);
     checkbox.setAttribute('data-listing-name', listing.name);
+    checkbox.setAttribute('data-property-name', listing.property_name || '');
 
     const name = document.createElement('span');
     name.className = 'cleaning-listing-name';
@@ -175,7 +176,8 @@ function getSelectedCleaningListings() {
   const checked = Array.from(document.querySelectorAll('.cleaning-listing-checkbox:checked'));
   return checked.map((box) => ({
     id: Number(box.value),
-    name: box.getAttribute('data-listing-name') || 'Listing'
+    name: box.getAttribute('data-listing-name') || 'Listing',
+    propertyName: box.getAttribute('data-property-name') || ''
   }));
 }
 
@@ -243,7 +245,8 @@ async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
         }
         const checkoutKey = toDateKey(event.end);
         if (checkoutKey && checkoutsByDay[checkoutKey]) {
-          checkoutsByDay[checkoutKey].add(listing.name);
+          const label = listing.propertyName ? listing.propertyName + ' - ' + listing.name : listing.name;
+          checkoutsByDay[checkoutKey].add(label);
         }
       });
     } catch {
