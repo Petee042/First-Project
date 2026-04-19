@@ -550,32 +550,65 @@ async function loadListing() {
   renderReservationCalendar(currentEvents);
 }
 
-async function updateCalendars() {
-  const button = document.getElementById('updateCalendarsBtn');
-  button.disabled = true;
-  setCalendarMessage('Updating calendars...', false);
+function setFetchedAt(isoString) {
+  const el = document.getElementById('calendarFetchedAt');
+  if (!el) return;
+  if (!isoString) {
+    el.textContent = '';
+    return;
+  }
+  const d = new Date(isoString);
+  el.textContent = 'Last updated: ' + d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
+function applyEventsData(data) {
+  currentEvents = data.events || [];
+  renderLegend(currentEvents);
+  renderReservationCalendar(currentEvents);
+  setFetchedAt(data.fetchedAt || null);
+
+  if (data.feedErrors && data.feedErrors.length) {
+    const parts = data.feedErrors.map((e) => e.source + ': ' + e.error);
+    setCalendarMessage('Loaded with feed issues: ' + parts.join(' | '), true);
+  } else {
+    setCalendarMessage('Loaded ' + currentEvents.length + ' events.', false);
+  }
+}
+
+async function loadCachedCalendar() {
+  setCalendarMessage('Loading calendar...', false);
   try {
     const res = await fetch('/api/listings/' + listingId + '/events');
+    if (res.status === 401) { window.location.href = '/'; return; }
     const data = await res.json();
-
     if (!res.ok) {
       setCalendarMessage(data.error || 'Failed to load events.', true);
       return;
     }
-
-    currentEvents = data.events || [];
-    renderLegend(currentEvents);
-    renderReservationCalendar(currentEvents);
-
-    if (data.feedErrors && data.feedErrors.length) {
-      const parts = data.feedErrors.map((e) => e.source + ': ' + e.error);
-      setCalendarMessage('Loaded with feed issues: ' + parts.join(' | '), true);
-    } else {
-      setCalendarMessage('Loaded ' + currentEvents.length + ' events.', false);
-    }
+    applyEventsData(data);
   } catch {
     setCalendarMessage('Network error loading events.', true);
+  }
+}
+
+async function updateCalendars() {
+  const button = document.getElementById('updateCalendarsBtn');
+  button.disabled = true;
+  setCalendarMessage('Refreshing...', false);
+
+  try {
+    const res = await fetch('/api/listings/' + listingId + '/events/refresh', { method: 'POST' });
+    if (res.status === 401) { window.location.href = '/'; return; }
+    const data = await res.json();
+
+    if (!res.ok) {
+      setCalendarMessage(data.error || 'Failed to refresh events.', true);
+      return;
+    }
+
+    applyEventsData(data);
+  } catch {
+    setCalendarMessage('Network error refreshing events.', true);
   } finally {
     button.disabled = false;
   }
@@ -595,8 +628,7 @@ async function updateCalendars() {
     }
 
     await loadListing();
-    renderLegend(currentEvents);
-    renderReservationCalendar(currentEvents);
+    await loadCachedCalendar();
   } catch (err) {
     setListingMessage(err.message || 'Failed to load listing page.', true);
   }

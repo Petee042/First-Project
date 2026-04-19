@@ -41,7 +41,7 @@ function writeUsersToFile(users) {
 
 function ensureLocalListingsStore() {
   if (!fs.existsSync(listingsFile)) {
-    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [], properties: [] }, null, 2), 'utf8');
+    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [], properties: [], cached_events: [] }, null, 2), 'utf8');
   }
 }
 
@@ -50,13 +50,16 @@ function readListingsStore() {
   const content = fs.readFileSync(listingsFile, 'utf8');
   const parsed = JSON.parse(content);
   if (!parsed || !Array.isArray(parsed.listings) || !Array.isArray(parsed.feeds)) {
-    return { listings: [], feeds: [], source_colors: [], properties: [] };
+    return { listings: [], feeds: [], source_colors: [], properties: [], cached_events: [] };
   }
   if (!Array.isArray(parsed.source_colors)) {
     parsed.source_colors = [];
   }
   if (!Array.isArray(parsed.properties)) {
     parsed.properties = [];
+  }
+  if (!Array.isArray(parsed.cached_events)) {
+    parsed.cached_events = [];
   }
   return parsed;
 }
@@ -199,6 +202,19 @@ async function initializeUserStore() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (user_id, label)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cached_events (
+      id BIGSERIAL PRIMARY KEY,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      feed_id BIGINT NOT NULL REFERENCES calendar_feeds(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      events_json TEXT NOT NULL DEFAULT '[]',
+      error_text TEXT,
+      fetched_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (listing_id, feed_id)
     )
   `);
 
@@ -1761,6 +1777,119 @@ function isAirbnbNotAvailableSummary(summary) {
   return text === '(not available)' || text === 'not available';
 }
 
+// ── Persistent event cache ───────────────────────────────────────────────────
+
+async function getAllListingsWithFeeds() {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const listingIds = [...new Set(store.feeds.map((f) => Number(f.listing_id)))];
+    return listingIds.map((id) => ({ id }));
+  }
+  const result = await pool.query(
+    'SELECT DISTINCT listing_id AS id FROM calendar_feeds ORDER BY listing_id ASC'
+  );
+  return result.rows;
+}
+
+async function getFeedsForListingInternal(listingId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return store.feeds.filter((f) => Number(f.listing_id) === Number(listingId));
+  }
+  const result = await pool.query(
+    'SELECT id, listing_id, label, url FROM calendar_feeds WHERE listing_id = $1 ORDER BY id ASC',
+    [listingId]
+  );
+  return result.rows;
+}
+
+async function storeFeedCache(listingId, feedId, label, events, errorText) {
+  const eventsJson = JSON.stringify(events || []);
+  const now = new Date().toISOString();
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const idx = store.cached_events.findIndex(
+      (c) => Number(c.listing_id) === Number(listingId) && Number(c.feed_id) === Number(feedId)
+    );
+    const entry = {
+      listing_id: Number(listingId),
+      feed_id: Number(feedId),
+      label,
+      events_json: eventsJson,
+      error_text: errorText || null,
+      fetched_at: now
+    };
+    if (idx === -1) {
+      store.cached_events.push(entry);
+    } else {
+      store.cached_events[idx] = entry;
+    }
+    writeListingsStore(store);
+    return;
+  }
+  await pool.query(
+    `
+      INSERT INTO cached_events (listing_id, feed_id, label, events_json, error_text, fetched_at)
+      VALUES ($1, $2, $3, $4, $5, NOW())
+      ON CONFLICT (listing_id, feed_id)
+      DO UPDATE SET label = EXCLUDED.label,
+                    events_json = EXCLUDED.events_json,
+                    error_text = EXCLUDED.error_text,
+                    fetched_at = NOW()
+    `,
+    [listingId, feedId, label, eventsJson, errorText || null]
+  );
+}
+
+async function getCachedEventsForListing(listingId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return store.cached_events.filter((c) => Number(c.listing_id) === Number(listingId));
+  }
+  const result = await pool.query(
+    'SELECT feed_id, label, events_json, error_text, fetched_at FROM cached_events WHERE listing_id = $1 ORDER BY feed_id ASC',
+    [listingId]
+  );
+  return result.rows;
+}
+
+async function refreshEventsForListing(listingId) {
+  const feeds = await getFeedsForListingInternal(listingId);
+  await Promise.all(
+    feeds.map(async (feed) => {
+      const fetched = await fetchEventsFromCalendarUrl(feed.url);
+      if (fetched.error) {
+        await storeFeedCache(listingId, feed.id, feed.label, [], fetched.error);
+      } else {
+        const events = fetched.events.map((event) => ({
+          isReservation: isAirbnbSource(feed.label) ? isAirbnbReservedSummary(event.title) : true,
+          isUnavailableBlock: isAirbnbSource(feed.label) ? isAirbnbNotAvailableSummary(event.title) : false,
+          source: feed.label,
+          start: event.start,
+          end: event.end,
+          title: event.title,
+          description: event.description,
+          location: event.location,
+          raw: event.raw
+        }));
+        await storeFeedCache(listingId, feed.id, feed.label, events, null);
+      }
+    })
+  );
+}
+
+async function refreshAllListingsEvents() {
+  try {
+    const listings = await getAllListingsWithFeeds();
+    await Promise.all(listings.map((listing) => refreshEventsForListing(listing.id).catch((err) => {
+      console.error('Cron refresh error for listing', listing.id, err && err.message);
+    })));
+    console.log('Event cache refresh complete for', listings.length, 'listings at', new Date().toISOString());
+  } catch (err) {
+    console.error('Event cache refresh failed:', err && err.message);
+  }
+}
+
 async function fetchEventsFromCalendarUrl(calendarUrl) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
@@ -2383,7 +2512,7 @@ app.put('/api/listings/:listingId/feeds/:feedId', requireAuth, async (req, res) 
   }
 });
 
-// GET /api/listings/:listingId/events — consolidated events from all listing feeds
+// GET /api/listings/:listingId/events — serve events from the persistent cache
 app.get('/api/listings/:listingId/events', requireAuth, async (req, res) => {
   const listingId = Number(req.params.listingId);
   if (!Number.isInteger(listingId) || listingId <= 0) {
@@ -2396,55 +2525,82 @@ app.get('/api/listings/:listingId/events', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Listing not found.' });
     }
 
-    const feeds = await getFeedsForListing(listingId, req.session.userId);
-    const safeFeeds = feeds || [];
-    if (!safeFeeds.length) {
-      return res.json({ listing, events: [], feedErrors: [] });
-    }
+    const cached = await getCachedEventsForListing(listingId);
 
-    const results = await Promise.all(
-      safeFeeds.map(async (feed) => {
-        const fetched = await fetchEventsFromCalendarUrl(feed.url);
-        if (fetched.error) {
-          return { feedId: feed.id, source: feed.label, error: fetched.error, events: [] };
+    const feedErrors = cached
+      .filter((c) => c.error_text)
+      .map((c) => ({ source: c.label, error: c.error_text }));
+
+    const events = cached
+      .filter((c) => !c.error_text)
+      .flatMap((c) => {
+        try {
+          return JSON.parse(c.events_json || '[]');
+        } catch {
+          return [];
         }
-
-        const events = fetched.events.map((event) => ({
-          isReservation: isAirbnbSource(feed.label)
-            ? isAirbnbReservedSummary(event.title)
-            : true,
-          isUnavailableBlock: isAirbnbSource(feed.label)
-            ? isAirbnbNotAvailableSummary(event.title)
-            : false,
-          source: feed.label,
-          start: event.start,
-          end: event.end,
-          title: event.title,
-          description: event.description,
-          location: event.location,
-          raw: event.raw
-        }));
-
-        return { feedId: feed.id, source: feed.label, error: null, events };
       })
-    );
-
-    const feedErrors = results
-      .filter((result) => result.error)
-      .map((result) => ({ source: result.source, error: result.error }));
-
-    const events = results
-      .flatMap((result) => result.events)
       .sort((a, b) => {
         const aTime = a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
         const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
         return aTime - bTime;
       });
 
-    return res.json({ listing, events, feedErrors });
+    const fetchedAt = cached.length
+      ? cached.map((c) => c.fetched_at).sort().pop()
+      : null;
+
+    return res.json({ listing, events, feedErrors, fetchedAt });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load listing events.' });
+  }
+});
+
+// POST /api/listings/:listingId/events/refresh — trigger immediate cache refresh then return events
+app.post('/api/listings/:listingId/events/refresh', requireAuth, async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.session.userId);
+    if (!listing) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    await refreshEventsForListing(listingId);
+
+    const cached = await getCachedEventsForListing(listingId);
+
+    const feedErrors = cached
+      .filter((c) => c.error_text)
+      .map((c) => ({ source: c.label, error: c.error_text }));
+
+    const events = cached
+      .filter((c) => !c.error_text)
+      .flatMap((c) => {
+        try {
+          return JSON.parse(c.events_json || '[]');
+        } catch {
+          return [];
+        }
+      })
+      .sort((a, b) => {
+        const aTime = a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
+        const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
+        return aTime - bTime;
+      });
+
+    const fetchedAt = cached.length
+      ? cached.map((c) => c.fetched_at).sort().pop()
+      : null;
+
+    return res.json({ listing, events, feedErrors, fetchedAt });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to refresh listing events.' });
   }
 });
 
@@ -2501,6 +2657,12 @@ async function startServer() {
       console.log(`Server running at http://localhost:${PORT}`);
       console.log(`User storage: ${usePostgres ? 'Postgres' : 'local JSON file'}`);
     });
+
+    // Run initial refresh 15 s after startup, then every 10 minutes
+    setTimeout(() => {
+      refreshAllListingsEvents();
+      setInterval(refreshAllListingsEvents, 10 * 60 * 1000);
+    }, 15000);
   } catch (err) {
     console.error('Failed to start server:', err);
     process.exit(1);

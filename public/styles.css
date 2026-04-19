@@ -282,6 +282,13 @@ textarea:focus {
   align-self: flex-start;
 }
 
+.calendar-fetched-at {
+  font-size: 0.8rem;
+  color: #888;
+  margin-left: 0.75rem;
+  vertical-align: middle;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
