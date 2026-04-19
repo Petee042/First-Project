@@ -183,6 +183,9 @@ async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
       }
 
       (data.events || []).forEach((event) => {
+        if (event && event.isReservation === false) {
+          return;
+        }
         const checkoutKey = toDateKey(event.end);
         if (checkoutKey && checkoutsByDay[checkoutKey]) {
           checkoutsByDay[checkoutKey].add(listing.name);

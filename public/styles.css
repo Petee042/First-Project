@@ -528,6 +528,8 @@ select:focus {
   height: 8px;
   border-radius: 4px;
   background: #cfd5e3;
+  position: relative;
+  overflow: hidden;
 }
 
 .day-bar-empty {
@@ -536,6 +538,24 @@ select:focus {
 
 .day-transition-bar {
   border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.day-bar-unavailable {
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+.day-bar-hatch {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.9) 0,
+    rgba(255, 255, 255, 0.9) 2px,
+    rgba(255, 255, 255, 0) 2px,
+    rgba(255, 255, 255, 0) 5px
+  );
+  pointer-events: none;
 }
 
 .calendar-day-conflict {

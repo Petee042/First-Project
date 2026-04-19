@@ -672,6 +672,27 @@ function parseIcsEvents(icsText) {
   return events;
 }
 
+function normaliseSourceKey(source) {
+  return String(source || '').trim().toLowerCase();
+}
+
+function normaliseSummary(summary) {
+  return String(summary || '').trim().toLowerCase();
+}
+
+function isAirbnbSource(source) {
+  return normaliseSourceKey(source).includes('airbnb');
+}
+
+function isAirbnbReservedSummary(summary) {
+  return normaliseSummary(summary) === 'reserved';
+}
+
+function isAirbnbNotAvailableSummary(summary) {
+  const text = normaliseSummary(summary);
+  return text === '(not available)' || text === 'not available';
+}
+
 async function fetchEventsFromCalendarUrl(calendarUrl) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
@@ -1036,6 +1057,12 @@ app.get('/api/listings/:listingId/events', requireAuth, async (req, res) => {
         }
 
         const events = fetched.events.map((event) => ({
+          isReservation: isAirbnbSource(feed.label)
+            ? isAirbnbReservedSummary(event.title)
+            : true,
+          isUnavailableBlock: isAirbnbSource(feed.label)
+            ? isAirbnbNotAvailableSummary(event.title)
+            : false,
           source: feed.label,
           start: event.start,
           end: event.end,

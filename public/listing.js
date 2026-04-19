@@ -113,6 +113,21 @@ function buildBarTooltip(events) {
   }).join('\n\n');
 }
 
+function hasDisplayUnavailable(events) {
+  return (events || []).some((event) => event && event.isUnavailableBlock);
+}
+
+function hasReservationEligible(events) {
+  return (events || []).some((event) => event && event.isReservation !== false);
+}
+
+function applyUnavailableHatch(bar) {
+  bar.classList.add('day-bar-unavailable');
+  const hatch = document.createElement('span');
+  hatch.className = 'day-bar-hatch';
+  bar.appendChild(hatch);
+}
+
 function monthStartUtc(date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 }
@@ -364,21 +379,37 @@ function renderReservationCalendar(events) {
           : 'rgba(0,0,0,0)';
 
         if (hasCheckout && hasCheckin) {
+          const transitionEvents = (dayEntry.checkoutEventsBySource[source] || []).concat(dayEntry.checkinEventsBySource[source] || []);
           bar.classList.add('day-transition-bar');
           // Same-channel checkout + checkin on one day: show a thin center split/gap.
           bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 47%, ' + transparentStop + ' 47% 53%, ' + color + ' 53% 100%)';
-          bar.title = buildBarTooltip((dayEntry.checkoutEventsBySource[source] || []).concat(dayEntry.checkinEventsBySource[source] || []));
+          bar.title = buildBarTooltip(transitionEvents);
+          if (hasDisplayUnavailable(transitionEvents) && !hasReservationEligible(transitionEvents)) {
+            applyUnavailableHatch(bar);
+          }
         } else if (hasCheckout) {
+          const checkoutEvents = dayEntry.checkoutEventsBySource[source] || [];
           bar.classList.add('day-transition-bar');
           bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + transparentStop + ' 50% 100%)';
-          bar.title = buildBarTooltip(dayEntry.checkoutEventsBySource[source] || []);
+          bar.title = buildBarTooltip(checkoutEvents);
+          if (hasDisplayUnavailable(checkoutEvents) && !hasReservationEligible(checkoutEvents)) {
+            applyUnavailableHatch(bar);
+          }
         } else if (hasCheckin) {
+          const checkinEvents = dayEntry.checkinEventsBySource[source] || [];
           bar.classList.add('day-transition-bar');
           bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 50%, ' + color + ' 50% 100%)';
-          bar.title = buildBarTooltip(dayEntry.checkinEventsBySource[source] || []);
+          bar.title = buildBarTooltip(checkinEvents);
+          if (hasDisplayUnavailable(checkinEvents) && !hasReservationEligible(checkinEvents)) {
+            applyUnavailableHatch(bar);
+          }
         } else if (hasStay) {
+          const stayEvents = dayEntry.stayEventsBySource[source] || [];
           bar.style.backgroundColor = color;
-          bar.title = buildBarTooltip(dayEntry.stayEventsBySource[source] || []);
+          bar.title = buildBarTooltip(stayEvents);
+          if (hasDisplayUnavailable(stayEvents) && !hasReservationEligible(stayEvents)) {
+            applyUnavailableHatch(bar);
+          }
         } else {
           bar.classList.add('day-bar-empty');
         }
