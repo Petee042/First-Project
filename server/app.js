@@ -316,6 +316,374 @@ async function deleteUserAndData(userId) {
   return { deletedUserId: Number(result.rows[0].id) };
 }
 
+async function getUserArchiveData(userId) {
+  if (!usePostgres) {
+    const users = readUsersFromFile();
+    const user = users.find((item) => Number(item.id) === Number(userId));
+    if (!user) {
+      return { error: 'User not found.' };
+    }
+
+    const store = readListingsStore();
+    const listings = store.listings
+      .filter((listing) => Number(listing.user_id) === Number(userId))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+    const feedsByListingId = new Map();
+    store.feeds.forEach((feed) => {
+      const listingKey = Number(feed.listing_id);
+      if (!feedsByListingId.has(listingKey)) {
+        feedsByListingId.set(listingKey, []);
+      }
+      feedsByListingId.get(listingKey).push({
+        label: feed.label,
+        url: feed.url,
+        created_at: feed.created_at || null
+      });
+    });
+
+    const sourceColors = (store.source_colors || [])
+      .filter((row) => Number(row.user_id) === Number(userId))
+      .map((row) => ({
+        label: row.label,
+        color: row.color,
+        created_at: row.created_at || null,
+        updated_at: row.updated_at || null
+      }));
+
+    return {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      user: {
+        username: user.username,
+        email: user.email,
+        password_hash: user.password_hash,
+        created_at: user.created_at || null
+      },
+      listings: listings.map((listing) => ({
+        name: listing.name,
+        created_at: listing.created_at || null,
+        feeds: (feedsByListingId.get(Number(listing.id)) || []).sort((a, b) => String(a.label).localeCompare(String(b.label)))
+      })),
+      sourceColors
+    };
+  }
+
+  const userResult = await pool.query(
+    'SELECT id, username, email, password_hash, created_at FROM users WHERE id = $1 LIMIT 1',
+    [userId]
+  );
+  const user = userResult.rows[0];
+  if (!user) {
+    return { error: 'User not found.' };
+  }
+
+  const listingsResult = await pool.query(
+    'SELECT id, name, created_at FROM listings WHERE user_id = $1 ORDER BY name ASC',
+    [userId]
+  );
+  const listingIds = listingsResult.rows.map((row) => Number(row.id));
+
+  let feedsRows = [];
+  if (listingIds.length) {
+    const feedsResult = await pool.query(
+      'SELECT listing_id, label, url, created_at FROM calendar_feeds WHERE listing_id = ANY($1::bigint[]) ORDER BY listing_id ASC, label ASC',
+      [listingIds]
+    );
+    feedsRows = feedsResult.rows;
+  }
+
+  const sourceColorsResult = await pool.query(
+    'SELECT label, color, created_at, updated_at FROM feed_source_colors WHERE user_id = $1 ORDER BY label ASC',
+    [userId]
+  );
+
+  const feedsByListingId = new Map();
+  feedsRows.forEach((row) => {
+    const listingKey = Number(row.listing_id);
+    if (!feedsByListingId.has(listingKey)) {
+      feedsByListingId.set(listingKey, []);
+    }
+    feedsByListingId.get(listingKey).push({
+      label: row.label,
+      url: row.url,
+      created_at: row.created_at || null
+    });
+  });
+
+  return {
+    schemaVersion: 1,
+    exportedAt: new Date().toISOString(),
+    user: {
+      username: user.username,
+      email: user.email,
+      password_hash: user.password_hash,
+      created_at: user.created_at || null
+    },
+    listings: listingsResult.rows.map((listing) => ({
+      name: listing.name,
+      created_at: listing.created_at || null,
+      feeds: feedsByListingId.get(Number(listing.id)) || []
+    })),
+    sourceColors: sourceColorsResult.rows.map((row) => ({
+      label: row.label,
+      color: row.color,
+      created_at: row.created_at || null,
+      updated_at: row.updated_at || null
+    }))
+  };
+}
+
+function normaliseArchiveString(value) {
+  return String(value || '').trim();
+}
+
+function normaliseArchiveEmail(value) {
+  const email = normaliseArchiveString(value).toLowerCase();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email) ? email : null;
+}
+
+function normaliseArchiveTimestamp(value) {
+  const text = normaliseArchiveString(value);
+  if (!text) return null;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function normaliseArchiveFeed(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const label = normaliseArchiveString(entry.label || entry.source || entry.name);
+  const url = normaliseCalendarUrl(entry.url || entry.feedUrl || entry.calendarUrl || '');
+  if (!label || !url) {
+    return null;
+  }
+  return {
+    label,
+    url,
+    created_at: normaliseArchiveTimestamp(entry.created_at || entry.createdAt)
+  };
+}
+
+function normaliseArchiveListing(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const name = normaliseArchiveString(entry.name || entry.listingName || entry.title);
+  if (!name) {
+    return null;
+  }
+
+  const rawFeeds = Array.isArray(entry.feeds)
+    ? entry.feeds
+    : (Array.isArray(entry.calendar_feeds) ? entry.calendar_feeds : []);
+
+  return {
+    name,
+    created_at: normaliseArchiveTimestamp(entry.created_at || entry.createdAt),
+    feeds: rawFeeds
+      .map((feed) => normaliseArchiveFeed(feed))
+      .filter(Boolean)
+  };
+}
+
+function normaliseArchiveSourceColor(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const label = normaliseArchiveString(entry.label || entry.source || entry.name);
+  const color = normaliseColor(entry.color || entry.hex || '');
+  if (!label || !color) {
+    return null;
+  }
+  return {
+    label,
+    color,
+    created_at: normaliseArchiveTimestamp(entry.created_at || entry.createdAt),
+    updated_at: normaliseArchiveTimestamp(entry.updated_at || entry.updatedAt)
+  };
+}
+
+function normaliseUserArchivePayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return { error: 'Archive payload is required.' };
+  }
+
+  const userRaw = payload.user && typeof payload.user === 'object'
+    ? payload.user
+    : (payload.account && typeof payload.account === 'object' ? payload.account : null);
+
+  if (!userRaw) {
+    return { error: 'Archive user record is missing.' };
+  }
+
+  const username = normaliseArchiveString(userRaw.username || userRaw.userName || userRaw.name);
+  const email = normaliseArchiveEmail(userRaw.email || userRaw.mail);
+  const passwordHash = normaliseArchiveString(userRaw.password_hash || userRaw.passwordHash || userRaw.hash);
+  if (!username || !email || !passwordHash) {
+    return { error: 'Archive user data is incomplete.' };
+  }
+
+  const rawListings = Array.isArray(payload.listings)
+    ? payload.listings
+    : (Array.isArray(payload.properties) ? payload.properties : []);
+  const listings = rawListings
+    .map((item) => normaliseArchiveListing(item))
+    .filter(Boolean);
+
+  const rawColors = Array.isArray(payload.sourceColors)
+    ? payload.sourceColors
+    : (Array.isArray(payload.source_colors) ? payload.source_colors : []);
+  const sourceColors = rawColors
+    .map((item) => normaliseArchiveSourceColor(item))
+    .filter(Boolean);
+
+  return {
+    schemaVersion: Number(payload.schemaVersion || payload.schema_version || 1),
+    importedAt: new Date().toISOString(),
+    user: {
+      username,
+      email,
+      password_hash: passwordHash,
+      created_at: normaliseArchiveTimestamp(userRaw.created_at || userRaw.createdAt)
+    },
+    listings,
+    sourceColors
+  };
+}
+
+function getUniqueListingName(baseName, usedNames) {
+  const root = normaliseArchiveString(baseName) || 'Listing';
+  let candidate = root;
+  let suffix = 2;
+  while (usedNames.has(candidate.toLowerCase())) {
+    candidate = root + ' (' + suffix + ')';
+    suffix += 1;
+  }
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+async function restoreUserArchiveData(archivePayload) {
+  const payload = normaliseUserArchivePayload(archivePayload);
+  if (payload.error) {
+    return { error: payload.error };
+  }
+
+  if (await findUserByUsername(payload.user.username) || await findUserByEmail(payload.user.email)) {
+    return { error: 'A user with this username or email already exists.' };
+  }
+
+  if (!usePostgres) {
+    const users = readUsersFromFile();
+    const nextUserId = users.length ? Math.max(...users.map((user) => Number(user.id))) + 1 : 1;
+
+    users.push({
+      id: nextUserId,
+      username: payload.user.username,
+      email: payload.user.email,
+      password_hash: payload.user.password_hash,
+      created_at: payload.user.created_at || new Date().toISOString()
+    });
+    writeUsersToFile(users);
+
+    const store = readListingsStore();
+    const usedNames = new Set();
+    const nextListingIdStart = store.listings.length
+      ? Math.max(...store.listings.map((listing) => Number(listing.id))) + 1
+      : 1;
+    let nextListingId = nextListingIdStart;
+
+    const nextFeedIdStart = store.feeds.length
+      ? Math.max(...store.feeds.map((feed) => Number(feed.id))) + 1
+      : 1;
+    let nextFeedId = nextFeedIdStart;
+
+    payload.listings.forEach((listing) => {
+      const listingId = nextListingId;
+      nextListingId += 1;
+
+      const uniqueName = getUniqueListingName(listing.name, usedNames);
+      store.listings.push({
+        id: listingId,
+        user_id: nextUserId,
+        name: uniqueName,
+        created_at: listing.created_at || new Date().toISOString()
+      });
+
+      listing.feeds.forEach((feed) => {
+        store.feeds.push({
+          id: nextFeedId,
+          listing_id: listingId,
+          label: feed.label,
+          url: feed.url,
+          created_at: feed.created_at || new Date().toISOString()
+        });
+        nextFeedId += 1;
+      });
+    });
+
+    payload.sourceColors.forEach((row) => {
+      store.source_colors.push({
+        user_id: nextUserId,
+        label: row.label,
+        color: row.color,
+        created_at: row.created_at || new Date().toISOString(),
+        updated_at: row.updated_at || new Date().toISOString()
+      });
+    });
+
+    writeListingsStore(store);
+    return { user: { id: nextUserId, username: payload.user.username, email: payload.user.email } };
+  }
+
+  const createdUserResult = await pool.query(
+    `
+      INSERT INTO users (username, email, password_hash, created_at)
+      VALUES ($1, $2, $3, COALESCE($4::timestamptz, CURRENT_TIMESTAMP))
+      RETURNING id, username, email
+    `,
+    [payload.user.username, payload.user.email, payload.user.password_hash, payload.user.created_at]
+  );
+
+  const createdUser = createdUserResult.rows[0];
+  const usedNames = new Set();
+
+  for (const listing of payload.listings) {
+    const uniqueName = getUniqueListingName(listing.name, usedNames);
+    const listingResult = await pool.query(
+      `
+        INSERT INTO listings (user_id, name, created_at)
+        VALUES ($1, $2, COALESCE($3::timestamptz, CURRENT_TIMESTAMP))
+        RETURNING id
+      `,
+      [createdUser.id, uniqueName, listing.created_at]
+    );
+    const newListingId = Number(listingResult.rows[0].id);
+
+    for (const feed of listing.feeds) {
+      await pool.query(
+        `
+          INSERT INTO calendar_feeds (listing_id, label, url, created_at)
+          VALUES ($1, $2, $3, COALESCE($4::timestamptz, CURRENT_TIMESTAMP))
+        `,
+        [newListingId, feed.label, feed.url, feed.created_at]
+      );
+    }
+  }
+
+  for (const row of payload.sourceColors) {
+    await pool.query(
+      `
+        INSERT INTO feed_source_colors (user_id, label, color, created_at, updated_at)
+        VALUES ($1, $2, $3, COALESCE($4::timestamptz, CURRENT_TIMESTAMP), COALESCE($5::timestamptz, CURRENT_TIMESTAMP))
+        ON CONFLICT (user_id, label)
+        DO UPDATE SET color = EXCLUDED.color, updated_at = CURRENT_TIMESTAMP
+      `,
+      [createdUser.id, row.label, row.color, row.created_at, row.updated_at]
+    );
+  }
+
+  return { user: createdUser };
+}
+
 async function getListingsForUser(userId) {
   if (!usePostgres) {
     const store = readListingsStore();
@@ -873,7 +1241,7 @@ if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: false }));
 
 app.use(session({
@@ -1049,6 +1417,50 @@ app.delete('/api/admin/users/:userId', requireAdminAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to delete user.' });
+  }
+});
+
+// GET /api/admin/users/:userId/archive
+app.get('/api/admin/users/:userId/archive', requireAdminAuth, async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'Invalid user id.' });
+  }
+
+  try {
+    const archive = await getUserArchiveData(userId);
+    if (archive.error) {
+      return res.status(404).json({ error: archive.error });
+    }
+
+    const usernamePart = String(archive.user.username || 'user').replace(/[^a-zA-Z0-9_-]+/g, '_');
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fileName = usernamePart + '-archive-' + stamp + '.json';
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + fileName + '"');
+    return res.status(200).send(JSON.stringify(archive, null, 2));
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to archive user.' });
+  }
+});
+
+// POST /api/admin/users/load
+app.post('/api/admin/users/load', requireAdminAuth, async (req, res) => {
+  const archive = req.body && req.body.archive;
+  if (!archive || typeof archive !== 'object') {
+    return res.status(400).json({ error: 'Archive payload is required.' });
+  }
+
+  try {
+    const result = await restoreUserArchiveData(archive);
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.status(201).json({ message: 'User data loaded.', user: result.user });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load user data.' });
   }
 });
 

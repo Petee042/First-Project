@@ -89,6 +89,9 @@ input[type="text"],
 input[type="email"],
 input[type="password"],
 input[type="url"],
+input[type="date"],
+input[type="number"],
+input[type="file"],
 select {
   border: 1.5px solid #d0d0d0;
   border-radius: 7px;

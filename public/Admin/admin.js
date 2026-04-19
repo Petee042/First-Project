@@ -32,6 +32,7 @@ function renderUsers(users) {
     option.textContent = 'No users found';
     select.appendChild(option);
     select.disabled = true;
+    document.getElementById('archiveUserBtn').disabled = true;
     document.getElementById('deleteUserBtn').disabled = true;
     return;
   }
@@ -49,7 +50,19 @@ function renderUsers(users) {
   });
 
   select.disabled = false;
+  document.getElementById('archiveUserBtn').disabled = select.value === '__all__';
   document.getElementById('deleteUserBtn').disabled = false;
+}
+
+function downloadBlob(fileName, blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
 }
 
 async function checkAdminSession() {
@@ -122,6 +135,49 @@ document.getElementById('adminLoginForm').addEventListener('submit', async (e) =
     await loadUsers();
   } catch {
     setAdminMessage('Network error during admin login.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('adminUserSelect').addEventListener('change', (e) => {
+  const selection = String(e.target.value || '');
+  document.getElementById('archiveUserBtn').disabled = !selection || selection === '__all__';
+});
+
+document.getElementById('archiveUserBtn').addEventListener('click', async () => {
+  const select = document.getElementById('adminUserSelect');
+  const selection = String(select.value || '');
+
+  if (!selection || selection === '__all__') {
+    setAdminMessage('Select a specific user to archive.', true);
+    return;
+  }
+
+  const userId = Number(selection);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    setAdminMessage('Select a valid user first.', true);
+    return;
+  }
+
+  const button = document.getElementById('archiveUserBtn');
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/admin/users/' + encodeURIComponent(userId) + '/archive');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setAdminMessage(data.error || 'Failed to archive user.', true);
+      return;
+    }
+
+    const blob = await res.blob();
+    const selectedOption = select.options[select.selectedIndex];
+    const userLabel = selectedOption ? selectedOption.textContent.split(' (')[0] : 'user';
+    const fileName = userLabel.replace(/[^a-zA-Z0-9_-]+/g, '_') + '-archive.json';
+    downloadBlob(fileName, blob);
+    setAdminMessage('User archive downloaded.', false);
+  } catch {
+    setAdminMessage('Network error archiving user.', true);
   } finally {
     button.disabled = false;
   }
@@ -201,6 +257,51 @@ document.getElementById('deleteUserBtn').addEventListener('click', async () => {
     await loadUsers();
   } catch {
     setAdminMessage('Network error deleting user.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('loadUserDataForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const fileInput = document.getElementById('userArchiveFile');
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) {
+    setAdminMessage('Select an archive file first.', true);
+    return;
+  }
+
+  const button = document.getElementById('loadUserDataBtn');
+  button.disabled = true;
+
+  try {
+    const text = await file.text();
+    let archive;
+    try {
+      archive = JSON.parse(text);
+    } catch {
+      setAdminMessage('Archive file is not valid JSON.', true);
+      return;
+    }
+
+    const res = await fetch('/api/admin/users/load', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archive })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      setAdminMessage(data.error || 'Failed to load user data.', true);
+      return;
+    }
+
+    setAdminMessage('User data loaded successfully.', false);
+    fileInput.value = '';
+    await loadUsers();
+  } catch {
+    setAdminMessage('Network error loading user data.', true);
   } finally {
     button.disabled = false;
   }

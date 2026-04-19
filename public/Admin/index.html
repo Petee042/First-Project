@@ -37,9 +37,19 @@
         <div class="calendar-source-row admin-delete-row">
           <label for="adminUserSelect">User</label>
           <select id="adminUserSelect" aria-label="Select user to delete"></select>
+          <button id="archiveUserBtn" type="button" class="btn secondary">Archive User</button>
           <button id="deleteUserBtn" type="button" class="btn secondary">Delete User</button>
         </div>
         <p class="hint">Deleting a user removes all listings, feeds, colors, and user account data.</p>
+
+        <h3>Load User Data</h3>
+        <form id="loadUserDataForm" novalidate>
+          <div class="calendar-source-row admin-delete-row">
+            <label for="userArchiveFile">Archive File</label>
+            <input id="userArchiveFile" type="file" accept="application/json,.json" required />
+            <button id="loadUserDataBtn" type="submit" class="btn secondary">Load User Data</button>
+          </div>
+        </form>
       </section>
     </div>
   </main>
