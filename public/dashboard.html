@@ -14,20 +14,51 @@
 
   <main class="dashboard">
     <div class="card-container wide">
-      <h2>Your Listings</h2>
+      <h2>Your Dashboard</h2>
       <p id="dashboardMessage" class="message"></p>
+
+      <section class="listing-form-section">
+        <h3>Your Properties</h3>
+        <div class="listings-block">
+          <table class="calendar-table" aria-label="Your properties">
+            <thead>
+              <tr>
+                <th>Property</th>
+                <th>Manager</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="propertiesTableBody">
+              <tr>
+                <td colspan="3">No properties yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <form id="addPropertyForm" novalidate>
+          <div class="calendar-source-row">
+            <label for="propertyName">Property Name</label>
+            <input id="propertyName" type="text" maxlength="120" required />
+          </div>
+          <button type="submit" class="btn primary calendar-btn">Add Property</button>
+        </form>
+      </section>
+
+      <h2>Your Listings</h2>
 
       <div class="listings-block">
         <table class="calendar-table" aria-label="Your listings">
           <thead>
             <tr>
               <th>Listing Name</th>
+              <th>Property</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody id="listingsTableBody">
             <tr>
-              <td colspan="2">No listings yet.</td>
+              <td colspan="3">No listings yet.</td>
             </tr>
           </tbody>
         </table>
@@ -55,6 +86,10 @@
           <div class="calendar-source-row">
             <label for="listingName">Listing Name</label>
             <input id="listingName" type="text" maxlength="120" required />
+          </div>
+          <div class="calendar-source-row">
+            <label for="listingPropertyId">Property</label>
+            <select id="listingPropertyId" required></select>
           </div>
           <button type="submit" class="btn primary calendar-btn">Add Listing</button>
         </form>

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Property - MyApp</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <div class="header-left">
+      <button id="backBtn" class="btn secondary">Back</button>
+      <span class="site-title top-title">MyApp</span>
+    </div>
+    <button id="logoutBtn" class="btn secondary">Log Out</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide">
+      <h2 id="propertyTitle">Property</h2>
+      <p id="propertyMessage" class="message"></p>
+
+      <section class="listing-form-section">
+        <h3>Property Configuration</h3>
+        <form id="propertyForm" novalidate>
+          <div class="calendar-source-row">
+            <label for="propertyName">Property Name</label>
+            <input id="propertyName" type="text" maxlength="120" required />
+          </div>
+          <div class="calendar-source-row property-textarea-row">
+            <label for="postalAddress">Postal Address</label>
+            <textarea id="postalAddress" rows="4" maxlength="600"></textarea>
+          </div>
+          <div class="calendar-source-row">
+            <label for="managerName">Manager Name</label>
+            <input id="managerName" type="text" maxlength="120" />
+          </div>
+          <div class="calendar-source-row">
+            <label for="managerEmail">Manager Email</label>
+            <input id="managerEmail" type="email" maxlength="160" />
+          </div>
+          <button type="submit" class="btn primary calendar-btn">Save Property</button>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <script src="property.js"></script>
+</body>
+</html>

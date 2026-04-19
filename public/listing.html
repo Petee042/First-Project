@@ -21,13 +21,17 @@
       <p id="listingMessage" class="message"></p>
 
       <section class="listing-form-section">
-        <h3>Edit Listing Name</h3>
+        <h3>Edit Listing Details</h3>
         <form id="renameListingForm" novalidate>
           <div class="calendar-source-row">
             <label for="listingName">Name</label>
             <input id="listingName" type="text" maxlength="120" required />
           </div>
-          <button type="submit" class="btn primary calendar-btn">Save Name</button>
+          <div class="calendar-source-row">
+            <label for="listingPropertyId">Property</label>
+            <select id="listingPropertyId" required></select>
+          </div>
+          <button type="submit" class="btn primary calendar-btn">Save Listing</button>
         </form>
       </section>
 

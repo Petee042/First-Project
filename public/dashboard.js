@@ -13,6 +13,7 @@ const SOURCE_COLOR_OPTIONS = [
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTH_SHORT_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 let currentListings = [];
+let currentProperties = [];
 
 function setMessage(text, isError) {
   const el = document.getElementById('dashboardMessage');
@@ -27,7 +28,7 @@ function renderListings(listings) {
   if (!listings.length) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = 2;
+    cell.colSpan = 3;
     cell.textContent = 'No listings yet.';
     row.appendChild(cell);
     tbody.appendChild(row);
@@ -40,6 +41,9 @@ function renderListings(listings) {
     const nameCell = document.createElement('td');
     nameCell.textContent = listing.name;
 
+    const propertyCell = document.createElement('td');
+    propertyCell.textContent = listing.property_name || 'default';
+
     const actionCell = document.createElement('td');
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
@@ -51,8 +55,59 @@ function renderListings(listings) {
 
     actionCell.appendChild(openBtn);
     row.appendChild(nameCell);
+    row.appendChild(propertyCell);
     row.appendChild(actionCell);
     tbody.appendChild(row);
+  });
+}
+
+function renderProperties(properties) {
+  currentProperties = properties || [];
+
+  const tbody = document.getElementById('propertiesTableBody');
+  tbody.innerHTML = '';
+
+  if (!currentProperties.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 3;
+    cell.textContent = 'No properties yet.';
+    row.appendChild(cell);
+    tbody.appendChild(row);
+  } else {
+    currentProperties.forEach((property) => {
+      const row = document.createElement('tr');
+
+      const nameCell = document.createElement('td');
+      nameCell.textContent = property.name;
+
+      const managerCell = document.createElement('td');
+      managerCell.textContent = property.manager_name || property.manager_email || 'Not set';
+
+      const actionCell = document.createElement('td');
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'btn secondary';
+      openBtn.textContent = 'View / Edit';
+      openBtn.addEventListener('click', () => {
+        window.location.href = '/property.html?id=' + encodeURIComponent(property.id);
+      });
+
+      actionCell.appendChild(openBtn);
+      row.appendChild(nameCell);
+      row.appendChild(managerCell);
+      row.appendChild(actionCell);
+      tbody.appendChild(row);
+    });
+  }
+
+  const select = document.getElementById('listingPropertyId');
+  select.innerHTML = '';
+  currentProperties.forEach((property) => {
+    const option = document.createElement('option');
+    option.value = String(property.id);
+    option.textContent = property.name;
+    select.appendChild(option);
   });
 }
 
@@ -303,6 +358,21 @@ async function fetchListings() {
   renderCleaningListings(currentListings);
 }
 
+async function fetchProperties() {
+  const res = await fetch('/api/properties');
+  if (res.status === 401) {
+    window.location.href = '/';
+    return;
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to load properties.');
+  }
+
+  renderProperties(data.properties || []);
+}
+
 async function fetchFeedSources() {
   const res = await fetch('/api/feed-sources');
   if (res.status === 401) {
@@ -326,6 +396,7 @@ async function fetchFeedSources() {
       return;
     }
 
+    await fetchProperties();
     await fetchListings();
     await fetchFeedSources();
 
@@ -341,9 +412,15 @@ document.getElementById('addListingForm').addEventListener('submit', async (e) =
   e.preventDefault();
   const button = e.target.querySelector('button[type="submit"]');
   const name = document.getElementById('listingName').value.trim();
+  const propertyId = Number(document.getElementById('listingPropertyId').value);
 
   if (!name) {
     setMessage('Listing name is required.', true);
+    return;
+  }
+
+  if (!Number.isInteger(propertyId) || propertyId <= 0) {
+    setMessage('Property selection is required.', true);
     return;
   }
 
@@ -352,7 +429,7 @@ document.getElementById('addListingForm').addEventListener('submit', async (e) =
     const res = await fetch('/api/listings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, propertyId })
     });
 
     const data = await res.json();
@@ -363,10 +440,47 @@ document.getElementById('addListingForm').addEventListener('submit', async (e) =
 
     document.getElementById('listingName').value = '';
     setMessage('Listing added.', false);
+    await fetchProperties();
     await fetchListings();
     await fetchFeedSources();
   } catch {
     setMessage('Network error creating listing.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('addPropertyForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const button = e.target.querySelector('button[type="submit"]');
+  const name = document.getElementById('propertyName').value.trim();
+
+  if (!name) {
+    setMessage('Property name is required.', true);
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/properties', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setMessage(data.error || 'Failed to create property.', true);
+      return;
+    }
+
+    document.getElementById('propertyName').value = '';
+    setMessage('Property added.', false);
+    await fetchProperties();
+    await fetchListings();
+  } catch {
+    setMessage('Network error creating property.', true);
   } finally {
     button.disabled = false;
   }

@@ -41,7 +41,7 @@ function writeUsersToFile(users) {
 
 function ensureLocalListingsStore() {
   if (!fs.existsSync(listingsFile)) {
-    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [] }, null, 2), 'utf8');
+    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [], properties: [] }, null, 2), 'utf8');
   }
 }
 
@@ -50,10 +50,13 @@ function readListingsStore() {
   const content = fs.readFileSync(listingsFile, 'utf8');
   const parsed = JSON.parse(content);
   if (!parsed || !Array.isArray(parsed.listings) || !Array.isArray(parsed.feeds)) {
-    return { listings: [], feeds: [], source_colors: [] };
+    return { listings: [], feeds: [], source_colors: [], properties: [] };
   }
   if (!Array.isArray(parsed.source_colors)) {
     parsed.source_colors = [];
+  }
+  if (!Array.isArray(parsed.properties)) {
+    parsed.properties = [];
   }
   return parsed;
 }
@@ -157,6 +160,24 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS properties (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      postal_address TEXT,
+      manager_name TEXT,
+      manager_email TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (user_id, name)
+    )
+  `);
+
+  await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS property_id BIGINT REFERENCES properties(id) ON DELETE SET NULL
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS calendar_feeds (
       id BIGSERIAL PRIMARY KEY,
       listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
@@ -179,6 +200,24 @@ async function initializeUserStore() {
   `);
 
   await migrateUsersFromFile();
+
+  await pool.query(`
+    INSERT INTO properties (user_id, name)
+    SELECT u.id, 'default'
+    FROM users u
+    LEFT JOIN properties p
+      ON p.user_id = u.id AND LOWER(p.name) = 'default'
+    WHERE p.id IS NULL
+  `);
+
+  await pool.query(`
+    UPDATE listings l
+    SET property_id = p.id
+    FROM properties p
+    WHERE l.user_id = p.user_id
+      AND l.property_id IS NULL
+      AND LOWER(p.name) = 'default'
+  `);
 }
 
 async function migrateUsersFromFile() {
@@ -246,6 +285,7 @@ async function createUser(username, email, passwordHash) {
 
     users.push(user);
     writeUsersToFile(users);
+    await ensureDefaultPropertyForUser(user.id);
     return user;
   }
 
@@ -258,7 +298,274 @@ async function createUser(username, email, passwordHash) {
     [username, email, passwordHash]
   );
 
+  await ensureDefaultPropertyForUser(result.rows[0].id);
   return result.rows[0];
+}
+
+function normaliseOptionalEmail(value) {
+  const email = String(value || '').trim();
+  if (!email) {
+    return null;
+  }
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email) ? email.toLowerCase() : null;
+}
+
+async function ensureDefaultPropertyForUser(userId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const existing = store.properties.find(
+      (property) => Number(property.user_id) === Number(userId) && String(property.name).toLowerCase() === 'default'
+    );
+    if (existing) {
+      return existing;
+    }
+
+    const nextId = store.properties.length
+      ? Math.max(...store.properties.map((property) => Number(property.id))) + 1
+      : 1;
+    const property = {
+      id: nextId,
+      user_id: Number(userId),
+      name: 'default',
+      postal_address: '',
+      manager_name: '',
+      manager_email: '',
+      created_at: new Date().toISOString()
+    };
+    store.properties.push(property);
+    store.listings.forEach((listing) => {
+      if (Number(listing.user_id) === Number(userId) && !listing.property_id) {
+        listing.property_id = property.id;
+      }
+    });
+    writeListingsStore(store);
+    return property;
+  }
+
+  const existingResult = await pool.query(
+    `
+      INSERT INTO properties (user_id, name)
+      VALUES ($1, 'default')
+      ON CONFLICT (user_id, name) DO NOTHING
+      RETURNING id, user_id, name, postal_address, manager_name, manager_email, created_at
+    `,
+    [userId]
+  );
+
+  if (existingResult.rows[0]) {
+    await pool.query(
+      `
+        UPDATE listings
+        SET property_id = $1
+        WHERE user_id = $2 AND property_id IS NULL
+      `,
+      [existingResult.rows[0].id, userId]
+    );
+    return existingResult.rows[0];
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, user_id, name, postal_address, manager_name, manager_email, created_at
+      FROM properties
+      WHERE user_id = $1 AND LOWER(name) = 'default'
+      LIMIT 1
+    `,
+    [userId]
+  );
+  const property = result.rows[0];
+  if (property) {
+    await pool.query(
+      `
+        UPDATE listings
+        SET property_id = $1
+        WHERE user_id = $2 AND property_id IS NULL
+      `,
+      [property.id, userId]
+    );
+  }
+  return property;
+}
+
+async function getPropertiesForUser(userId) {
+  await ensureDefaultPropertyForUser(userId);
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return store.properties
+      .filter((property) => Number(property.user_id) === Number(userId))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, user_id, name, postal_address, manager_name, manager_email, created_at
+      FROM properties
+      WHERE user_id = $1
+      ORDER BY name ASC
+    `,
+    [userId]
+  );
+  return result.rows;
+}
+
+async function getPropertyByIdForUser(propertyId, userId) {
+  await ensureDefaultPropertyForUser(userId);
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return store.properties.find(
+      (property) => Number(property.id) === Number(propertyId) && Number(property.user_id) === Number(userId)
+    );
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, user_id, name, postal_address, manager_name, manager_email, created_at
+      FROM properties
+      WHERE id = $1 AND user_id = $2
+      LIMIT 1
+    `,
+    [propertyId, userId]
+  );
+  return result.rows[0];
+}
+
+async function createPropertyForUser(userId, name) {
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) {
+    return { error: 'Property name is required.' };
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const duplicate = store.properties.some(
+      (property) => Number(property.user_id) === Number(userId) && String(property.name).toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (duplicate) {
+      return { error: 'A property with this name already exists.' };
+    }
+
+    const nextId = store.properties.length
+      ? Math.max(...store.properties.map((property) => Number(property.id))) + 1
+      : 1;
+    const property = {
+      id: nextId,
+      user_id: Number(userId),
+      name: trimmedName,
+      postal_address: '',
+      manager_name: '',
+      manager_email: '',
+      created_at: new Date().toISOString()
+    };
+    store.properties.push(property);
+    writeListingsStore(store);
+    return { property };
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        INSERT INTO properties (user_id, name)
+        VALUES ($1, $2)
+        RETURNING id, user_id, name, postal_address, manager_name, manager_email, created_at
+      `,
+      [userId, trimmedName]
+    );
+    return { property: result.rows[0] };
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return { error: 'A property with this name already exists.' };
+    }
+    throw err;
+  }
+}
+
+async function updatePropertyForUser(propertyId, userId, input) {
+  const name = String(input.name || '').trim();
+  const postalAddress = String(input.postalAddress || '').trim();
+  const managerName = String(input.managerName || '').trim();
+  const rawManagerEmail = String(input.managerEmail || '').trim();
+  const managerEmail = normaliseOptionalEmail(rawManagerEmail);
+
+  if (!name) {
+    return { error: 'Property name is required.' };
+  }
+  if (rawManagerEmail && !managerEmail) {
+    return { error: 'Manager email is invalid.' };
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const idx = store.properties.findIndex(
+      (property) => Number(property.id) === Number(propertyId) && Number(property.user_id) === Number(userId)
+    );
+    if (idx === -1) {
+      return { error: 'Property not found.' };
+    }
+
+    const duplicate = store.properties.some(
+      (property) => Number(property.user_id) === Number(userId)
+        && Number(property.id) !== Number(propertyId)
+        && String(property.name).toLowerCase() === name.toLowerCase()
+    );
+    if (duplicate) {
+      return { error: 'A property with this name already exists.' };
+    }
+
+    const currentName = String(store.properties[idx].name || '').toLowerCase();
+    if (currentName === 'default' && name.toLowerCase() !== 'default') {
+      return { error: 'The default property name cannot be changed.' };
+    }
+
+    store.properties[idx].name = name;
+    store.properties[idx].postal_address = postalAddress;
+    store.properties[idx].manager_name = managerName;
+    store.properties[idx].manager_email = managerEmail || '';
+    writeListingsStore(store);
+    return { property: store.properties[idx] };
+  }
+
+  try {
+    const existing = await getPropertyByIdForUser(propertyId, userId);
+    if (!existing) {
+      return { error: 'Property not found.' };
+    }
+    if (String(existing.name || '').toLowerCase() === 'default' && name.toLowerCase() !== 'default') {
+      return { error: 'The default property name cannot be changed.' };
+    }
+
+    const result = await pool.query(
+      `
+        UPDATE properties
+        SET name = $1, postal_address = $2, manager_name = $3, manager_email = $4
+        WHERE id = $5 AND user_id = $6
+        RETURNING id, user_id, name, postal_address, manager_name, manager_email, created_at
+      `,
+      [name, postalAddress, managerName, managerEmail, propertyId, userId]
+    );
+    if (!result.rows[0]) {
+      return { error: 'Property not found.' };
+    }
+    return { property: result.rows[0] };
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return { error: 'A property with this name already exists.' };
+    }
+    throw err;
+  }
+}
+
+async function resolvePropertyForListing(userId, propertyId) {
+  if (Number.isInteger(Number(propertyId)) && Number(propertyId) > 0) {
+    const property = await getPropertyByIdForUser(Number(propertyId), userId);
+    if (property) {
+      return property;
+    }
+    return null;
+  }
+  return ensureDefaultPropertyForUser(userId);
 }
 
 async function getAllUsers() {
@@ -299,6 +606,7 @@ async function deleteUserAndData(userId) {
     );
 
     const updatedStore = {
+      properties: (store.properties || []).filter((property) => Number(property.user_id) !== Number(userId)),
       listings: store.listings.filter((listing) => Number(listing.user_id) !== Number(userId)),
       feeds: store.feeds.filter((feed) => !removedListingIds.has(Number(feed.listing_id))),
       source_colors: (store.source_colors || []).filter((row) => Number(row.user_id) !== Number(userId))
@@ -328,6 +636,10 @@ async function getUserArchiveData(userId) {
     const listings = store.listings
       .filter((listing) => Number(listing.user_id) === Number(userId))
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const properties = (store.properties || [])
+      .filter((property) => Number(property.user_id) === Number(userId))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const propertyById = new Map(properties.map((property) => [Number(property.id), property]));
 
     const feedsByListingId = new Map();
     store.feeds.forEach((feed) => {
@@ -360,8 +672,18 @@ async function getUserArchiveData(userId) {
         password_hash: user.password_hash,
         created_at: user.created_at || null
       },
+      properties: properties.map((property) => ({
+        name: property.name,
+        postal_address: property.postal_address || '',
+        manager_name: property.manager_name || '',
+        manager_email: property.manager_email || '',
+        created_at: property.created_at || null
+      })),
       listings: listings.map((listing) => ({
         name: listing.name,
+        property_name: propertyById.get(Number(listing.property_id))
+          ? propertyById.get(Number(listing.property_id)).name
+          : 'default',
         created_at: listing.created_at || null,
         feeds: (feedsByListingId.get(Number(listing.id)) || []).sort((a, b) => String(a.label).localeCompare(String(b.label)))
       })),
@@ -379,10 +701,21 @@ async function getUserArchiveData(userId) {
   }
 
   const listingsResult = await pool.query(
-    'SELECT id, name, created_at FROM listings WHERE user_id = $1 ORDER BY name ASC',
+    'SELECT id, name, property_id, created_at FROM listings WHERE user_id = $1 ORDER BY name ASC',
     [userId]
   );
   const listingIds = listingsResult.rows.map((row) => Number(row.id));
+
+  const propertiesResult = await pool.query(
+    `
+      SELECT id, name, postal_address, manager_name, manager_email, created_at
+      FROM properties
+      WHERE user_id = $1
+      ORDER BY name ASC
+    `,
+    [userId]
+  );
+  const propertyById = new Map(propertiesResult.rows.map((row) => [Number(row.id), row]));
 
   let feedsRows = [];
   if (listingIds.length) {
@@ -420,8 +753,18 @@ async function getUserArchiveData(userId) {
       password_hash: user.password_hash,
       created_at: user.created_at || null
     },
+    properties: propertiesResult.rows.map((row) => ({
+      name: row.name,
+      postal_address: row.postal_address || '',
+      manager_name: row.manager_name || '',
+      manager_email: row.manager_email || '',
+      created_at: row.created_at || null
+    })),
     listings: listingsResult.rows.map((listing) => ({
       name: listing.name,
+      property_name: propertyById.get(Number(listing.property_id))
+        ? propertyById.get(Number(listing.property_id)).name
+        : 'default',
       created_at: listing.created_at || null,
       feeds: feedsByListingId.get(Number(listing.id)) || []
     })),
@@ -479,10 +822,27 @@ function normaliseArchiveListing(entry) {
 
   return {
     name,
+    property_name: normaliseArchiveString(entry.property_name || entry.propertyName || entry.property || 'default') || 'default',
     created_at: normaliseArchiveTimestamp(entry.created_at || entry.createdAt),
     feeds: rawFeeds
       .map((feed) => normaliseArchiveFeed(feed))
       .filter(Boolean)
+  };
+}
+
+function normaliseArchiveProperty(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const name = normaliseArchiveString(entry.name || entry.propertyName || entry.title);
+  if (!name) {
+    return null;
+  }
+  const rawManagerEmail = normaliseArchiveString(entry.manager_email || entry.managerEmail || entry.email);
+  return {
+    name,
+    postal_address: normaliseArchiveString(entry.postal_address || entry.postalAddress || entry.address),
+    manager_name: normaliseArchiveString(entry.manager_name || entry.managerName),
+    manager_email: rawManagerEmail ? (normaliseOptionalEmail(rawManagerEmail) || '') : '',
+    created_at: normaliseArchiveTimestamp(entry.created_at || entry.createdAt)
   };
 }
 
@@ -523,10 +883,27 @@ function normaliseUserArchivePayload(payload) {
 
   const rawListings = Array.isArray(payload.listings)
     ? payload.listings
-    : (Array.isArray(payload.properties) ? payload.properties : []);
+    : (Array.isArray(payload.listingRecords) ? payload.listingRecords : []);
   const listings = rawListings
     .map((item) => normaliseArchiveListing(item))
     .filter(Boolean);
+
+  const rawProperties = Array.isArray(payload.properties)
+    ? payload.properties
+    : (Array.isArray(payload.propertyRecords) ? payload.propertyRecords : []);
+  let properties = rawProperties
+    .map((item) => normaliseArchiveProperty(item))
+    .filter(Boolean);
+
+  if (!properties.some((property) => property.name.toLowerCase() === 'default')) {
+    properties.unshift({
+      name: 'default',
+      postal_address: '',
+      manager_name: '',
+      manager_email: '',
+      created_at: null
+    });
+  }
 
   const rawColors = Array.isArray(payload.sourceColors)
     ? payload.sourceColors
@@ -544,6 +921,7 @@ function normaliseUserArchivePayload(payload) {
       password_hash: passwordHash,
       created_at: normaliseArchiveTimestamp(userRaw.created_at || userRaw.createdAt)
     },
+    properties,
     listings,
     sourceColors
   };
@@ -585,6 +963,27 @@ async function restoreUserArchiveData(archivePayload) {
     writeUsersToFile(users);
 
     const store = readListingsStore();
+    const propertyNameMap = new Map();
+    const nextPropertyIdStart = store.properties.length
+      ? Math.max(...store.properties.map((property) => Number(property.id))) + 1
+      : 1;
+    let nextPropertyId = nextPropertyIdStart;
+
+    payload.properties.forEach((property) => {
+      const propertyId = nextPropertyId;
+      nextPropertyId += 1;
+      store.properties.push({
+        id: propertyId,
+        user_id: nextUserId,
+        name: property.name,
+        postal_address: property.postal_address || '',
+        manager_name: property.manager_name || '',
+        manager_email: property.manager_email || '',
+        created_at: property.created_at || new Date().toISOString()
+      });
+      propertyNameMap.set(property.name.toLowerCase(), propertyId);
+    });
+
     const usedNames = new Set();
     const nextListingIdStart = store.listings.length
       ? Math.max(...store.listings.map((listing) => Number(listing.id))) + 1
@@ -601,9 +1000,13 @@ async function restoreUserArchiveData(archivePayload) {
       nextListingId += 1;
 
       const uniqueName = getUniqueListingName(listing.name, usedNames);
+      const propertyId = propertyNameMap.get(String(listing.property_name || 'default').toLowerCase())
+        || propertyNameMap.get('default')
+        || null;
       store.listings.push({
         id: listingId,
         user_id: nextUserId,
+        property_id: propertyId,
         name: uniqueName,
         created_at: listing.created_at || new Date().toISOString()
       });
@@ -644,17 +1047,41 @@ async function restoreUserArchiveData(archivePayload) {
   );
 
   const createdUser = createdUserResult.rows[0];
+  const propertyNameMap = new Map();
+
+  for (const property of payload.properties) {
+    const propertyResult = await pool.query(
+      `
+        INSERT INTO properties (user_id, name, postal_address, manager_name, manager_email, created_at)
+        VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, CURRENT_TIMESTAMP))
+        RETURNING id, name
+      `,
+      [
+        createdUser.id,
+        property.name,
+        property.postal_address || '',
+        property.manager_name || '',
+        property.manager_email || null,
+        property.created_at
+      ]
+    );
+    propertyNameMap.set(String(propertyResult.rows[0].name).toLowerCase(), Number(propertyResult.rows[0].id));
+  }
+
   const usedNames = new Set();
 
   for (const listing of payload.listings) {
     const uniqueName = getUniqueListingName(listing.name, usedNames);
+    const propertyId = propertyNameMap.get(String(listing.property_name || 'default').toLowerCase())
+      || propertyNameMap.get('default')
+      || null;
     const listingResult = await pool.query(
       `
-        INSERT INTO listings (user_id, name, created_at)
-        VALUES ($1, $2, COALESCE($3::timestamptz, CURRENT_TIMESTAMP))
+        INSERT INTO listings (user_id, name, property_id, created_at)
+        VALUES ($1, $2, $3, COALESCE($4::timestamptz, CURRENT_TIMESTAMP))
         RETURNING id
       `,
-      [createdUser.id, uniqueName, listing.created_at]
+      [createdUser.id, uniqueName, propertyId, listing.created_at]
     );
     const newListingId = Number(listingResult.rows[0].id);
 
@@ -685,36 +1112,112 @@ async function restoreUserArchiveData(archivePayload) {
 }
 
 async function getListingsForUser(userId) {
+  const defaultProperty = await ensureDefaultPropertyForUser(userId);
+
   if (!usePostgres) {
     const store = readListingsStore();
-    return store.listings
+    let changed = false;
+    const propertiesById = new Map(
+      store.properties
+        .filter((property) => Number(property.user_id) === Number(userId))
+        .map((property) => [Number(property.id), property])
+    );
+    const listings = store.listings
       .filter((listing) => Number(listing.user_id) === Number(userId))
+      .map((listing) => {
+        if (!listing.property_id && defaultProperty) {
+          listing.property_id = defaultProperty.id;
+          changed = true;
+        }
+        const property = propertiesById.get(Number(listing.property_id));
+        return {
+          ...listing,
+          property_id: Number(listing.property_id || (defaultProperty ? defaultProperty.id : 0)) || null,
+          property_name: property ? property.name : (defaultProperty ? defaultProperty.name : null)
+        };
+      })
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (changed) {
+      writeListingsStore(store);
+    }
+    return listings;
   }
 
+  await pool.query(
+    `
+      UPDATE listings
+      SET property_id = $1
+      WHERE user_id = $2 AND property_id IS NULL
+    `,
+    [defaultProperty.id, userId]
+  );
+
   const result = await pool.query(
-    'SELECT id, user_id, name, created_at FROM listings WHERE user_id = $1 ORDER BY name ASC',
+    `
+      SELECT l.id, l.user_id, l.name, l.property_id, l.created_at, p.name AS property_name
+      FROM listings l
+      LEFT JOIN properties p ON p.id = l.property_id
+      WHERE l.user_id = $1
+      ORDER BY l.name ASC
+    `,
     [userId]
   );
   return result.rows;
 }
 
 async function getListingByIdForUser(listingId, userId) {
+  const defaultProperty = await ensureDefaultPropertyForUser(userId);
+
   if (!usePostgres) {
     const store = readListingsStore();
-    return store.listings.find(
+    const listing = store.listings.find(
       (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
     );
+    if (!listing) {
+      return null;
+    }
+    if (!listing.property_id && defaultProperty) {
+      listing.property_id = defaultProperty.id;
+      writeListingsStore(store);
+    }
+    const property = store.properties.find((item) => Number(item.id) === Number(listing.property_id));
+    return {
+      ...listing,
+      property_id: Number(listing.property_id || (defaultProperty ? defaultProperty.id : 0)) || null,
+      property_name: property ? property.name : (defaultProperty ? defaultProperty.name : null)
+    };
   }
 
   const result = await pool.query(
-    'SELECT id, user_id, name, created_at FROM listings WHERE id = $1 AND user_id = $2 LIMIT 1',
+    `
+      SELECT l.id, l.user_id, l.name, l.property_id, l.created_at, p.name AS property_name
+      FROM listings l
+      LEFT JOIN properties p ON p.id = l.property_id
+      WHERE l.id = $1 AND l.user_id = $2
+      LIMIT 1
+    `,
     [listingId, userId]
   );
-  return result.rows[0];
+  const listing = result.rows[0];
+  if (listing && !listing.property_id && defaultProperty) {
+    const backfilled = await pool.query(
+      `
+        UPDATE listings
+        SET property_id = $1
+        WHERE id = $2 AND user_id = $3
+        RETURNING id, user_id, name, property_id, created_at
+      `,
+      [defaultProperty.id, listingId, userId]
+    );
+    if (backfilled.rows[0]) {
+      backfilled.rows[0].property_name = defaultProperty.name;
+      return backfilled.rows[0];
+    }
+  }
+  return listing;
 }
 
-async function createListingForUser(userId, name) {
+async function createListingForUser(userId, name, propertyId) {
   if (!usePostgres) {
     const store = readListingsStore();
     const alreadyExists = store.listings.some(
@@ -729,9 +1232,15 @@ async function createListingForUser(userId, name) {
       ? Math.max(...store.listings.map((listing) => Number(listing.id))) + 1
       : 1;
 
+    const property = await resolvePropertyForListing(userId, propertyId);
+    if (!property) {
+      return { error: 'Property not found.' };
+    }
+
     const listing = {
       id: nextId,
       user_id: Number(userId),
+      property_id: Number(property.id),
       name,
       created_at: new Date().toISOString()
     };
@@ -742,10 +1251,20 @@ async function createListingForUser(userId, name) {
   }
 
   try {
+    const property = await resolvePropertyForListing(userId, propertyId);
+    if (!property) {
+      return { error: 'Property not found.' };
+    }
+
     const result = await pool.query(
-      'INSERT INTO listings (user_id, name) VALUES ($1, $2) RETURNING id, user_id, name, created_at',
-      [userId, name]
+      `
+        INSERT INTO listings (user_id, name, property_id)
+        VALUES ($1, $2, $3)
+        RETURNING id, user_id, name, property_id, created_at
+      `,
+      [userId, name, property.id]
     );
+    result.rows[0].property_name = property.name;
     return { listing: result.rows[0] };
   } catch (err) {
     if (err && err.code === '23505') {
@@ -755,7 +1274,7 @@ async function createListingForUser(userId, name) {
   }
 }
 
-async function updateListingNameForUser(listingId, userId, name) {
+async function updateListingForUser(listingId, userId, name, propertyId) {
   if (!usePostgres) {
     const store = readListingsStore();
     const idx = store.listings.findIndex(
@@ -777,20 +1296,42 @@ async function updateListingNameForUser(listingId, userId, name) {
       return { error: 'A listing with this name already exists.' };
     }
 
+    const property = await resolvePropertyForListing(userId, propertyId);
+    if (!property) {
+      return { error: 'Property not found.' };
+    }
+
     store.listings[idx].name = name;
+    store.listings[idx].property_id = Number(property.id);
     writeListingsStore(store);
-    return { listing: store.listings[idx] };
+    return {
+      listing: {
+        ...store.listings[idx],
+        property_name: property.name
+      }
+    };
   }
 
   try {
+    const property = await resolvePropertyForListing(userId, propertyId);
+    if (!property) {
+      return { error: 'Property not found.' };
+    }
+
     const result = await pool.query(
-      'UPDATE listings SET name = $1 WHERE id = $2 AND user_id = $3 RETURNING id, user_id, name, created_at',
-      [name, listingId, userId]
+      `
+        UPDATE listings
+        SET name = $1, property_id = $2
+        WHERE id = $3 AND user_id = $4
+        RETURNING id, user_id, name, property_id, created_at
+      `,
+      [name, property.id, listingId, userId]
     );
 
     if (!result.rows[0]) {
       return { error: 'Listing not found.' };
     }
+    result.rows[0].property_name = property.name;
     return { listing: result.rows[0] };
   } catch (err) {
     if (err && err.code === '23505') {
@@ -1472,6 +2013,82 @@ app.get('/api/me', requireAuth, (req, res) => {
   });
 });
 
+// GET /api/properties — all properties for current user
+app.get('/api/properties', requireAuth, async (req, res) => {
+  try {
+    const properties = await getPropertiesForUser(req.session.userId);
+    return res.json({ properties });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load properties.' });
+  }
+});
+
+// POST /api/properties — create property for current user
+app.post('/api/properties', requireAuth, async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) {
+    return res.status(400).json({ error: 'Property name is required.' });
+  }
+
+  try {
+    const { property, error } = await createPropertyForUser(req.session.userId, name);
+    if (error) {
+      return res.status(409).json({ error });
+    }
+    return res.status(201).json({ property });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create property.' });
+  }
+});
+
+// GET /api/properties/:propertyId — get property details
+app.get('/api/properties/:propertyId', requireAuth, async (req, res) => {
+  const propertyId = Number(req.params.propertyId);
+  if (!Number.isInteger(propertyId) || propertyId <= 0) {
+    return res.status(400).json({ error: 'Invalid property id.' });
+  }
+
+  try {
+    const property = await getPropertyByIdForUser(propertyId, req.session.userId);
+    if (!property) {
+      return res.status(404).json({ error: 'Property not found.' });
+    }
+    return res.json({ property });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load property.' });
+  }
+});
+
+// PUT /api/properties/:propertyId — update property details
+app.put('/api/properties/:propertyId', requireAuth, async (req, res) => {
+  const propertyId = Number(req.params.propertyId);
+  if (!Number.isInteger(propertyId) || propertyId <= 0) {
+    return res.status(400).json({ error: 'Invalid property id.' });
+  }
+
+  try {
+    const { property, error } = await updatePropertyForUser(propertyId, req.session.userId, {
+      name: req.body.name,
+      postalAddress: req.body.postalAddress,
+      managerName: req.body.managerName,
+      managerEmail: req.body.managerEmail
+    });
+    if (error === 'Property not found.') {
+      return res.status(404).json({ error });
+    }
+    if (error) {
+      return res.status(400).json({ error });
+    }
+    return res.json({ property });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to update property.' });
+  }
+});
+
 // GET /api/listings — all listings for current user
 app.get('/api/listings', requireAuth, async (req, res) => {
   try {
@@ -1486,14 +2103,19 @@ app.get('/api/listings', requireAuth, async (req, res) => {
 // POST /api/listings — create listing (unique name per user)
 app.post('/api/listings', requireAuth, async (req, res) => {
   const name = String(req.body.name || '').trim();
+  const propertyId = Number(req.body.propertyId);
   if (!name) {
     return res.status(400).json({ error: 'Listing name is required.' });
   }
 
   try {
-    const { listing, error } = await createListingForUser(req.session.userId, name);
+    const { listing, error } = await createListingForUser(
+      req.session.userId,
+      name,
+      Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null
+    );
     if (error) {
-      return res.status(409).json({ error });
+      return res.status(error === 'Property not found.' ? 404 : 409).json({ error });
     }
     return res.status(201).json({ listing });
   } catch (err) {
@@ -1525,6 +2147,7 @@ app.get('/api/listings/:listingId', requireAuth, async (req, res) => {
 app.put('/api/listings/:listingId', requireAuth, async (req, res) => {
   const listingId = Number(req.params.listingId);
   const name = String(req.body.name || '').trim();
+  const propertyId = Number(req.body.propertyId);
 
   if (!Number.isInteger(listingId) || listingId <= 0) {
     return res.status(400).json({ error: 'Invalid listing id.' });
@@ -1534,8 +2157,16 @@ app.put('/api/listings/:listingId', requireAuth, async (req, res) => {
   }
 
   try {
-    const { listing, error } = await updateListingNameForUser(listingId, req.session.userId, name);
+    const { listing, error } = await updateListingForUser(
+      listingId,
+      req.session.userId,
+      name,
+      Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null
+    );
     if (error === 'Listing not found.') {
+      return res.status(404).json({ error });
+    }
+    if (error === 'Property not found.') {
       return res.status(404).json({ error });
     }
     if (error) {

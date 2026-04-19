@@ -92,6 +92,7 @@ input[type="url"],
 input[type="date"],
 input[type="number"],
 input[type="file"],
+textarea,
 select {
   border: 1.5px solid #d0d0d0;
   border-radius: 7px;
@@ -107,6 +108,11 @@ input:focus {
 }
 
 select:focus {
+  border-color: #4361ee;
+  box-shadow: 0 0 0 3px rgba(67,97,238,0.15);
+}
+
+textarea:focus {
   border-color: #4361ee;
   box-shadow: 0 0 0 3px rgba(67,97,238,0.15);
 }
@@ -254,6 +260,20 @@ select:focus {
 .calendar-source-row input {
   flex: 1;
   min-width: 0;
+}
+
+.calendar-source-row textarea,
+.calendar-source-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.property-textarea-row {
+  align-items: flex-start;
+}
+
+.property-textarea-row textarea {
+  resize: vertical;
 }
 
 .calendar-btn {

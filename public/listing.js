@@ -6,6 +6,7 @@ let currentFeeds = [];
 let currentEvents = [];
 let currentMonthDate = new Date();
 let sourceColorPreferences = {};
+let currentProperties = [];
 
 const sourceColorMap = {};
 const sourcePalette = ['#ff5a5f', '#003580', '#2a9d8f', '#e76f51', '#264653', '#f4a261', '#8a5cf6'];
@@ -55,6 +56,29 @@ async function loadSourceColorPreferences() {
   }
 
   setSourceColorPreferences(data.sources || []);
+}
+
+async function loadProperties() {
+  const res = await fetch('/api/properties');
+  if (res.status === 401) {
+    window.location.href = '/';
+    return;
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to load properties.');
+  }
+
+  currentProperties = data.properties || [];
+  const select = document.getElementById('listingPropertyId');
+  select.innerHTML = '';
+  currentProperties.forEach((property) => {
+    const option = document.createElement('option');
+    option.value = String(property.id);
+    option.textContent = property.name;
+    select.appendChild(option);
+  });
 }
 
 function pad2(n) {
@@ -494,6 +518,7 @@ function clearFeedEditMode() {
 
 async function loadListing() {
   await loadSourceColorPreferences();
+  await loadProperties();
 
   const listingRes = await fetch('/api/listings/' + listingId);
   if (listingRes.status === 401) {
@@ -513,6 +538,7 @@ async function loadListing() {
   const listing = listingData.listing;
   document.getElementById('listingTitle').textContent = 'Listing: ' + listing.name;
   document.getElementById('listingName').value = listing.name;
+  document.getElementById('listingPropertyId').value = String(listing.property_id || '');
 
   const feedsRes = await fetch('/api/listings/' + listingId + '/feeds');
   const feedsData = await feedsRes.json();
@@ -580,9 +606,15 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
   e.preventDefault();
   const button = e.target.querySelector('button[type="submit"]');
   const name = document.getElementById('listingName').value.trim();
+  const propertyId = Number(document.getElementById('listingPropertyId').value);
 
   if (!name) {
     setListingMessage('Listing name is required.', true);
+    return;
+  }
+
+  if (!Number.isInteger(propertyId) || propertyId <= 0) {
+    setListingMessage('Property selection is required.', true);
     return;
   }
 
@@ -591,19 +623,19 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     const res = await fetch('/api/listings/' + listingId, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, propertyId })
     });
     const data = await res.json();
 
     if (!res.ok) {
-      setListingMessage(data.error || 'Failed to save listing name.', true);
+      setListingMessage(data.error || 'Failed to save listing.', true);
       return;
     }
 
     document.getElementById('listingTitle').textContent = 'Listing: ' + data.listing.name;
-    setListingMessage('Listing name updated.', false);
+    setListingMessage('Listing updated.', false);
   } catch {
-    setListingMessage('Network error saving listing name.', true);
+    setListingMessage('Network error saving listing.', true);
   } finally {
     button.disabled = false;
   }
