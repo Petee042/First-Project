@@ -11,6 +11,8 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const SALT_ROUNDS = 12;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'replace-this-secret-in-production';
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Peterku';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Quiblick!3';
 const usersFile = path.join(__dirname, 'users.json');
 const listingsFile = path.join(__dirname, 'listings.json');
 const usePostgres = Boolean(process.env.DATABASE_URL);
@@ -257,6 +259,61 @@ async function createUser(username, email, passwordHash) {
   );
 
   return result.rows[0];
+}
+
+async function getAllUsers() {
+  if (!usePostgres) {
+    return readUsersFromFile()
+      .slice()
+      .sort((a, b) => String(a.username).localeCompare(String(b.username)))
+      .map((user) => ({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        created_at: user.created_at
+      }));
+  }
+
+  const result = await pool.query(
+    'SELECT id, username, email, created_at FROM users ORDER BY username ASC'
+  );
+  return result.rows;
+}
+
+async function deleteUserAndData(userId) {
+  if (!usePostgres) {
+    const users = readUsersFromFile();
+    const existing = users.find((user) => Number(user.id) === Number(userId));
+    if (!existing) {
+      return { error: 'User not found.' };
+    }
+
+    const remainingUsers = users.filter((user) => Number(user.id) !== Number(userId));
+    writeUsersToFile(remainingUsers);
+
+    const store = readListingsStore();
+    const removedListingIds = new Set(
+      store.listings
+        .filter((listing) => Number(listing.user_id) === Number(userId))
+        .map((listing) => Number(listing.id))
+    );
+
+    const updatedStore = {
+      listings: store.listings.filter((listing) => Number(listing.user_id) !== Number(userId)),
+      feeds: store.feeds.filter((feed) => !removedListingIds.has(Number(feed.listing_id))),
+      source_colors: (store.source_colors || []).filter((row) => Number(row.user_id) !== Number(userId))
+    };
+    writeListingsStore(updatedStore);
+
+    return { deletedUserId: Number(userId) };
+  }
+
+  const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [userId]);
+  if (!result.rows[0]) {
+    return { error: 'User not found.' };
+  }
+
+  return { deletedUserId: Number(result.rows[0].id) };
 }
 
 async function getListingsForUser(userId) {
@@ -831,6 +888,15 @@ app.use(session({
   }
 }));
 
+// Serve admin page at root for admin subdomain hostnames.
+app.use((req, res, next) => {
+  const host = String(req.hostname || '').toLowerCase();
+  if (host.startsWith('admin.') && req.path === '/') {
+    return res.sendFile(path.join(__dirname, '..', 'public', 'Admin', 'index.html'));
+  }
+  return next();
+});
+
 // Serve static files from the public folder
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -840,6 +906,13 @@ function requireAuth(req, res, next) {
     return next();
   }
   res.status(401).json({ error: 'Unauthorised' });
+}
+
+function requireAdminAuth(req, res, next) {
+  if (req.session && req.session.isAdmin === true) {
+    return next();
+  }
+  res.status(401).json({ error: 'Admin unauthorised' });
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -914,6 +987,68 @@ app.post('/api/login', async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Server error. Please try again.' });
+  }
+});
+
+// POST /api/admin/login
+app.post('/api/admin/login', (req, res) => {
+  const username = String(req.body.username || '').trim();
+  const password = String(req.body.password || '');
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required.' });
+  }
+
+  if (username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD) {
+    return res.status(401).json({ error: 'Invalid admin credentials.' });
+  }
+
+  req.session.regenerate((err) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: 'Server error. Please try again.' });
+    }
+    req.session.isAdmin = true;
+    req.session.adminUsername = ADMIN_USERNAME;
+    return res.json({ message: 'Admin login successful.' });
+  });
+});
+
+// GET /api/admin/me
+app.get('/api/admin/me', (req, res) => {
+  if (req.session && req.session.isAdmin === true) {
+    return res.json({ username: req.session.adminUsername || ADMIN_USERNAME });
+  }
+  return res.status(401).json({ error: 'Admin unauthorised' });
+});
+
+// GET /api/admin/users
+app.get('/api/admin/users', requireAdminAuth, async (req, res) => {
+  try {
+    const users = await getAllUsers();
+    return res.json({ users });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load users.' });
+  }
+});
+
+// DELETE /api/admin/users/:userId
+app.delete('/api/admin/users/:userId', requireAdminAuth, async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'Invalid user id.' });
+  }
+
+  try {
+    const result = await deleteUserAndData(userId);
+    if (result.error) {
+      return res.status(404).json({ error: result.error });
+    }
+    return res.json({ message: 'User deleted.', deletedUserId: result.deletedUserId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete user.' });
   }
 });
 
@@ -1216,6 +1351,11 @@ app.post('/api/logout', (req, res) => {
     res.clearCookie('connect.sid');
     res.json({ message: 'Logged out.' });
   });
+});
+
+// GET /admin - admin page route
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'Admin', 'index.html'));
 });
 
 // Catch-all: redirect unknown routes to index

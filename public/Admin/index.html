@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin - MyApp</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <span class="site-title top-title">MyApp Admin</span>
+    <button id="adminLogoutBtn" class="btn secondary">Log Out</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide admin-card">
+      <h2>Site Admin</h2>
+      <p id="adminMessage" class="message"></p>
+
+      <section id="adminLoginSection" class="listing-form-section">
+        <h3>Admin Login</h3>
+        <form id="adminLoginForm" novalidate>
+          <div class="calendar-source-row">
+            <label for="adminUsername">Username</label>
+            <input id="adminUsername" type="text" required />
+          </div>
+          <div class="calendar-source-row">
+            <label for="adminPassword">Password</label>
+            <input id="adminPassword" type="password" required />
+          </div>
+          <button type="submit" class="btn primary calendar-btn">Log In</button>
+        </form>
+      </section>
+
+      <section id="adminPanelSection" class="listing-form-section hidden">
+        <h3>Delete User</h3>
+        <div class="calendar-source-row admin-delete-row">
+          <label for="adminUserSelect">User</label>
+          <select id="adminUserSelect" aria-label="Select user to delete"></select>
+          <button id="deleteUserBtn" type="button" class="btn secondary">Delete User</button>
+        </div>
+        <p class="hint">Deleting a user removes all listings, feeds, colors, and user account data.</p>
+      </section>
+    </div>
+  </main>
+
+  <script src="/Admin/admin.js"></script>
+</body>
+</html>
