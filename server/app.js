@@ -61,7 +61,12 @@ function writeListingsStore(store) {
 }
 
 function normaliseCalendarUrl(rawUrl) {
-  const trimmed = String(rawUrl || '').trim().replace(/&amp;/gi, '&');
+  const trimmed = String(rawUrl || '')
+    .trim()
+    .replace(/^<+|>+$/g, '')
+    .replace(/^"+|"+$/g, '')
+    .replace(/^'+|'+$/g, '')
+    .replace(/&amp;/gi, '&');
   if (!trimmed) {
     return null;
   }
@@ -77,11 +82,16 @@ function normaliseCalendarUrl(rawUrl) {
     return null;
   }
 
-  return parsed.toString();
+  // Preserve the original URL string to avoid mutating signed feed query parameters.
+  return trimmed;
 }
 
 function decodeHtmlEntitiesForUrl(value) {
   return String(value || '').replace(/&amp;/gi, '&');
+}
+
+function previewBodyText(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 180);
 }
 
 function normaliseColor(value) {
@@ -702,7 +712,7 @@ async function fetchEventsFromCalendarUrl(calendarUrl) {
   const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const fetchOptions = {
+    const standardOptions = {
       signal: controller.signal,
       redirect: 'follow',
       headers: {
@@ -710,32 +720,57 @@ async function fetchEventsFromCalendarUrl(calendarUrl) {
         'User-Agent': 'Mozilla/5.0 (compatible; CalendarSync/1.0; +https://render.com)'
       }
     };
+    const minimalOptions = {
+      signal: controller.signal,
+      redirect: 'follow'
+    };
 
-    let upstream = await fetch(calendarUrl, fetchOptions);
+    const candidateUrls = [];
+    const pushCandidate = (value) => {
+      const next = String(value || '').trim();
+      if (!next) return;
+      if (!candidateUrls.includes(next)) {
+        candidateUrls.push(next);
+      }
+    };
 
-    // Booking links are often pasted with HTML-escaped '&amp;' params; retry with decoded URL.
-    if (upstream.status === 400 && /booking\.com/i.test(calendarUrl)) {
-      const decodedUrl = decodeHtmlEntitiesForUrl(calendarUrl);
-      if (decodedUrl !== calendarUrl) {
-        upstream = await fetch(decodedUrl, fetchOptions);
+    pushCandidate(calendarUrl);
+    pushCandidate(decodeHtmlEntitiesForUrl(calendarUrl));
+    pushCandidate(decodeHtmlEntitiesForUrl(String(calendarUrl || '').replace(/\+/g, '%2B')));
+
+    let lastStatus = null;
+    let lastPreview = '';
+
+    for (const candidateUrl of candidateUrls) {
+      const variants = [standardOptions, minimalOptions];
+      for (const options of variants) {
+        const upstream = await fetch(candidateUrl, options);
+
+        if (!upstream.ok) {
+          lastStatus = upstream.status;
+          const bodyText = await upstream.text().catch(() => '');
+          lastPreview = previewBodyText(bodyText);
+          continue;
+        }
+
+        const icsText = await upstream.text();
+        if (!icsText.includes('BEGIN:VCALENDAR')) {
+          lastStatus = upstream.status;
+          lastPreview = previewBodyText(icsText);
+          continue;
+        }
+
+        const events = parseIcsEvents(icsText)
+          .filter((event) => event.start || event.end || event.title || event.description || event.location)
+          .slice(0, 500);
+
+        return { events };
       }
     }
 
-    if (!upstream.ok) {
-      return { error: 'Unable to fetch calendar feed (HTTP ' + upstream.status + ').' };
-    }
-
-    const icsText = await upstream.text();
-    if (!icsText.includes('BEGIN:VCALENDAR')) {
-      const preview = icsText.slice(0, 120).replace(/\s+/g, ' ').trim();
-      return { error: 'URL did not return a valid ICS calendar.' + (preview ? ' Response preview: ' + preview : '') };
-    }
-
-    const events = parseIcsEvents(icsText)
-      .filter((event) => event.start || event.end || event.title || event.description || event.location)
-      .slice(0, 500);
-
-    return { events };
+    const statusText = lastStatus ? ' (HTTP ' + lastStatus + ').' : '.';
+    const previewText = lastPreview ? ' Response preview: ' + lastPreview : '';
+    return { error: 'Unable to fetch calendar feed' + statusText + previewText };
   } catch (err) {
     if (err && err.name === 'AbortError') {
       return { error: 'Calendar request timed out.' };
