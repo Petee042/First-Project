@@ -61,7 +61,7 @@ function writeListingsStore(store) {
 }
 
 function normaliseCalendarUrl(rawUrl) {
-  const trimmed = String(rawUrl || '').trim();
+  const trimmed = String(rawUrl || '').trim().replace(/&amp;/gi, '&');
   if (!trimmed) {
     return null;
   }
@@ -78,6 +78,10 @@ function normaliseCalendarUrl(rawUrl) {
   }
 
   return parsed.toString();
+}
+
+function decodeHtmlEntitiesForUrl(value) {
+  return String(value || '').replace(/&amp;/gi, '&');
 }
 
 function normaliseColor(value) {
@@ -698,14 +702,24 @@ async function fetchEventsFromCalendarUrl(calendarUrl) {
   const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const upstream = await fetch(calendarUrl, {
+    const fetchOptions = {
       signal: controller.signal,
       redirect: 'follow',
       headers: {
         Accept: 'text/calendar,text/plain,*/*',
         'User-Agent': 'Mozilla/5.0 (compatible; CalendarSync/1.0; +https://render.com)'
       }
-    });
+    };
+
+    let upstream = await fetch(calendarUrl, fetchOptions);
+
+    // Booking links are often pasted with HTML-escaped '&amp;' params; retry with decoded URL.
+    if (upstream.status === 400 && /booking\.com/i.test(calendarUrl)) {
+      const decodedUrl = decodeHtmlEntitiesForUrl(calendarUrl);
+      if (decodedUrl !== calendarUrl) {
+        upstream = await fetch(decodedUrl, fetchOptions);
+      }
+    }
 
     if (!upstream.ok) {
       return { error: 'Unable to fetch calendar feed (HTTP ' + upstream.status + ').' };
