@@ -146,14 +146,22 @@ function downloadTextFile(fileName, content) {
   URL.revokeObjectURL(url);
 }
 
-async function buildCleaningSchedule(selectedListings, days) {
-  const today = new Date();
-  const todayUtc = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+function toDateInputValue(date) {
+  return date.getUTCFullYear() + '-' + pad2(date.getUTCMonth() + 1) + '-' + pad2(date.getUTCDate());
+}
+
+function getSelectedStartDateUtc() {
+  const raw = document.getElementById('cleaningStartDate').value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  return utcDateFromKey(raw);
+}
+
+async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
   const rangeKeys = [];
   const checkoutsByDay = {};
 
   for (let i = 0; i < days; i += 1) {
-    const dayKey = keyFromUtcDate(addUtcDays(todayUtc, i));
+    const dayKey = keyFromUtcDate(addUtcDays(startDateUtc, i));
     rangeKeys.push(dayKey);
     checkoutsByDay[dayKey] = new Set();
   }
@@ -317,6 +325,10 @@ async function fetchFeedSources() {
 
     await fetchListings();
     await fetchFeedSources();
+
+    const now = new Date();
+    const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    document.getElementById('cleaningStartDate').value = toDateInputValue(todayUtc);
   } catch (err) {
     setMessage(err.message || 'Failed to load page.', true);
   }
@@ -367,6 +379,7 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
 
   const button = document.getElementById('downloadCleaningScheduleBtn');
   const daysValue = Number(document.getElementById('cleaningDays').value);
+  const startDateUtc = getSelectedStartDateUtc();
   const selectedListings = getSelectedCleaningListings();
 
   if (!selectedListings.length) {
@@ -379,13 +392,18 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
     return;
   }
 
+  if (!startDateUtc) {
+    setMessage('Please select a valid start date.', true);
+    return;
+  }
+
   button.disabled = true;
   setMessage('Building cleaning schedule from latest feeds...', false);
 
   try {
-    const result = await buildCleaningSchedule(selectedListings, daysValue);
-    const todayKey = keyFromUtcDate(new Date());
-    const fileName = 'cleaning-schedule-' + todayKey + '.txt';
+    const result = await buildCleaningSchedule(selectedListings, daysValue, startDateUtc);
+    const startKey = keyFromUtcDate(startDateUtc);
+    const fileName = 'cleaning-schedule-' + startKey + '.txt';
     downloadTextFile(fileName, result.text + '\n');
 
     if (result.errors.length) {
