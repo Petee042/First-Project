@@ -695,17 +695,26 @@ function isAirbnbNotAvailableSummary(summary) {
 
 async function fetchEventsFromCalendarUrl(calendarUrl) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 30000);
 
   try {
-    const upstream = await fetch(calendarUrl, { signal: controller.signal });
+    const upstream = await fetch(calendarUrl, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        Accept: 'text/calendar,text/plain,*/*',
+        'User-Agent': 'Mozilla/5.0 (compatible; CalendarSync/1.0; +https://render.com)'
+      }
+    });
+
     if (!upstream.ok) {
-      return { error: 'Unable to fetch calendar feed.' };
+      return { error: 'Unable to fetch calendar feed (HTTP ' + upstream.status + ').' };
     }
 
     const icsText = await upstream.text();
     if (!icsText.includes('BEGIN:VCALENDAR')) {
-      return { error: 'URL did not return a valid ICS calendar.' };
+      const preview = icsText.slice(0, 120).replace(/\s+/g, ' ').trim();
+      return { error: 'URL did not return a valid ICS calendar.' + (preview ? ' Response preview: ' + preview : '') };
     }
 
     const events = parseIcsEvents(icsText)
