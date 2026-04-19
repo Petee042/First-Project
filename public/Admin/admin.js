@@ -1,5 +1,7 @@
 'use strict';
 
+let adminUsers = [];
+
 function setAdminMessage(text, isError) {
   const el = document.getElementById('adminMessage');
   el.textContent = text;
@@ -20,10 +22,11 @@ function setAdminAuthenticated(isAuthenticated) {
 }
 
 function renderUsers(users) {
+  adminUsers = users || [];
   const select = document.getElementById('adminUserSelect');
   select.innerHTML = '';
 
-  if (!users.length) {
+  if (!adminUsers.length) {
     const option = document.createElement('option');
     option.value = '';
     option.textContent = 'No users found';
@@ -33,7 +36,12 @@ function renderUsers(users) {
     return;
   }
 
-  users.forEach((user) => {
+  const allOption = document.createElement('option');
+  allOption.value = '__all__';
+  allOption.textContent = 'All Users';
+  select.appendChild(allOption);
+
+  adminUsers.forEach((user) => {
     const option = document.createElement('option');
     option.value = String(user.id);
     option.textContent = user.username + ' (' + user.email + ')';
@@ -121,8 +129,47 @@ document.getElementById('adminLoginForm').addEventListener('submit', async (e) =
 
 document.getElementById('deleteUserBtn').addEventListener('click', async () => {
   const select = document.getElementById('adminUserSelect');
-  const userId = Number(select.value);
+  const selection = String(select.value || '');
 
+  if (!selection) {
+    setAdminMessage('Select a valid user first.', true);
+    return;
+  }
+
+  if (selection === '__all__') {
+    if (!adminUsers.length) {
+      setAdminMessage('No users to delete.', true);
+      return;
+    }
+
+    const confirmedAll = window.confirm(
+      'Confirm delete ALL users? This permanently removes every user and all associated data.'
+    );
+    if (!confirmedAll) {
+      return;
+    }
+
+    const button = document.getElementById('deleteUserBtn');
+    button.disabled = true;
+    try {
+      for (const user of adminUsers) {
+        const res = await fetch('/api/admin/users/' + encodeURIComponent(user.id), { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Failed deleting user ' + user.username + '.');
+        }
+      }
+      setAdminMessage('All users deleted successfully.', false);
+      await loadUsers();
+    } catch (err) {
+      setAdminMessage(err.message || 'Network error deleting all users.', true);
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+
+  const userId = Number(selection);
   if (!Number.isInteger(userId) || userId <= 0) {
     setAdminMessage('Select a valid user first.', true);
     return;
