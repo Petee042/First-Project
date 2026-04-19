@@ -31,6 +31,7 @@ async function loadProperty() {
   document.getElementById('postalAddress').value = property.postal_address || '';
   document.getElementById('managerName').value = property.manager_name || '';
   document.getElementById('managerEmail').value = property.manager_email || '';
+  document.getElementById('deletePropertyBtn').disabled = String(property.name || '').toLowerCase() === 'default';
 }
 
 (async () => {
@@ -86,6 +87,38 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
     setPropertyMessage('Network error saving property.', true);
   } finally {
     button.disabled = false;
+  }
+});
+
+document.getElementById('deletePropertyBtn').addEventListener('click', async () => {
+  const propertyName = document.getElementById('propertyName').value.trim() || 'this property';
+  const confirmed = window.confirm(
+    'Confirm delete property: ' + propertyName + '? This will only work if no listings are assigned to it.'
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const button = document.getElementById('deletePropertyBtn');
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/properties/' + propertyId, {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setPropertyMessage(data.error || 'Failed to delete property.', true);
+      return;
+    }
+
+    window.location.href = '/dashboard.html';
+  } catch {
+    setPropertyMessage('Network error deleting property.', true);
+  } finally {
+    if (!window.location.href.endsWith('/dashboard.html')) {
+      button.disabled = false;
+    }
   }
 });
 

@@ -557,6 +557,52 @@ async function updatePropertyForUser(propertyId, userId, input) {
   }
 }
 
+async function deletePropertyForUser(propertyId, userId) {
+  const property = await getPropertyByIdForUser(propertyId, userId);
+  if (!property) {
+    return { error: 'Property not found.' };
+  }
+
+  if (String(property.name || '').toLowerCase() === 'default') {
+    return { error: 'The default property cannot be deleted.' };
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const assignedCount = store.listings.filter(
+      (listing) => Number(listing.user_id) === Number(userId) && Number(listing.property_id) === Number(propertyId)
+    ).length;
+    if (assignedCount > 0) {
+      return { error: 'This property cannot be deleted while listings are assigned to it.' };
+    }
+
+    const nextProperties = store.properties.filter(
+      (item) => !(Number(item.id) === Number(propertyId) && Number(item.user_id) === Number(userId))
+    );
+    store.properties = nextProperties;
+    writeListingsStore(store);
+    return { deletedPropertyId: Number(propertyId) };
+  }
+
+  const assignedResult = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM listings WHERE user_id = $1 AND property_id = $2',
+    [userId, propertyId]
+  );
+  if (Number(assignedResult.rows[0].count) > 0) {
+    return { error: 'This property cannot be deleted while listings are assigned to it.' };
+  }
+
+  const result = await pool.query(
+    'DELETE FROM properties WHERE id = $1 AND user_id = $2 RETURNING id',
+    [propertyId, userId]
+  );
+  if (!result.rows[0]) {
+    return { error: 'Property not found.' };
+  }
+
+  return { deletedPropertyId: Number(result.rows[0].id) };
+}
+
 async function resolvePropertyForListing(userId, propertyId) {
   if (Number.isInteger(Number(propertyId)) && Number(propertyId) > 0) {
     const property = await getPropertyByIdForUser(Number(propertyId), userId);
@@ -2086,6 +2132,28 @@ app.put('/api/properties/:propertyId', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to update property.' });
+  }
+});
+
+// DELETE /api/properties/:propertyId — delete property if safe
+app.delete('/api/properties/:propertyId', requireAuth, async (req, res) => {
+  const propertyId = Number(req.params.propertyId);
+  if (!Number.isInteger(propertyId) || propertyId <= 0) {
+    return res.status(400).json({ error: 'Invalid property id.' });
+  }
+
+  try {
+    const result = await deletePropertyForUser(propertyId, req.session.userId);
+    if (result.error === 'Property not found.') {
+      return res.status(404).json({ error: result.error });
+    }
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json({ message: 'Property deleted.', deletedPropertyId: result.deletedPropertyId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete property.' });
   }
 });
 
