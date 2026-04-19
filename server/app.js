@@ -169,7 +169,10 @@ async function initializeUserStore() {
       manager_email TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (user_id, name)
-    )
+    )`);
+
+  await pool.query(`
+    ALTER TABLE properties ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE
   `);
 
   await pool.query(`
@@ -315,9 +318,13 @@ async function ensureDefaultPropertyForUser(userId) {
   if (!usePostgres) {
     const store = readListingsStore();
     const existing = store.properties.find(
-      (property) => Number(property.user_id) === Number(userId) && String(property.name).toLowerCase() === 'default'
+      (property) => Number(property.user_id) === Number(userId) && (property.is_default === true || String(property.name).toLowerCase() === 'default')
     );
     if (existing) {
+      if (!existing.is_default) {
+        existing.is_default = true;
+        writeListingsStore(store);
+      }
       return existing;
     }
 
@@ -331,6 +338,7 @@ async function ensureDefaultPropertyForUser(userId) {
       postal_address: '',
       manager_name: '',
       manager_email: '',
+      is_default: true,
       created_at: new Date().toISOString()
     };
     store.properties.push(property);
@@ -343,39 +351,51 @@ async function ensureDefaultPropertyForUser(userId) {
     return property;
   }
 
-  const existingResult = await pool.query(
+  // Try to insert a new default property (only succeeds if none exists yet)
+  const insertResult = await pool.query(
     `
-      INSERT INTO properties (user_id, name)
-      VALUES ($1, 'default')
+      INSERT INTO properties (user_id, name, is_default)
+      VALUES ($1, 'default', TRUE)
       ON CONFLICT (user_id, name) DO NOTHING
-      RETURNING id, user_id, name, postal_address, manager_name, manager_email, created_at
+      RETURNING id, user_id, name, postal_address, manager_name, manager_email, is_default, created_at
     `,
     [userId]
   );
 
-  if (existingResult.rows[0]) {
+  if (insertResult.rows[0]) {
     await pool.query(
       `
         UPDATE listings
         SET property_id = $1
         WHERE user_id = $2 AND property_id IS NULL
       `,
-      [existingResult.rows[0].id, userId]
+      [insertResult.rows[0].id, userId]
     );
-    return existingResult.rows[0];
+    // Ensure is_default is set (migration: existing row inserted without is_default)
+    await pool.query(
+      'UPDATE properties SET is_default = TRUE WHERE id = $1',
+      [insertResult.rows[0].id]
+    );
+    return insertResult.rows[0];
   }
 
+  // Default property already exists — find it by is_default flag, falling back to name
   const result = await pool.query(
     `
-      SELECT id, user_id, name, postal_address, manager_name, manager_email, created_at
+      SELECT id, user_id, name, postal_address, manager_name, manager_email, is_default, created_at
       FROM properties
-      WHERE user_id = $1 AND LOWER(name) = 'default'
+      WHERE user_id = $1 AND (is_default = TRUE OR LOWER(name) = 'default')
+      ORDER BY is_default DESC NULLS LAST
       LIMIT 1
     `,
     [userId]
   );
   const property = result.rows[0];
   if (property) {
+    if (!property.is_default) {
+      await pool.query('UPDATE properties SET is_default = TRUE WHERE id = $1', [property.id]);
+      property.is_default = true;
+    }
     await pool.query(
       `
         UPDATE listings
@@ -400,7 +420,7 @@ async function getPropertiesForUser(userId) {
 
   const result = await pool.query(
     `
-      SELECT id, user_id, name, postal_address, manager_name, manager_email, created_at
+      SELECT id, user_id, name, postal_address, manager_name, manager_email, is_default, created_at
       FROM properties
       WHERE user_id = $1
       ORDER BY name ASC
@@ -422,7 +442,7 @@ async function getPropertyByIdForUser(propertyId, userId) {
 
   const result = await pool.query(
     `
-      SELECT id, user_id, name, postal_address, manager_name, manager_email, created_at
+      SELECT id, user_id, name, postal_address, manager_name, manager_email, is_default, created_at
       FROM properties
       WHERE id = $1 AND user_id = $2
       LIMIT 1
@@ -469,7 +489,7 @@ async function createPropertyForUser(userId, name) {
       `
         INSERT INTO properties (user_id, name)
         VALUES ($1, $2)
-        RETURNING id, user_id, name, postal_address, manager_name, manager_email, created_at
+        RETURNING id, user_id, name, postal_address, manager_name, manager_email, is_default, created_at
       `,
       [userId, trimmedName]
     );
@@ -514,11 +534,6 @@ async function updatePropertyForUser(propertyId, userId, input) {
       return { error: 'A property with this name already exists.' };
     }
 
-    const currentName = String(store.properties[idx].name || '').toLowerCase();
-    if (currentName === 'default' && name.toLowerCase() !== 'default') {
-      return { error: 'The default property name cannot be changed.' };
-    }
-
     store.properties[idx].name = name;
     store.properties[idx].postal_address = postalAddress;
     store.properties[idx].manager_name = managerName;
@@ -532,16 +547,12 @@ async function updatePropertyForUser(propertyId, userId, input) {
     if (!existing) {
       return { error: 'Property not found.' };
     }
-    if (String(existing.name || '').toLowerCase() === 'default' && name.toLowerCase() !== 'default') {
-      return { error: 'The default property name cannot be changed.' };
-    }
-
     const result = await pool.query(
       `
         UPDATE properties
         SET name = $1, postal_address = $2, manager_name = $3, manager_email = $4
         WHERE id = $5 AND user_id = $6
-        RETURNING id, user_id, name, postal_address, manager_name, manager_email, created_at
+        RETURNING id, user_id, name, postal_address, manager_name, manager_email, is_default, created_at
       `,
       [name, postalAddress, managerName, managerEmail, propertyId, userId]
     );
@@ -563,7 +574,7 @@ async function deletePropertyForUser(propertyId, userId) {
     return { error: 'Property not found.' };
   }
 
-  if (String(property.name || '').toLowerCase() === 'default') {
+  if (property.is_default === true) {
     return { error: 'The default property cannot be deleted.' };
   }
 

@@ -31,7 +31,7 @@ async function loadProperty() {
   document.getElementById('postalAddress').value = property.postal_address || '';
   document.getElementById('managerName').value = property.manager_name || '';
   document.getElementById('managerEmail').value = property.manager_email || '';
-  document.getElementById('deletePropertyBtn').disabled = String(property.name || '').toLowerCase() === 'default';
+  document.getElementById('deletePropertyBtn').disabled = property.is_default === true;
 }
 
 (async () => {
