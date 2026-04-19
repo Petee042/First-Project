@@ -94,6 +94,29 @@ function previewBodyText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 180);
 }
 
+function isBookingInvalidTokenError(url, status, bodyText) {
+  if (!/booking\.com/i.test(String(url || ''))) {
+    return false;
+  }
+  if (Number(status) !== 400) {
+    return false;
+  }
+
+  const raw = String(bodyText || '');
+  const lower = raw.toLowerCase();
+  if (lower.includes('invalid token')) {
+    return true;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    const detail = String(parsed.detail || '').toLowerCase();
+    return detail.includes('invalid token');
+  } catch {
+    return false;
+  }
+}
+
 function normaliseColor(value) {
   const color = String(value || '').trim();
   if (!HEX_COLOR_REGEX.test(color)) {
@@ -749,6 +772,13 @@ async function fetchEventsFromCalendarUrl(calendarUrl) {
         if (!upstream.ok) {
           lastStatus = upstream.status;
           const bodyText = await upstream.text().catch(() => '');
+
+          if (isBookingInvalidTokenError(candidateUrl, upstream.status, bodyText)) {
+            return {
+              error: 'Booking.com calendar token is invalid or expired. Generate a new iCal export URL for this room in Booking.com and update this feed URL.'
+            };
+          }
+
           lastPreview = previewBodyText(bodyText);
           continue;
         }
