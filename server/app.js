@@ -5,6 +5,7 @@ const session = require('express-session');
 const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const { Pool } = require('pg');
 
 const app = express();
@@ -13,10 +14,96 @@ const SALT_ROUNDS = 12;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'replace-this-secret-in-production';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Peterku';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Quiblick!3';
+const KAYAK_API_BASE_URL = process.env.KAYAK_API_BASE_URL || 'https://sandbox-en-us.kayakaffiliates.com';
+const KAYAK_API_KEY = process.env.KAYAK_API_KEY || '';
 const usersFile = path.join(__dirname, 'users.json');
 const listingsFile = path.join(__dirname, 'listings.json');
 const usePostgres = Boolean(process.env.DATABASE_URL);
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
+
+const KAYAK_COMMON_QUERY_FIELDS = [
+  { key: 'userTrackId', type: 'string', required: true, description: 'Unique user/session identifier.' },
+  { key: 'onlyIfComplete', type: 'boolean', required: false, defaultValue: 'false', description: 'Return 202 until search is complete.' },
+  { key: 'searchTimeout', type: 'number', required: false, description: 'Max milliseconds to wait for completion.' },
+  { key: 'checkin', type: 'date', required: false, description: 'Check-in date (YYYY-MM-DD).' },
+  { key: 'checkout', type: 'date', required: false, description: 'Check-out date (YYYY-MM-DD).' },
+  { key: 'rooms', type: 'string', required: false, description: 'Room/guest pattern such as 2:4|1.' },
+  { key: 'languageCode', type: 'string', required: false, defaultValue: 'EN', description: 'Language code (ISO 639, uppercase).' },
+  { key: 'currencyCode', type: 'string', required: false, description: 'Currency code (ISO 4217).' },
+  { key: 'includeTaxesInTotal', type: 'boolean', required: false, description: 'Include VAT/sales tax in totals.' },
+  { key: 'includeLocalTaxesInTotal', type: 'boolean', required: false, description: 'Include local taxes in totals.' }
+];
+
+const KAYAK_HOTEL_ENDPOINTS = {
+  singleHotel: {
+    id: 'singleHotel',
+    title: 'Single hotel search',
+    method: 'GET',
+    path: '/hotel',
+    queryFields: [
+      { key: 'hotel', type: 'string', required: true, description: 'Hotel key, e.g. khotel:1000.' },
+      ...KAYAK_COMMON_QUERY_FIELDS,
+      { key: 'responseOptions', type: 'string', required: false, description: 'Comma-delimited options (features,images,reviews,...).' }
+    ]
+  },
+  multipleHotels: {
+    id: 'multipleHotels',
+    title: 'Multiple hotel search',
+    method: 'GET',
+    path: '/hotels',
+    queryFields: [
+      { key: 'destination', type: 'string', required: true, description: 'Destination key, e.g. kplace:58075.' },
+      ...KAYAK_COMMON_QUERY_FIELDS,
+      { key: 'minPrice', type: 'number', required: false, description: 'Minimum hotel price.' },
+      { key: 'maxPrice', type: 'number', required: false, description: 'Maximum hotel price.' },
+      { key: 'starRating', type: 'string', required: false, description: 'Pipe list, e.g. 3|4|5.' },
+      { key: 'hotelRating', type: 'string', required: false, description: 'Pipe list of rating values.' },
+      { key: 'hotelRatingExcludeSelfRated', type: 'boolean', required: false, defaultValue: 'false', description: 'Exclude self-rated hotels for hotelRating filter.' },
+      { key: 'propertyTypes', type: 'string', required: false, description: 'Pipe list of property type ids.' },
+      { key: 'features', type: 'string', required: false, description: 'Pipe list of amenity ids.' },
+      { key: 'featuresFilterMode', type: 'string', required: false, defaultValue: 'AND', description: 'AND or OR for features matching.' },
+      { key: 'themes', type: 'string', required: false, description: 'Pipe list of hotel theme ids.' },
+      { key: 'chains', type: 'string', required: false, description: 'Pipe list of hotel chain ids.' },
+      { key: 'guestRatings', type: 'string', required: false, description: 'Pipe list of guest rating values.' },
+      { key: 'deals', type: 'string', required: false, description: 'Pipe list of deal ids.' },
+      { key: 'hotelName', type: 'string', required: false, description: 'Hotel name/phrase search.' },
+      { key: 'sortField', type: 'string', required: false, defaultValue: 'popularity', description: 'consumerRating,distance,name,minRate,popularity,rating.' },
+      { key: 'sortDirection', type: 'string', required: false, defaultValue: 'ascending', description: 'ascending or descending.' },
+      { key: 'pageIndex', type: 'number', required: false, defaultValue: '0', description: 'Result page index.' },
+      { key: 'pageSize', type: 'number', required: false, defaultValue: '25', description: 'Results per page (1-250).' },
+      { key: 'preferredHotels', type: 'string', required: false, description: 'Pipe list of hotel ids in preferred order.' },
+      { key: 'summaryOnly', type: 'boolean', required: false, description: 'Return only summary metadata.' },
+      { key: 'responseOptions', type: 'string', required: false, description: 'Comma-delimited options (filter,destination,topRates,...).' }
+    ]
+  },
+  basicMultipleHotels: {
+    id: 'basicMultipleHotels',
+    title: 'Basic multiple hotel search',
+    method: 'GET',
+    path: '/hotels/basic',
+    queryFields: [
+      { key: 'destination', type: 'string', required: true, description: 'Destination key, e.g. kplace:58075.' },
+      ...KAYAK_COMMON_QUERY_FIELDS,
+      { key: 'minPrice', type: 'number', required: false, description: 'Minimum hotel price.' },
+      { key: 'maxPrice', type: 'number', required: false, description: 'Maximum hotel price.' },
+      { key: 'starRating', type: 'string', required: false, description: 'Pipe list, e.g. 3|4|5.' },
+      { key: 'hotelRating', type: 'string', required: false, description: 'Pipe list of rating values.' },
+      { key: 'hotelRatingExcludeSelfRated', type: 'boolean', required: false, defaultValue: 'false', description: 'Exclude self-rated hotels for hotelRating filter.' },
+      { key: 'propertyTypes', type: 'string', required: false, description: 'Pipe list of property type ids.' },
+      { key: 'features', type: 'string', required: false, description: 'Pipe list of amenity ids.' },
+      { key: 'themes', type: 'string', required: false, description: 'Pipe list of hotel theme ids.' },
+      { key: 'chains', type: 'string', required: false, description: 'Pipe list of hotel chain ids.' },
+      { key: 'guestRatings', type: 'string', required: false, description: 'Pipe list of guest rating values.' },
+      { key: 'deals', type: 'string', required: false, description: 'Pipe list of deal ids.' },
+      { key: 'hotelName', type: 'string', required: false, description: 'Hotel name/phrase search.' },
+      { key: 'sortField', type: 'string', required: false, defaultValue: 'popularity', description: 'consumerRating,distance,name,minRate,popularity,rating.' },
+      { key: 'sortDirection', type: 'string', required: false, defaultValue: 'ascending', description: 'ascending or descending.' },
+      { key: 'pageIndex', type: 'number', required: false, defaultValue: '0', description: 'Result page index.' },
+      { key: 'pageSize', type: 'number', required: false, defaultValue: '25', description: 'Results per page (1-250).' },
+      { key: 'preferredHotels', type: 'string', required: false, description: 'Pipe list of hotel ids in preferred order.' }
+    ]
+  }
+};
 
 const pool = usePostgres
   ? new Pool({
@@ -2018,6 +2105,31 @@ function requireAdminAuth(req, res, next) {
   res.status(401).json({ error: 'Admin unauthorised' });
 }
 
+function normaliseAdminQueryValue(value, type) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const text = String(value).trim();
+  if (!text) {
+    return null;
+  }
+
+  if (type === 'boolean') {
+    const lower = text.toLowerCase();
+    if (lower === 'true' || lower === '1') return 'true';
+    if (lower === 'false' || lower === '0') return 'false';
+    return null;
+  }
+
+  if (type === 'number') {
+    const parsed = Number(text);
+    return Number.isFinite(parsed) ? String(parsed) : null;
+  }
+
+  return text;
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 // POST /api/signup
@@ -2196,6 +2308,105 @@ app.post('/api/admin/users/load', requireAdminAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load user data.' });
+  }
+});
+
+// GET /api/admin/kayak/endpoints
+app.get('/api/admin/kayak/endpoints', requireAdminAuth, (req, res) => {
+  const endpointList = Object.values(KAYAK_HOTEL_ENDPOINTS).map((endpoint) => ({
+    id: endpoint.id,
+    title: endpoint.title,
+    method: endpoint.method,
+    path: endpoint.path,
+    queryFields: endpoint.queryFields
+  }));
+
+  return res.json({
+    baseUri: '/api/3.0',
+    configuredBaseUrl: KAYAK_API_BASE_URL,
+    hasApiKeyConfigured: Boolean(KAYAK_API_KEY),
+    endpoints: endpointList
+  });
+});
+
+// POST /api/admin/kayak/request
+app.post('/api/admin/kayak/request', requireAdminAuth, async (req, res) => {
+  if (!KAYAK_API_KEY) {
+    return res.status(500).json({ error: 'KAYAK_API_KEY is not configured on the server.' });
+  }
+
+  const endpointId = String(req.body.endpointId || '').trim();
+  const endpoint = KAYAK_HOTEL_ENDPOINTS[endpointId];
+  if (!endpoint) {
+    return res.status(400).json({ error: 'Unknown KAYAK endpoint.' });
+  }
+
+  const payload = req.body && typeof req.body.params === 'object' ? req.body.params : {};
+  const requestUrl = new URL('/api/3.0' + endpoint.path, KAYAK_API_BASE_URL);
+  const missingRequiredFields = [];
+
+  for (const field of endpoint.queryFields) {
+    const rawValue = payload[field.key];
+    const normalised = normaliseAdminQueryValue(rawValue, field.type);
+    if (field.required && !normalised) {
+      missingRequiredFields.push(field.key);
+      continue;
+    }
+    if (normalised !== null) {
+      requestUrl.searchParams.set(field.key, normalised);
+    }
+  }
+
+  if (missingRequiredFields.length) {
+    return res.status(400).json({
+      error: 'Missing required fields: ' + missingRequiredFields.join(', ')
+    });
+  }
+
+  if (!requestUrl.searchParams.get('userTrackId')) {
+    requestUrl.searchParams.set('userTrackId', randomUUID());
+  }
+  requestUrl.searchParams.set('apiKey', KAYAK_API_KEY);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+  try {
+    const upstream = await fetch(requestUrl, {
+      method: endpoint.method,
+      headers: { Accept: 'application/json, text/plain, */*' },
+      signal: controller.signal
+    });
+
+    const text = await upstream.text();
+    let parsedBody = text;
+    try {
+      parsedBody = text ? JSON.parse(text) : null;
+    } catch {
+      // Keep plain text body when JSON parsing fails.
+    }
+
+    const maskedUrl = requestUrl.toString().replace(KAYAK_API_KEY, '***');
+    return res.status(200).json({
+      request: {
+        endpointId: endpoint.id,
+        method: endpoint.method,
+        url: maskedUrl
+      },
+      response: {
+        status: upstream.status,
+        ok: upstream.ok,
+        headers: Object.fromEntries(upstream.headers.entries()),
+        body: parsedBody
+      }
+    });
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      return res.status(504).json({ error: 'KAYAK request timed out after 45 seconds.' });
+    }
+    console.error('KAYAK test request failed:', err);
+    return res.status(502).json({ error: 'Failed to execute KAYAK request.' });
+  } finally {
+    clearTimeout(timeout);
   }
 });
 

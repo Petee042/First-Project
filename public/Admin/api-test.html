@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KAYAK API Tester - herupa1</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <div class="header-left">
+      <a href="/Admin/index.html" class="btn secondary">Back to Admin</a>
+      <span class="site-title top-title">herupa1 Admin</span>
+    </div>
+    <button id="adminLogoutBtn" class="btn secondary">Log Out</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide admin-card api-tester-card">
+      <h2>KAYAK Hotel API Test Console</h2>
+      <p class="hint">Manually populate request fields and execute each endpoint from this page.</p>
+      <p id="testerMessage" class="message" aria-live="polite"></p>
+
+      <section id="apiTesterContainer" class="api-tester-listing">
+        <p>Loading endpoint definitions...</p>
+      </section>
+    </div>
+  </main>
+
+  <script src="/Admin/api-test.js"></script>
+</body>
+</html>

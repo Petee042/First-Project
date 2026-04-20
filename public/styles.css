@@ -162,6 +162,11 @@ textarea:focus {
 
 .btn.secondary:hover { background: rgba(67,97,238,0.07); }
 
+.btn.inline-btn {
+  display: inline-block;
+  width: auto;
+}
+
 /* ── Messages ─────────────────────────────────────────────── */
 .message {
   font-size: 0.88rem;
@@ -233,6 +238,45 @@ textarea:focus {
 }
 
 .user-table td { color: #1a1a2e; }
+
+.api-tester-card {
+  max-width: 980px;
+}
+
+.api-tester-listing {
+  display: grid;
+  gap: 1.2rem;
+}
+
+.api-endpoint-card {
+  border: 1px solid #e4e6ef;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.api-request-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.8rem 1rem;
+  margin-top: 0.75rem;
+}
+
+.api-request-form .feed-actions {
+  grid-column: 1 / -1;
+}
+
+.api-response-box {
+  margin-top: 0.5rem;
+  padding: 0.8rem;
+  border: 1px solid #d8deef;
+  border-radius: 8px;
+  background: #f8faff;
+  color: #1a1a2e;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  overflow: auto;
+  max-height: 420px;
+}
 
 .coming-soon {
   font-size: 1rem;
