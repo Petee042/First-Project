@@ -40,6 +40,14 @@ body {
   margin: -0.5rem 0 1.4rem;
 }
 
+.site-warning {
+  color: #7a2e2e;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  margin-top: 1.2rem;
+  text-align: center;
+}
+
 /* ── Tabs ─────────────────────────────────────────────────── */
 .tabs {
   display: flex;
