@@ -33,6 +33,13 @@ body {
   letter-spacing: -0.5px;
 }
 
+.site-intro {
+  color: #3b3b4f;
+  font-size: 0.93rem;
+  line-height: 1.5;
+  margin: -0.5rem 0 1.4rem;
+}
+
 /* ── Tabs ─────────────────────────────────────────────────── */
 .tabs {
   display: flex;
