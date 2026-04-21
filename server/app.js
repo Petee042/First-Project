@@ -2130,6 +2130,17 @@ function normaliseAdminQueryValue(value, type) {
   return text;
 }
 
+function maskKeyForDiagnostics(secret) {
+  const value = String(secret || '');
+  if (!value) {
+    return '(missing)';
+  }
+  if (value.length <= 4) {
+    return '*'.repeat(value.length);
+  }
+  return '*'.repeat(value.length - 4) + value.slice(-4);
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 // POST /api/signup
@@ -2390,7 +2401,11 @@ app.post('/api/admin/kayak/request', requireAdminAuth, async (req, res) => {
       request: {
         endpointId: endpoint.id,
         method: endpoint.method,
-        url: maskedUrl
+        url: maskedUrl,
+        diagnostics: {
+          apiKeyInjected: Boolean(requestUrl.searchParams.get('apiKey')),
+          configuredApiKeyMask: maskKeyForDiagnostics(KAYAK_API_KEY)
+        }
       },
       response: {
         status: upstream.status,
