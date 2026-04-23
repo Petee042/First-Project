@@ -16,6 +16,8 @@ const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Peterku';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Quiblick!3';
 const KAYAK_API_BASE_URL = process.env.KAYAK_API_BASE_URL || 'https://sandbox-en-us.kayakaffiliates.com';
 const KAYAK_API_KEY = process.env.KAYAK_API_KEY || '';
+const STAY_API_KEY = process.env.STAY_API_KEY || '';
+const STAY_API_BASE_URL = 'https://api.stayapi.com';
 const usersFile = path.join(__dirname, 'users.json');
 const listingsFile = path.join(__dirname, 'listings.json');
 const usePostgres = Boolean(process.env.DATABASE_URL);
@@ -2849,6 +2851,135 @@ app.get('/api/calendar-entries', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Calendar fetch error:', err);
     return res.status(500).json({ error: 'Failed to load calendar entries.' });
+  }
+});
+
+// ── Stay API admin proxy ─────────────────────────────────────────────────────
+
+const STAY_API_ENDPOINTS = {
+  destinationLookup: {
+    id: 'destinationLookup',
+    title: 'Destination Lookup',
+    description: 'Search for a destination and retrieve its dest_id and dest_type to use in hotel searches.',
+    method: 'GET',
+    path: '/v1/booking/destinations/lookup',
+    queryFields: [
+      { key: 'query', type: 'string', required: true, description: 'Destination name to look up, e.g. Barcelona.' }
+    ]
+  },
+  hotelSearch: {
+    id: 'hotelSearch',
+    title: 'Hotel Search',
+    description: 'Search for available hotels in a destination for a given date range and occupancy.',
+    method: 'GET',
+    path: '/v1/booking/search',
+    queryFields: [
+      { key: 'dest_id',  type: 'string', required: true,  description: 'Destination ID returned by Destination Lookup, e.g. -3233180.' },
+      { key: 'checkin',  type: 'date',   required: true,  description: 'Check-in date (YYYY-MM-DD).' },
+      { key: 'checkout', type: 'date',   required: true,  description: 'Check-out date (YYYY-MM-DD).' },
+      { key: 'adults',   type: 'number', required: true,  description: 'Number of adult guests.' },
+      { key: 'rooms',    type: 'number', required: true,  description: 'Number of rooms.' },
+      { key: 'dest_type', type: 'string', required: false, description: 'Destination type returned by Destination Lookup (e.g. city).' },
+      { key: 'page',     type: 'number', required: false, description: 'Page number for pagination.' },
+      { key: 'currency', type: 'string', required: false, description: 'ISO 4217 currency code, e.g. USD.' },
+      { key: 'locale',   type: 'string', required: false, description: 'Locale string, e.g. en-gb.' }
+    ]
+  },
+  hotelDetails: {
+    id: 'hotelDetails',
+    title: 'Hotel Details',
+    description: 'Retrieve full details for a specific hotel by its hotel_id.',
+    method: 'GET',
+    path: '/v2/booking/hotel/details',
+    queryFields: [
+      { key: 'hotel_id', type: 'string', required: true, description: 'Hotel ID to retrieve details for, e.g. 1331780.' }
+    ]
+  }
+};
+
+// GET /api/admin/stay/endpoints
+app.get('/api/admin/stay/endpoints', requireAdminAuth, (req, res) => {
+  return res.json({
+    hasApiKeyConfigured: Boolean(STAY_API_KEY),
+    endpoints: Object.values(STAY_API_ENDPOINTS).map((ep) => ({
+      id: ep.id,
+      title: ep.title,
+      description: ep.description,
+      method: ep.method,
+      path: ep.path,
+      queryFields: ep.queryFields
+    }))
+  });
+});
+
+// POST /api/admin/stay/request
+app.post('/api/admin/stay/request', requireAdminAuth, async (req, res) => {
+  if (!STAY_API_KEY) {
+    return res.status(500).json({ error: 'STAY_API_KEY is not configured on the server.' });
+  }
+
+  const endpointId = String(req.body.endpointId || '').trim();
+  const endpoint = STAY_API_ENDPOINTS[endpointId];
+  if (!endpoint) {
+    return res.status(400).json({ error: 'Unknown Stay API endpoint.' });
+  }
+
+  const payload = (req.body && typeof req.body.params === 'object') ? req.body.params : {};
+  const requestUrl = new URL(endpoint.path, STAY_API_BASE_URL);
+  const missing = [];
+
+  for (const field of endpoint.queryFields) {
+    const normalised = normaliseAdminQueryValue(payload[field.key], field.type);
+    if (field.required && !normalised) {
+      missing.push(field.key);
+      continue;
+    }
+    if (normalised !== null) {
+      requestUrl.searchParams.set(field.key, normalised);
+    }
+  }
+
+  if (missing.length) {
+    return res.status(400).json({ error: 'Missing required fields: ' + missing.join(', ') });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const upstream = await fetch(requestUrl, {
+      method: endpoint.method,
+      headers: {
+        'x-api-key': STAY_API_KEY,
+        'Accept': 'application/json'
+      },
+      signal: controller.signal
+    });
+
+    const text = await upstream.text();
+    let parsedBody = text;
+    try { parsedBody = text ? JSON.parse(text) : null; } catch { /* keep raw text */ }
+
+    return res.status(200).json({
+      request: {
+        endpointId: endpoint.id,
+        method: endpoint.method,
+        url: requestUrl.toString()
+      },
+      response: {
+        status: upstream.status,
+        ok: upstream.ok,
+        headers: Object.fromEntries(upstream.headers.entries()),
+        body: parsedBody
+      }
+    });
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      return res.status(504).json({ error: 'Stay API request timed out.' });
+    }
+    console.error('Stay API test request failed:', err);
+    return res.status(502).json({ error: 'Failed to execute Stay API request.' });
+  } finally {
+    clearTimeout(timeout);
   }
 });
 
