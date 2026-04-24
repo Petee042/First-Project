@@ -2894,6 +2894,22 @@ const STAY_API_ENDPOINTS = {
     queryFields: [
       { key: 'hotel_id', type: 'string', required: true, description: 'Hotel ID to retrieve details for, e.g. 1331780.' }
     ]
+  },
+  airbnbListingPricing: {
+    id: 'airbnbListingPricing',
+    title: 'Airbnb Listing Pricing',
+    description: 'Retrieve Airbnb listing pricing totals for dates and occupancy.',
+    method: 'GET',
+    path: '/v1/airbnb/listing/:listingId/pricing',
+    pathFields: [
+      { key: 'listingId', type: 'string', required: true, description: 'Airbnb listing id path value, e.g. 22135033.' }
+    ],
+    queryFields: [
+      { key: 'check_in', type: 'date', required: true, description: 'Check-in date (YYYY-MM-DD).' },
+      { key: 'check_out', type: 'date', required: true, description: 'Check-out date (YYYY-MM-DD).' },
+      { key: 'adults', type: 'number', required: true, description: 'Number of adult guests.' },
+      { key: 'currency', type: 'string', required: false, description: 'Currency code, e.g. EUR.' }
+    ]
   }
 };
 
@@ -2907,6 +2923,7 @@ app.get('/api/admin/stay/endpoints', requireAdminAuth, (req, res) => {
       description: ep.description,
       method: ep.method,
       path: ep.path,
+      pathFields: ep.pathFields || [],
       queryFields: ep.queryFields
     }))
   });
@@ -2925,10 +2942,23 @@ app.post('/api/admin/stay/request', requireAdminAuth, async (req, res) => {
   }
 
   const payload = (req.body && typeof req.body.params === 'object') ? req.body.params : {};
-  const requestUrl = new URL(endpoint.path, STAY_API_BASE_URL);
+  let resolvedPath = endpoint.path;
   const missing = [];
 
-  for (const field of endpoint.queryFields) {
+  for (const field of (endpoint.pathFields || [])) {
+    const normalised = normaliseAdminQueryValue(payload[field.key], field.type);
+    if (field.required && !normalised) {
+      missing.push(field.key);
+      continue;
+    }
+    if (normalised !== null) {
+      resolvedPath = resolvedPath.replace(':' + field.key, encodeURIComponent(normalised));
+    }
+  }
+
+  const requestUrl = new URL(resolvedPath, STAY_API_BASE_URL);
+
+  for (const field of (endpoint.queryFields || [])) {
     const normalised = normaliseAdminQueryValue(payload[field.key], field.type);
     if (field.required && !normalised) {
       missing.push(field.key);

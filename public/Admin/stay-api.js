@@ -117,6 +117,10 @@ function renderEndpointCard(endpoint) {
   form.className = 'api-request-form';
   form.noValidate = true;
 
+  (endpoint.pathFields || []).forEach((field) => {
+    form.appendChild(createFieldInput(endpoint.id, field));
+  });
+
   endpoint.queryFields.forEach((field) => {
     form.appendChild(createFieldInput(endpoint.id, field));
   });
