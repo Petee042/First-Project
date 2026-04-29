@@ -243,6 +243,37 @@ function formatPreparationScheduleLine(dayKey, listingNames) {
   return weekday + ' ' + day + ' ' + month + ' ' + year + ': ' + text;
 }
 
+function csvEscape(value) {
+  const text = String(value || '');
+  if (text.includes(',') || text.includes('"') || text.includes('\n')) {
+    return '"' + text.replace(/"/g, '""') + '"';
+  }
+  return text;
+}
+
+function rowsToCsv(rows) {
+  const header = 'Date,Property,Listing';
+  const body = rows.map((row) => {
+    return [csvEscape(row.date), csvEscape(row.property), csvEscape(row.listing)].join(',');
+  });
+  return [header].concat(body).join('\n');
+}
+
+function rowsToText(rows, lineFormatter) {
+  const grouped = {};
+  rows.forEach((row) => {
+    if (!grouped[row.date]) {
+      grouped[row.date] = [];
+    }
+    grouped[row.date].push(row.property ? row.property + ' - ' + row.listing : row.listing);
+  });
+
+  return Object.keys(grouped)
+    .sort()
+    .map((dateKey) => lineFormatter(dateKey, grouped[dateKey].sort((a, b) => a.localeCompare(b))))
+    .join('\n');
+}
+
 function downloadTextFile(fileName, content) {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -303,8 +334,8 @@ async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
         }
         const checkoutKey = toDateKey(event.end);
         if (checkoutKey && checkoutsByDay[checkoutKey]) {
-          const label = listing.propertyName ? listing.propertyName + ' - ' + listing.name : listing.name;
-          checkoutsByDay[checkoutKey].add(label);
+          const rowKey = (listing.propertyName || '') + '||' + listing.name;
+          checkoutsByDay[checkoutKey].add(rowKey);
         }
       });
     } catch {
@@ -312,13 +343,28 @@ async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
     }
   }));
 
-  const lines = rangeKeys.map((dayKey) => {
-    const names = Array.from(checkoutsByDay[dayKey]).sort((a, b) => a.localeCompare(b));
-    return formatCleaningScheduleLine(dayKey, names);
+  const rows = [];
+  rangeKeys.forEach((dayKey) => {
+    Array.from(checkoutsByDay[dayKey]).forEach((key) => {
+      const split = key.split('||');
+      rows.push({
+        date: dayKey,
+        property: split[0] || '',
+        listing: split[1] || ''
+      });
+    });
+  });
+
+  rows.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    if (a.property !== b.property) return a.property.localeCompare(b.property);
+    return a.listing.localeCompare(b.listing);
   });
 
   return {
-    text: lines.join('\n'),
+    text: rowsToText(rows, formatCleaningScheduleLine),
+    csv: rowsToCsv(rows),
+    rowCount: rows.length,
     errors
   };
 }
@@ -355,8 +401,8 @@ async function buildPreparationSchedule(selectedListings, days, startDateUtc) {
         }
         const checkinKey = toDateKey(event.start);
         if (checkinKey && checkinsByDay[checkinKey]) {
-          const label = listing.propertyName ? listing.propertyName + ' - ' + listing.name : listing.name;
-          checkinsByDay[checkinKey].add(label);
+          const rowKey = (listing.propertyName || '') + '||' + listing.name;
+          checkinsByDay[checkinKey].add(rowKey);
         }
       });
     } catch {
@@ -364,13 +410,28 @@ async function buildPreparationSchedule(selectedListings, days, startDateUtc) {
     }
   }));
 
-  const lines = rangeKeys.map((dayKey) => {
-    const names = Array.from(checkinsByDay[dayKey]).sort((a, b) => a.localeCompare(b));
-    return formatPreparationScheduleLine(dayKey, names);
+  const rows = [];
+  rangeKeys.forEach((dayKey) => {
+    Array.from(checkinsByDay[dayKey]).forEach((key) => {
+      const split = key.split('||');
+      rows.push({
+        date: dayKey,
+        property: split[0] || '',
+        listing: split[1] || ''
+      });
+    });
+  });
+
+  rows.sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    if (a.property !== b.property) return a.property.localeCompare(b.property);
+    return a.listing.localeCompare(b.listing);
   });
 
   return {
-    text: lines.join('\n'),
+    text: rowsToText(rows, formatPreparationScheduleLine),
+    csv: rowsToCsv(rows),
+    rowCount: rows.length,
     errors
   };
 }
@@ -611,6 +672,7 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
 
   const button = document.getElementById('downloadCleaningScheduleBtn');
   const daysValue = Number(document.getElementById('cleaningDays').value);
+  const format = document.getElementById('cleaningFormat').value;
   const startDateUtc = getSelectedStartDateUtc();
   const selectedListings = getSelectedCleaningListings();
 
@@ -635,8 +697,18 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
   try {
     const result = await buildCleaningSchedule(selectedListings, daysValue, startDateUtc);
     const startKey = keyFromUtcDate(startDateUtc);
-    const fileName = 'cleaning-schedule-' + startKey + '.txt';
-    downloadTextFile(fileName, result.text + '\n');
+    if (result.rowCount < 1) {
+      setMessage('No checkout events found in the selected range.', true);
+      return;
+    }
+
+    if (format === 'csv') {
+      const fileName = 'cleaning-schedule-' + startKey + '.csv';
+      downloadTextFile(fileName, result.csv + '\n');
+    } else {
+      const fileName = 'cleaning-schedule-' + startKey + '.txt';
+      downloadTextFile(fileName, result.text + '\n');
+    }
 
     if (result.errors.length) {
       setMessage('Downloaded with some issues: ' + result.errors.join(' | '), true);
@@ -655,6 +727,7 @@ document.getElementById('preparationScheduleForm').addEventListener('submit', as
 
   const button = document.getElementById('downloadPreparationScheduleBtn');
   const daysValue = Number(document.getElementById('preparationDays').value);
+  const format = document.getElementById('preparationFormat').value;
   const startDateUtc = getSelectedPreparationStartDateUtc();
   const selectedListings = getSelectedPreparationListings();
 
@@ -679,8 +752,18 @@ document.getElementById('preparationScheduleForm').addEventListener('submit', as
   try {
     const result = await buildPreparationSchedule(selectedListings, daysValue, startDateUtc);
     const startKey = keyFromUtcDate(startDateUtc);
-    const fileName = 'preparation-schedule-' + startKey + '.txt';
-    downloadTextFile(fileName, result.text + '\n');
+    if (result.rowCount < 1) {
+      setMessage('No checkin events found in the selected range.', true);
+      return;
+    }
+
+    if (format === 'csv') {
+      const fileName = 'preparation-schedule-' + startKey + '.csv';
+      downloadTextFile(fileName, result.csv + '\n');
+    } else {
+      const fileName = 'preparation-schedule-' + startKey + '.txt';
+      downloadTextFile(fileName, result.text + '\n');
+    }
 
     if (result.errors.length) {
       setMessage('Downloaded with some issues: ' + result.errors.join(' | '), true);
