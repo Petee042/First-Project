@@ -65,12 +65,17 @@
       </div>
 
       <section class="listing-form-section">
-        <h3>Create a Cleaning Schedule</h3>
+        <h3>Schedule</h3>
         <form id="cleaningScheduleForm" novalidate>
           <div id="cleaningListings" class="cleaning-listings" aria-label="Select listings for cleaning schedule">
             <p class="cleaning-empty">No listings available.</p>
           </div>
           <div class="cleaning-actions-row">
+            <label for="scheduleDateMode">Date basis</label>
+            <select id="scheduleDateMode">
+              <option value="checkin">Use Checkin Date</option>
+              <option value="checkout" selected>Use Checkout Date</option>
+            </select>
             <label for="cleaningStartDate">Start date</label>
             <input id="cleaningStartDate" type="date" required />
             <label for="cleaningDays">Number of days</label>
@@ -83,29 +88,6 @@
           </div>
           <div class="schedule-download-row">
             <button id="downloadCleaningScheduleBtn" type="submit" class="btn primary schedule-download-btn">Download Schedule</button>
-          </div>
-        </form>
-      </section>
-
-      <section class="listing-form-section">
-        <h3>Create a Preparation Schedule</h3>
-        <form id="preparationScheduleForm" novalidate>
-          <div id="preparationListings" class="cleaning-listings" aria-label="Select listings for preparation schedule">
-            <p class="cleaning-empty">No listings available.</p>
-          </div>
-          <div class="cleaning-actions-row">
-            <label for="preparationStartDate">Start date</label>
-            <input id="preparationStartDate" type="date" required />
-            <label for="preparationDays">Number of days</label>
-            <input id="preparationDays" type="number" min="1" max="365" value="7" required />
-            <label for="preparationFormat">Download format</label>
-            <select id="preparationFormat">
-              <option value="txt">Text (.txt)</option>
-              <option value="csv">CSV (.csv)</option>
-            </select>
-          </div>
-          <div class="schedule-download-row">
-            <button id="downloadPreparationScheduleBtn" type="submit" class="btn primary schedule-download-btn">Download Schedule</button>
           </div>
         </form>
       </section>

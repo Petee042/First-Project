@@ -624,7 +624,6 @@ async function fetchListings() {
   currentListings = data.listings || [];
   renderListings(currentListings);
   renderCleaningListings(currentListings);
-  renderPreparationListings(currentListings);
 }
 
 async function fetchProperties() {
@@ -688,7 +687,6 @@ async function fetchCleaners() {
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     document.getElementById('cleaningStartDate').value = toDateInputValue(todayUtc);
-    document.getElementById('preparationStartDate').value = toDateInputValue(todayUtc);
     resetCleanerForm();
   } catch (err) {
     setMessage(err.message || 'Failed to load page.', true);
@@ -782,13 +780,14 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
   e.preventDefault();
 
   const button = document.getElementById('downloadCleaningScheduleBtn');
+  const dateMode = document.getElementById('scheduleDateMode').value;
   const daysValue = Number(document.getElementById('cleaningDays').value);
   const format = document.getElementById('cleaningFormat').value;
   const startDateUtc = getSelectedStartDateUtc();
   const selectedListings = getSelectedCleaningListings();
 
   if (!selectedListings.length) {
-    setMessage('Select at least one listing for the cleaning schedule.', true);
+    setMessage('Select at least one listing for the schedule.', true);
     return;
   }
 
@@ -803,86 +802,39 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
   }
 
   button.disabled = true;
-  setMessage('Building cleaning schedule from latest feeds...', false);
+  setMessage('Building schedule from latest feeds...', false);
 
   try {
-    const result = await buildCleaningSchedule(selectedListings, daysValue, startDateUtc);
+    const result = dateMode === 'checkin'
+      ? await buildPreparationSchedule(selectedListings, daysValue, startDateUtc)
+      : await buildCleaningSchedule(selectedListings, daysValue, startDateUtc);
     const startKey = keyFromUtcDate(startDateUtc);
     if (result.rowCount < 1) {
-      setMessage('No checkout events found in the selected range.', true);
+      setMessage(
+        dateMode === 'checkin'
+          ? 'No checkin events found in the selected range.'
+          : 'No checkout events found in the selected range.',
+        true
+      );
       return;
     }
 
+    const modeSuffix = dateMode === 'checkin' ? 'checkin' : 'checkout';
     if (format === 'csv') {
-      const fileName = 'cleaning-schedule-' + startKey + '.csv';
+      const fileName = 'schedule-' + modeSuffix + '-' + startKey + '.csv';
       downloadTextFile(fileName, result.csv + '\n');
     } else {
-      const fileName = 'cleaning-schedule-' + startKey + '.txt';
+      const fileName = 'schedule-' + modeSuffix + '-' + startKey + '.txt';
       downloadTextFile(fileName, result.text + '\n');
     }
 
     if (result.errors.length) {
       setMessage('Downloaded with some issues: ' + result.errors.join(' | '), true);
     } else {
-      setMessage('Cleaning schedule downloaded.', false);
+      setMessage('Schedule downloaded.', false);
     }
   } catch {
-    setMessage('Failed to build cleaning schedule.', true);
-  } finally {
-    button.disabled = false;
-  }
-});
-
-document.getElementById('preparationScheduleForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-
-  const button = document.getElementById('downloadPreparationScheduleBtn');
-  const daysValue = Number(document.getElementById('preparationDays').value);
-  const format = document.getElementById('preparationFormat').value;
-  const startDateUtc = getSelectedPreparationStartDateUtc();
-  const selectedListings = getSelectedPreparationListings();
-
-  if (!selectedListings.length) {
-    setMessage('Select at least one listing for the preparation schedule.', true);
-    return;
-  }
-
-  if (!Number.isInteger(daysValue) || daysValue < 1 || daysValue > 365) {
-    setMessage('Number of days must be between 1 and 365.', true);
-    return;
-  }
-
-  if (!startDateUtc) {
-    setMessage('Please select a valid start date.', true);
-    return;
-  }
-
-  button.disabled = true;
-  setMessage('Building preparation schedule from latest feeds...', false);
-
-  try {
-    const result = await buildPreparationSchedule(selectedListings, daysValue, startDateUtc);
-    const startKey = keyFromUtcDate(startDateUtc);
-    if (result.rowCount < 1) {
-      setMessage('No checkin events found in the selected range.', true);
-      return;
-    }
-
-    if (format === 'csv') {
-      const fileName = 'preparation-schedule-' + startKey + '.csv';
-      downloadTextFile(fileName, result.csv + '\n');
-    } else {
-      const fileName = 'preparation-schedule-' + startKey + '.txt';
-      downloadTextFile(fileName, result.text + '\n');
-    }
-
-    if (result.errors.length) {
-      setMessage('Downloaded with some issues: ' + result.errors.join(' | '), true);
-    } else {
-      setMessage('Preparation schedule downloaded.', false);
-    }
-  } catch {
-    setMessage('Failed to build preparation schedule.', true);
+    setMessage('Failed to build schedule.', true);
   } finally {
     button.disabled = false;
   }
