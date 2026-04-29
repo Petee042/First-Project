@@ -497,6 +497,43 @@ textarea:focus {
   margin-top: 0.25rem;
 }
 
+.schedule-format-row {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  margin-top: 0.6rem;
+}
+
+.schedule-format-row label {
+  font-weight: 500;
+  font-size: 0.93rem;
+}
+
+.schedule-format-row select {
+  flex: 1;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 0.93rem;
+}
+
+.schedule-change-date,
+.schedule-cleaner {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #dbe1ef;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  width: 100%;
+  background: #ffffff;
+}
+
+.schedule-change-date:focus,
+.schedule-cleaner:focus {
+  outline: none;
+  border-color: #4361ee;
+  box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.1);
+}
+
 .feed-actions {
   display: flex;
   gap: 0.6rem;

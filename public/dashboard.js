@@ -488,6 +488,16 @@ async function buildPreparationSchedule(selectedListings, days, startDateUtc) {
   };
 }
 
+function formatDisplayDate(dateKey) {
+  if (!dateKey) return '';
+  const utcDate = utcDateFromKey(dateKey);
+  const dayName = WEEKDAY_NAMES[utcDate.getUTCDay()].substring(0, 3);
+  const day = utcDate.getUTCDate();
+  const monthName = MONTH_SHORT_NAMES[utcDate.getUTCMonth()];
+  const year = String(utcDate.getUTCFullYear()).slice(-2);
+  return dayName + ' ' + day + ' ' + monthName + ' ' + year;
+}
+
 function renderSchedulePreviewTable(rows, dateMode, errors) {
   const container = document.getElementById('schedulePreview');
   container.innerHTML = '';
@@ -505,7 +515,8 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
 
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
-  ['Date'].concat(dateMode === 'checkin' ? ['Checkout Date'] : []).concat(['Property', 'Listing']).forEach((label) => {
+  const headers = ['Checkin Date'].concat(dateMode === 'checkin' ? ['Checkout Date'] : []).concat(['Change Date', 'Property', 'Listing', 'Cleaner']);
+  headers.forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
     headRow.appendChild(th);
@@ -514,18 +525,27 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
   table.appendChild(thead);
 
   const tbody = document.createElement('tbody');
-  rows.forEach((row) => {
+  rows.forEach((row, idx) => {
     const tr = document.createElement('tr');
 
     const dateCell = document.createElement('td');
-    dateCell.textContent = row.date || '';
+    dateCell.textContent = formatDisplayDate(row.date);
     tr.appendChild(dateCell);
 
     if (dateMode === 'checkin') {
       const checkoutCell = document.createElement('td');
-      checkoutCell.textContent = row.checkoutDate || '';
+      checkoutCell.textContent = formatDisplayDate(row.checkoutDate) || '';
       tr.appendChild(checkoutCell);
     }
+
+    const changeDateCell = document.createElement('td');
+    const dateInput = document.createElement('input');
+    dateInput.type = 'date';
+    dateInput.value = dateMode === 'checkin' ? row.date : row.date;
+    dateInput.className = 'schedule-change-date';
+    dateInput.dataset.rowIndex = idx;
+    changeDateCell.appendChild(dateInput);
+    tr.appendChild(changeDateCell);
 
     const propertyCell = document.createElement('td');
     propertyCell.textContent = row.property || '';
@@ -534,6 +554,26 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
     const listingCell = document.createElement('td');
     listingCell.textContent = row.listing || '';
     tr.appendChild(listingCell);
+
+    const cleanerCell = document.createElement('td');
+    const cleanerSelect = document.createElement('select');
+    cleanerSelect.className = 'schedule-cleaner';
+    cleanerSelect.dataset.rowIndex = idx;
+
+    const unallocatedOption = document.createElement('option');
+    unallocatedOption.value = '';
+    unallocatedOption.textContent = 'Unallocated';
+    cleanerSelect.appendChild(unallocatedOption);
+
+    currentCleaners.forEach((cleaner) => {
+      const option = document.createElement('option');
+      option.value = cleaner.id;
+      option.textContent = (cleaner.firstName || '') + ' ' + (cleaner.lastName || '');
+      cleanerSelect.appendChild(option);
+    });
+
+    cleanerCell.appendChild(cleanerSelect);
+    tr.appendChild(cleanerCell);
 
     tbody.appendChild(tr);
   });

@@ -1,5 +1,6 @@
 {
     "chat.tools.terminal.autoApprove": {
-        "Add-Content": true
+        "Add-Content": true,
+        "git rev-list": true
     }
 }
