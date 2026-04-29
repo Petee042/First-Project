@@ -515,7 +515,7 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
 
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
-  const headers = ['Checkin Date'].concat(dateMode === 'checkin' ? ['Checkout Date'] : []).concat(['Property', 'Listing']);
+  const headers = ['Checkin Date', 'Checkout Date', 'Property', 'Listing'];
   headers.forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
@@ -534,11 +534,9 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
     dateCell.textContent = formatDisplayDate(row.date);
     mainRow.appendChild(dateCell);
 
-    if (dateMode === 'checkin') {
-      const checkoutCell = document.createElement('td');
-      checkoutCell.textContent = formatDisplayDate(row.checkoutDate) || '';
-      mainRow.appendChild(checkoutCell);
-    }
+    const checkoutCell = document.createElement('td');
+    checkoutCell.textContent = formatDisplayDate(row.checkoutDate) || '';
+    mainRow.appendChild(checkoutCell);
 
     const propertyCell = document.createElement('td');
     propertyCell.textContent = row.property || '';
@@ -594,7 +592,7 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
     currentCleaners.forEach((cleaner) => {
       const option = document.createElement('option');
       option.value = cleaner.id;
-      option.textContent = (cleaner.firstName || '') + ' ' + (cleaner.lastName || '');
+      option.textContent = (cleaner.first_name || '') + ' ' + (cleaner.last_name || '');
       cleanerSelect.appendChild(option);
     });
 
