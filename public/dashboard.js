@@ -121,15 +121,15 @@ function resetCleanerForm() {
   document.getElementById('cleanerPassword').value = '';
   document.getElementById('cleanerPassword').required = true;
   document.getElementById('cleanerPassword').placeholder = '';
-  document.getElementById('cleanerFormTitle').textContent = 'Add Cleaner';
-  document.getElementById('saveCleanerBtn').textContent = 'Add Cleaner';
+  document.getElementById('cleanerFormTitle').textContent = 'Add Changeover Staff';
+  document.getElementById('saveCleanerBtn').textContent = 'Add Changeover Staff';
   document.getElementById('cancelCleanerEditBtn').classList.add('hidden');
 }
 
 function startCleanerEdit(cleanerId) {
   const cleaner = currentCleaners.find((item) => Number(item.id) === Number(cleanerId));
   if (!cleaner) {
-    setMessage('Cleaner not found.', true);
+    setMessage('Changeover staff entry not found.', true);
     return;
   }
 
@@ -141,8 +141,8 @@ function startCleanerEdit(cleanerId) {
   document.getElementById('cleanerPassword').value = '';
   document.getElementById('cleanerPassword').required = false;
   document.getElementById('cleanerPassword').placeholder = 'Leave blank to keep current password';
-  document.getElementById('cleanerFormTitle').textContent = 'Edit Cleaner';
-  document.getElementById('saveCleanerBtn').textContent = 'Save Cleaner';
+  document.getElementById('cleanerFormTitle').textContent = 'Edit Changeover Staff';
+  document.getElementById('saveCleanerBtn').textContent = 'Save Changeover Staff';
   document.getElementById('cancelCleanerEditBtn').classList.remove('hidden');
 }
 
@@ -155,8 +155,8 @@ function renderCleaners(cleaners) {
   if (!currentCleaners.length) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = 6;
-    cell.textContent = 'No cleaners configured yet.';
+    cell.colSpan = 3;
+    cell.textContent = 'No changeover staff configured yet.';
     row.appendChild(cell);
     tbody.appendChild(row);
     return;
@@ -171,20 +171,11 @@ function renderCleaners(cleaners) {
     const lastNameCell = document.createElement('td');
     lastNameCell.textContent = cleaner.last_name || '';
 
-    const emailCell = document.createElement('td');
-    emailCell.textContent = cleaner.email || '';
-
-    const phoneCell = document.createElement('td');
-    phoneCell.textContent = cleaner.telephone || '';
-
-    const passwordCell = document.createElement('td');
-    passwordCell.textContent = '********';
-
     const actionCell = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
     editBtn.className = 'btn secondary';
-    editBtn.textContent = 'Edit Cleaner';
+    editBtn.textContent = 'View Details/Edit';
     editBtn.addEventListener('click', () => {
       startCleanerEdit(cleaner.id);
     });
@@ -193,9 +184,6 @@ function renderCleaners(cleaners) {
 
     row.appendChild(firstNameCell);
     row.appendChild(lastNameCell);
-    row.appendChild(emailCell);
-    row.appendChild(phoneCell);
-    row.appendChild(passwordCell);
     row.appendChild(actionCell);
 
     tbody.appendChild(row);
@@ -678,7 +666,7 @@ async function fetchCleaners() {
 
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.error || 'Failed to load cleaners.');
+    throw new Error(data.error || 'Failed to load changeover staff.');
   }
 
   renderCleaners(data.cleaners || []);
@@ -919,7 +907,7 @@ document.getElementById('cleanerForm').addEventListener('submit', async (e) => {
   }
 
   if (!isEdit && !password) {
-    setMessage('Password is required when adding a cleaner.', true);
+    setMessage('Password is required when adding changeover staff.', true);
     return;
   }
 
@@ -936,15 +924,15 @@ document.getElementById('cleanerForm').addEventListener('submit', async (e) => {
 
     const data = await res.json();
     if (!res.ok) {
-      setMessage(data.error || 'Failed to save cleaner.', true);
+      setMessage(data.error || 'Failed to save changeover staff.', true);
       return;
     }
 
-    setMessage(isEdit ? 'Cleaner updated.' : 'Cleaner added.', false);
+    setMessage(isEdit ? 'Changeover staff updated.' : 'Changeover staff added.', false);
     resetCleanerForm();
     await fetchCleaners();
   } catch {
-    setMessage('Network error saving cleaner.', true);
+    setMessage('Network error saving changeover staff.', true);
   } finally {
     button.disabled = false;
   }
