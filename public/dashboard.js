@@ -380,9 +380,10 @@ async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
         if (event && event.isReservation === false) {
           return;
         }
+        const checkinKey = toDateKey(event.start);
         const checkoutKey = toDateKey(event.end);
         if (checkoutKey && checkoutsByDay[checkoutKey]) {
-          const rowKey = (listing.propertyName || '') + '||' + listing.name;
+          const rowKey = (listing.propertyName || '') + '||' + listing.name + '||' + (checkinKey || '') + '||' + (checkoutKey || '');
           checkoutsByDay[checkoutKey].add(rowKey);
         }
       });
@@ -397,8 +398,10 @@ async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
       const split = key.split('||');
       rows.push({
         date: dayKey,
+        checkinDate: split[2] || '',
         property: split[0] || '',
-        listing: split[1] || ''
+        listing: split[1] || '',
+        checkoutDate: split[3] || dayKey
       });
     });
   });
@@ -531,11 +534,11 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
     mainRow.className = 'schedule-main-row';
 
     const dateCell = document.createElement('td');
-    dateCell.textContent = formatDisplayDate(row.date);
+    dateCell.textContent = formatDisplayDate(row.checkinDate || row.date);
     mainRow.appendChild(dateCell);
 
     const checkoutCell = document.createElement('td');
-    checkoutCell.textContent = formatDisplayDate(row.checkoutDate) || '';
+    checkoutCell.textContent = formatDisplayDate(row.checkoutDate || row.date);
     mainRow.appendChild(checkoutCell);
 
     const propertyCell = document.createElement('td');
@@ -567,7 +570,7 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
     dateLabel.className = 'schedule-control-label';
     const dateInput = document.createElement('input');
     dateInput.type = 'date';
-    dateInput.value = row.date;
+    dateInput.value = dateMode === 'checkout' ? (row.checkoutDate || row.date) : row.date;
     dateInput.className = 'schedule-change-date';
     dateInput.dataset.rowIndex = idx;
     dateInputDiv.appendChild(dateLabel);
