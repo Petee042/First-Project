@@ -141,6 +141,58 @@
           </tbody>
         </table>
       </section>
+
+      <section class="listing-form-section">
+        <h3>Cleaners</h3>
+        <div class="listings-block">
+          <table class="calendar-table" aria-label="Configured cleaners">
+            <thead>
+              <tr>
+                <th>First Name</th>
+                <th>Last Name</th>
+                <th>Email</th>
+                <th>Telephone</th>
+                <th>Password</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="cleanersTableBody">
+              <tr>
+                <td colspan="6">No cleaners configured yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4 id="cleanerFormTitle">Add Cleaner</h4>
+        <form id="cleanerForm" novalidate>
+          <input id="cleanerId" type="hidden" />
+          <div class="calendar-source-row cleaner-row">
+            <label for="cleanerFirstName">First Name</label>
+            <input id="cleanerFirstName" type="text" maxlength="120" required />
+          </div>
+          <div class="calendar-source-row cleaner-row">
+            <label for="cleanerLastName">Last Name</label>
+            <input id="cleanerLastName" type="text" maxlength="120" required />
+          </div>
+          <div class="calendar-source-row cleaner-row">
+            <label for="cleanerEmail">Email Address</label>
+            <input id="cleanerEmail" type="email" maxlength="160" required />
+          </div>
+          <div class="calendar-source-row cleaner-row">
+            <label for="cleanerTelephone">Telephone Number</label>
+            <input id="cleanerTelephone" type="text" maxlength="60" required />
+          </div>
+          <div class="calendar-source-row cleaner-row">
+            <label for="cleanerPassword">Password</label>
+            <input id="cleanerPassword" type="password" minlength="8" required />
+          </div>
+          <div class="feed-actions">
+            <button id="saveCleanerBtn" type="submit" class="btn primary calendar-btn">Add Cleaner</button>
+            <button id="cancelCleanerEditBtn" type="button" class="btn secondary hidden">Cancel Edit</button>
+          </div>
+        </form>
+      </section>
     </div>
   </main>
 

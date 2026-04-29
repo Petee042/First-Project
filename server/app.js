@@ -130,7 +130,7 @@ function writeUsersToFile(users) {
 
 function ensureLocalListingsStore() {
   if (!fs.existsSync(listingsFile)) {
-    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [], properties: [], cached_events: [] }, null, 2), 'utf8');
+    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [] }, null, 2), 'utf8');
   }
 }
 
@@ -139,7 +139,7 @@ function readListingsStore() {
   const content = fs.readFileSync(listingsFile, 'utf8');
   const parsed = JSON.parse(content);
   if (!parsed || !Array.isArray(parsed.listings) || !Array.isArray(parsed.feeds)) {
-    return { listings: [], feeds: [], source_colors: [], properties: [], cached_events: [] };
+    return { listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [] };
   }
   if (!Array.isArray(parsed.source_colors)) {
     parsed.source_colors = [];
@@ -149,6 +149,9 @@ function readListingsStore() {
   }
   if (!Array.isArray(parsed.cached_events)) {
     parsed.cached_events = [];
+  }
+  if (!Array.isArray(parsed.cleaners)) {
+    parsed.cleaners = [];
   }
   return parsed;
 }
@@ -307,6 +310,21 @@ async function initializeUserStore() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cleaners (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      telephone TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (user_id, email)
+    )
+  `);
+
   await migrateUsersFromFile();
 
   await pool.query(`
@@ -417,6 +435,213 @@ function normaliseOptionalEmail(value) {
   }
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email) ? email.toLowerCase() : null;
+}
+
+function normaliseTelephone(value) {
+  const telephone = String(value || '').trim();
+  if (!telephone) {
+    return null;
+  }
+  return telephone;
+}
+
+async function getCleanersForUser(userId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return (store.cleaners || [])
+      .filter((cleaner) => Number(cleaner.user_id) === Number(userId))
+      .sort((a, b) => {
+        const byLast = String(a.last_name || '').localeCompare(String(b.last_name || ''));
+        if (byLast !== 0) return byLast;
+        return String(a.first_name || '').localeCompare(String(b.first_name || ''));
+      })
+      .map((cleaner) => ({
+        id: cleaner.id,
+        user_id: cleaner.user_id,
+        first_name: cleaner.first_name,
+        last_name: cleaner.last_name,
+        email: cleaner.email,
+        telephone: cleaner.telephone,
+        created_at: cleaner.created_at,
+        updated_at: cleaner.updated_at
+      }));
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, user_id, first_name, last_name, email, telephone, created_at, updated_at
+      FROM cleaners
+      WHERE user_id = $1
+      ORDER BY last_name ASC, first_name ASC
+    `,
+    [userId]
+  );
+  return result.rows;
+}
+
+async function createCleanerForUser(userId, input) {
+  const firstName = String(input.firstName || '').trim();
+  const lastName = String(input.lastName || '').trim();
+  const email = normaliseOptionalEmail(input.email);
+  const telephone = normaliseTelephone(input.telephone);
+  const password = String(input.password || '');
+
+  if (!firstName || !lastName || !email || !telephone || !password) {
+    return { error: 'First name, last name, email, telephone, and password are required.' };
+  }
+  if (password.length < 8) {
+    return { error: 'Cleaner password must be at least 8 characters.' };
+  }
+
+  const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const duplicate = (store.cleaners || []).some(
+      (cleaner) => Number(cleaner.user_id) === Number(userId) && String(cleaner.email).toLowerCase() === email
+    );
+    if (duplicate) {
+      return { error: 'A cleaner with this email already exists.' };
+    }
+
+    const nextId = (store.cleaners || []).length
+      ? Math.max(...store.cleaners.map((cleaner) => Number(cleaner.id))) + 1
+      : 1;
+    const now = new Date().toISOString();
+    const cleaner = {
+      id: nextId,
+      user_id: Number(userId),
+      first_name: firstName,
+      last_name: lastName,
+      email,
+      telephone,
+      password_hash: passwordHash,
+      created_at: now,
+      updated_at: now
+    };
+    store.cleaners.push(cleaner);
+    writeListingsStore(store);
+
+    return {
+      cleaner: {
+        id: cleaner.id,
+        user_id: cleaner.user_id,
+        first_name: cleaner.first_name,
+        last_name: cleaner.last_name,
+        email: cleaner.email,
+        telephone: cleaner.telephone,
+        created_at: cleaner.created_at,
+        updated_at: cleaner.updated_at
+      }
+    };
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        INSERT INTO cleaners (user_id, first_name, last_name, email, telephone, password_hash)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, user_id, first_name, last_name, email, telephone, created_at, updated_at
+      `,
+      [userId, firstName, lastName, email, telephone, passwordHash]
+    );
+    return { cleaner: result.rows[0] };
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return { error: 'A cleaner with this email already exists.' };
+    }
+    throw err;
+  }
+}
+
+async function updateCleanerForUser(cleanerId, userId, input) {
+  const firstName = String(input.firstName || '').trim();
+  const lastName = String(input.lastName || '').trim();
+  const email = normaliseOptionalEmail(input.email);
+  const telephone = normaliseTelephone(input.telephone);
+  const password = String(input.password || '').trim();
+
+  if (!firstName || !lastName || !email || !telephone) {
+    return { error: 'First name, last name, email, and telephone are required.' };
+  }
+  if (password && password.length < 8) {
+    return { error: 'Cleaner password must be at least 8 characters.' };
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const idx = (store.cleaners || []).findIndex(
+      (cleaner) => Number(cleaner.id) === Number(cleanerId) && Number(cleaner.user_id) === Number(userId)
+    );
+    if (idx === -1) {
+      return { error: 'Cleaner not found.' };
+    }
+
+    const duplicate = store.cleaners.some(
+      (cleaner) => Number(cleaner.user_id) === Number(userId)
+        && Number(cleaner.id) !== Number(cleanerId)
+        && String(cleaner.email).toLowerCase() === email
+    );
+    if (duplicate) {
+      return { error: 'A cleaner with this email already exists.' };
+    }
+
+    store.cleaners[idx].first_name = firstName;
+    store.cleaners[idx].last_name = lastName;
+    store.cleaners[idx].email = email;
+    store.cleaners[idx].telephone = telephone;
+    store.cleaners[idx].updated_at = new Date().toISOString();
+    if (password) {
+      store.cleaners[idx].password_hash = await bcrypt.hash(password, SALT_ROUNDS);
+    }
+    writeListingsStore(store);
+
+    return {
+      cleaner: {
+        id: store.cleaners[idx].id,
+        user_id: store.cleaners[idx].user_id,
+        first_name: store.cleaners[idx].first_name,
+        last_name: store.cleaners[idx].last_name,
+        email: store.cleaners[idx].email,
+        telephone: store.cleaners[idx].telephone,
+        created_at: store.cleaners[idx].created_at,
+        updated_at: store.cleaners[idx].updated_at
+      }
+    };
+  }
+
+  const existing = await pool.query(
+    'SELECT id FROM cleaners WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [cleanerId, userId]
+  );
+  if (!existing.rows[0]) {
+    return { error: 'Cleaner not found.' };
+  }
+
+  const passwordHash = password ? await bcrypt.hash(password, SALT_ROUNDS) : null;
+
+  try {
+    const result = await pool.query(
+      `
+        UPDATE cleaners
+        SET first_name = $1,
+            last_name = $2,
+            email = $3,
+            telephone = $4,
+            password_hash = COALESCE($5, password_hash),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $6 AND user_id = $7
+        RETURNING id, user_id, first_name, last_name, email, telephone, created_at, updated_at
+      `,
+      [firstName, lastName, email, telephone, passwordHash, cleanerId, userId]
+    );
+    return { cleaner: result.rows[0] };
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return { error: 'A cleaner with this email already exists.' };
+    }
+    throw err;
+  }
 }
 
 async function ensureDefaultPropertyForUser(userId) {
@@ -779,7 +1004,9 @@ async function deleteUserAndData(userId) {
       properties: (store.properties || []).filter((property) => Number(property.user_id) !== Number(userId)),
       listings: store.listings.filter((listing) => Number(listing.user_id) !== Number(userId)),
       feeds: store.feeds.filter((feed) => !removedListingIds.has(Number(feed.listing_id))),
-      source_colors: (store.source_colors || []).filter((row) => Number(row.user_id) !== Number(userId))
+      source_colors: (store.source_colors || []).filter((row) => Number(row.user_id) !== Number(userId)),
+      cleaners: (store.cleaners || []).filter((cleaner) => Number(cleaner.user_id) !== Number(userId)),
+      cached_events: (store.cached_events || []).filter((row) => !removedListingIds.has(Number(row.listing_id)))
     };
     writeListingsStore(updatedStore);
 
@@ -2433,6 +2660,65 @@ app.get('/api/me', requireAuth, (req, res) => {
     username: req.session.username,
     email: req.session.email
   });
+});
+
+// GET /api/cleaners — all cleaners for current user
+app.get('/api/cleaners', requireAuth, async (req, res) => {
+  try {
+    const cleaners = await getCleanersForUser(req.session.userId);
+    return res.json({ cleaners });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load cleaners.' });
+  }
+});
+
+// POST /api/cleaners — create cleaner for current user
+app.post('/api/cleaners', requireAuth, async (req, res) => {
+  try {
+    const { cleaner, error } = await createCleanerForUser(req.session.userId, {
+      firstName: req.body.firstName,
+      lastName: req.body.lastName,
+      email: req.body.email,
+      telephone: req.body.telephone,
+      password: req.body.password
+    });
+    if (error) {
+      return res.status(400).json({ error });
+    }
+    return res.status(201).json({ cleaner });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create cleaner.' });
+  }
+});
+
+// PUT /api/cleaners/:cleanerId — update cleaner for current user
+app.put('/api/cleaners/:cleanerId', requireAuth, async (req, res) => {
+  const cleanerId = Number(req.params.cleanerId);
+  if (!Number.isInteger(cleanerId) || cleanerId <= 0) {
+    return res.status(400).json({ error: 'Invalid cleaner id.' });
+  }
+
+  try {
+    const { cleaner, error } = await updateCleanerForUser(cleanerId, req.session.userId, {
+      firstName: req.body.firstName,
+      lastName: req.body.lastName,
+      email: req.body.email,
+      telephone: req.body.telephone,
+      password: req.body.password
+    });
+    if (error === 'Cleaner not found.') {
+      return res.status(404).json({ error });
+    }
+    if (error) {
+      return res.status(400).json({ error });
+    }
+    return res.json({ cleaner });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to update cleaner.' });
+  }
 });
 
 // GET /api/properties — all properties for current user

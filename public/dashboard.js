@@ -14,6 +14,7 @@ const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
 const MONTH_SHORT_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 let currentListings = [];
 let currentProperties = [];
+let currentCleaners = [];
 
 function setMessage(text, isError) {
   const el = document.getElementById('dashboardMessage');
@@ -108,6 +109,96 @@ function renderProperties(properties) {
     option.value = String(property.id);
     option.textContent = property.name;
     select.appendChild(option);
+  });
+}
+
+function resetCleanerForm() {
+  document.getElementById('cleanerId').value = '';
+  document.getElementById('cleanerFirstName').value = '';
+  document.getElementById('cleanerLastName').value = '';
+  document.getElementById('cleanerEmail').value = '';
+  document.getElementById('cleanerTelephone').value = '';
+  document.getElementById('cleanerPassword').value = '';
+  document.getElementById('cleanerPassword').required = true;
+  document.getElementById('cleanerPassword').placeholder = '';
+  document.getElementById('cleanerFormTitle').textContent = 'Add Cleaner';
+  document.getElementById('saveCleanerBtn').textContent = 'Add Cleaner';
+  document.getElementById('cancelCleanerEditBtn').classList.add('hidden');
+}
+
+function startCleanerEdit(cleanerId) {
+  const cleaner = currentCleaners.find((item) => Number(item.id) === Number(cleanerId));
+  if (!cleaner) {
+    setMessage('Cleaner not found.', true);
+    return;
+  }
+
+  document.getElementById('cleanerId').value = String(cleaner.id);
+  document.getElementById('cleanerFirstName').value = cleaner.first_name || '';
+  document.getElementById('cleanerLastName').value = cleaner.last_name || '';
+  document.getElementById('cleanerEmail').value = cleaner.email || '';
+  document.getElementById('cleanerTelephone').value = cleaner.telephone || '';
+  document.getElementById('cleanerPassword').value = '';
+  document.getElementById('cleanerPassword').required = false;
+  document.getElementById('cleanerPassword').placeholder = 'Leave blank to keep current password';
+  document.getElementById('cleanerFormTitle').textContent = 'Edit Cleaner';
+  document.getElementById('saveCleanerBtn').textContent = 'Save Cleaner';
+  document.getElementById('cancelCleanerEditBtn').classList.remove('hidden');
+}
+
+function renderCleaners(cleaners) {
+  currentCleaners = cleaners || [];
+
+  const tbody = document.getElementById('cleanersTableBody');
+  tbody.innerHTML = '';
+
+  if (!currentCleaners.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 6;
+    cell.textContent = 'No cleaners configured yet.';
+    row.appendChild(cell);
+    tbody.appendChild(row);
+    return;
+  }
+
+  currentCleaners.forEach((cleaner) => {
+    const row = document.createElement('tr');
+
+    const firstNameCell = document.createElement('td');
+    firstNameCell.textContent = cleaner.first_name || '';
+
+    const lastNameCell = document.createElement('td');
+    lastNameCell.textContent = cleaner.last_name || '';
+
+    const emailCell = document.createElement('td');
+    emailCell.textContent = cleaner.email || '';
+
+    const phoneCell = document.createElement('td');
+    phoneCell.textContent = cleaner.telephone || '';
+
+    const passwordCell = document.createElement('td');
+    passwordCell.textContent = '********';
+
+    const actionCell = document.createElement('td');
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'btn secondary';
+    editBtn.textContent = 'Edit Cleaner';
+    editBtn.addEventListener('click', () => {
+      startCleanerEdit(cleaner.id);
+    });
+
+    actionCell.appendChild(editBtn);
+
+    row.appendChild(firstNameCell);
+    row.appendChild(lastNameCell);
+    row.appendChild(emailCell);
+    row.appendChild(phoneCell);
+    row.appendChild(passwordCell);
+    row.appendChild(actionCell);
+
+    tbody.appendChild(row);
   });
 }
 
@@ -578,6 +669,21 @@ async function fetchFeedSources() {
   renderFeedSources(data.sources || []);
 }
 
+async function fetchCleaners() {
+  const res = await fetch('/api/cleaners');
+  if (res.status === 401) {
+    window.location.href = '/';
+    return;
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to load cleaners.');
+  }
+
+  renderCleaners(data.cleaners || []);
+}
+
 (async () => {
   try {
     const meRes = await fetch('/api/me');
@@ -589,11 +695,13 @@ async function fetchFeedSources() {
     await fetchProperties();
     await fetchListings();
     await fetchFeedSources();
+    await fetchCleaners();
 
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     document.getElementById('cleaningStartDate').value = toDateInputValue(todayUtc);
     document.getElementById('preparationStartDate').value = toDateInputValue(todayUtc);
+    resetCleanerForm();
   } catch (err) {
     setMessage(err.message || 'Failed to load page.', true);
   }
@@ -790,4 +898,58 @@ document.getElementById('preparationScheduleForm').addEventListener('submit', as
   } finally {
     button.disabled = false;
   }
+});
+
+document.getElementById('cleanerForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const cleanerId = Number(document.getElementById('cleanerId').value);
+  const isEdit = Number.isInteger(cleanerId) && cleanerId > 0;
+
+  const button = document.getElementById('saveCleanerBtn');
+  const firstName = document.getElementById('cleanerFirstName').value.trim();
+  const lastName = document.getElementById('cleanerLastName').value.trim();
+  const email = document.getElementById('cleanerEmail').value.trim();
+  const telephone = document.getElementById('cleanerTelephone').value.trim();
+  const password = document.getElementById('cleanerPassword').value;
+
+  if (!firstName || !lastName || !email || !telephone) {
+    setMessage('First name, last name, email, and telephone are required.', true);
+    return;
+  }
+
+  if (!isEdit && !password) {
+    setMessage('Password is required when adding a cleaner.', true);
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    const res = await fetch(
+      isEdit ? '/api/cleaners/' + encodeURIComponent(cleanerId) : '/api/cleaners',
+      {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ firstName, lastName, email, telephone, password })
+      }
+    );
+
+    const data = await res.json();
+    if (!res.ok) {
+      setMessage(data.error || 'Failed to save cleaner.', true);
+      return;
+    }
+
+    setMessage(isEdit ? 'Cleaner updated.' : 'Cleaner added.', false);
+    resetCleanerForm();
+    await fetchCleaners();
+  } catch {
+    setMessage('Network error saving cleaner.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('cancelCleanerEditBtn').addEventListener('click', () => {
+  resetCleanerForm();
 });
