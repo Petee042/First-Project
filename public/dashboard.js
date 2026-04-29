@@ -15,6 +15,7 @@ const MONTH_SHORT_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug
 let currentListings = [];
 let currentProperties = [];
 let currentCleaners = [];
+let schedulePreviewRequestId = 0;
 
 function setMessage(text, isError) {
   const el = document.getElementById('dashboardMessage');
@@ -240,39 +241,9 @@ function renderCleaningListings(listings) {
     checkbox.value = String(listing.id);
     checkbox.setAttribute('data-listing-name', listing.name);
     checkbox.setAttribute('data-property-name', listing.property_name || '');
-
-    const name = document.createElement('span');
-    name.className = 'cleaning-listing-name';
-    name.textContent = listing.name;
-
-    row.appendChild(checkbox);
-    row.appendChild(name);
-    container.appendChild(row);
-  });
-}
-
-function renderPreparationListings(listings) {
-  const container = document.getElementById('preparationListings');
-  container.innerHTML = '';
-
-  if (!listings.length) {
-    const text = document.createElement('p');
-    text.className = 'cleaning-empty';
-    text.textContent = 'No listings available.';
-    container.appendChild(text);
-    return;
-  }
-
-  listings.forEach((listing) => {
-    const row = document.createElement('label');
-    row.className = 'cleaning-listing-row';
-
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.className = 'preparation-listing-checkbox';
-    checkbox.value = String(listing.id);
-    checkbox.setAttribute('data-listing-name', listing.name);
-    checkbox.setAttribute('data-property-name', listing.property_name || '');
+    checkbox.addEventListener('change', () => {
+      updateSchedulePreview();
+    });
 
     const name = document.createElement('span');
     name.className = 'cleaning-listing-name';
@@ -286,15 +257,6 @@ function renderPreparationListings(listings) {
 
 function getSelectedCleaningListings() {
   const checked = Array.from(document.querySelectorAll('.cleaning-listing-checkbox:checked'));
-  return checked.map((box) => ({
-    id: Number(box.value),
-    name: box.getAttribute('data-listing-name') || 'Listing',
-    propertyName: box.getAttribute('data-property-name') || ''
-  }));
-}
-
-function getSelectedPreparationListings() {
-  const checked = Array.from(document.querySelectorAll('.preparation-listing-checkbox:checked'));
   return checked.map((box) => ({
     id: Number(box.value),
     name: box.getAttribute('data-listing-name') || 'Listing',
@@ -388,12 +350,6 @@ function getSelectedStartDateUtc() {
   return utcDateFromKey(raw);
 }
 
-function getSelectedPreparationStartDateUtc() {
-  const raw = document.getElementById('preparationStartDate').value;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
-  return utcDateFromKey(raw);
-}
-
 async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
   const rangeKeys = [];
   const checkoutsByDay = {};
@@ -456,6 +412,7 @@ async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
   return {
     text: rowsToText(rows, formatCleaningScheduleLine),
     csv: rowsToCsv(rows),
+    rows,
     rowCount: rows.length,
     errors
   };
@@ -525,9 +482,107 @@ async function buildPreparationSchedule(selectedListings, days, startDateUtc) {
   return {
     text: rowsToText(rows, formatPreparationScheduleLine),
     csv: preparationRowsToCsv(rows),
+    rows,
     rowCount: rows.length,
     errors
   };
+}
+
+function renderSchedulePreviewTable(rows, dateMode, errors) {
+  const container = document.getElementById('schedulePreview');
+  container.innerHTML = '';
+
+  if (!rows.length) {
+    const empty = document.createElement('p');
+    empty.className = 'cleaning-empty';
+    empty.textContent = 'No schedule entries for the selected listings and date range.';
+    container.appendChild(empty);
+    return;
+  }
+
+  const table = document.createElement('table');
+  table.className = 'calendar-table';
+
+  const thead = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  ['Date'].concat(dateMode === 'checkin' ? ['Checkout Date'] : []).concat(['Property', 'Listing']).forEach((label) => {
+    const th = document.createElement('th');
+    th.textContent = label;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  table.appendChild(thead);
+
+  const tbody = document.createElement('tbody');
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+
+    const dateCell = document.createElement('td');
+    dateCell.textContent = row.date || '';
+    tr.appendChild(dateCell);
+
+    if (dateMode === 'checkin') {
+      const checkoutCell = document.createElement('td');
+      checkoutCell.textContent = row.checkoutDate || '';
+      tr.appendChild(checkoutCell);
+    }
+
+    const propertyCell = document.createElement('td');
+    propertyCell.textContent = row.property || '';
+    tr.appendChild(propertyCell);
+
+    const listingCell = document.createElement('td');
+    listingCell.textContent = row.listing || '';
+    tr.appendChild(listingCell);
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  container.appendChild(table);
+
+  if (errors && errors.length) {
+    const warning = document.createElement('p');
+    warning.className = 'hint';
+    warning.textContent = 'Some listings could not be loaded: ' + errors.join(' | ');
+    container.appendChild(warning);
+  }
+}
+
+async function updateSchedulePreview() {
+  const container = document.getElementById('schedulePreview');
+  const dateMode = document.getElementById('scheduleDateMode').value;
+  const daysValue = Number(document.getElementById('cleaningDays').value);
+  const startDateUtc = getSelectedStartDateUtc();
+  const selectedListings = getSelectedCleaningListings();
+  const requestId = ++schedulePreviewRequestId;
+
+  if (!selectedListings.length) {
+    container.innerHTML = '<p class="cleaning-empty">Select listings to preview the schedule.</p>';
+    return;
+  }
+  if (!Number.isInteger(daysValue) || daysValue < 1 || daysValue > 365 || !startDateUtc) {
+    container.innerHTML = '<p class="cleaning-empty">Choose a valid start date and day range to preview the schedule.</p>';
+    return;
+  }
+
+  container.innerHTML = '<p class="cleaning-empty">Loading schedule preview...</p>';
+
+  try {
+    const result = dateMode === 'checkin'
+      ? await buildPreparationSchedule(selectedListings, daysValue, startDateUtc)
+      : await buildCleaningSchedule(selectedListings, daysValue, startDateUtc);
+
+    if (requestId !== schedulePreviewRequestId) {
+      return;
+    }
+
+    renderSchedulePreviewTable(result.rows || [], dateMode, result.errors || []);
+  } catch {
+    if (requestId !== schedulePreviewRequestId) {
+      return;
+    }
+    container.innerHTML = '<p class="cleaning-empty">Failed to build schedule preview.</p>';
+  }
 }
 
 function renderFeedSources(sources) {
@@ -624,6 +679,7 @@ async function fetchListings() {
   currentListings = data.listings || [];
   renderListings(currentListings);
   renderCleaningListings(currentListings);
+  await updateSchedulePreview();
 }
 
 async function fetchProperties() {
@@ -687,6 +743,7 @@ async function fetchCleaners() {
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     document.getElementById('cleaningStartDate').value = toDateInputValue(todayUtc);
+    await updateSchedulePreview();
     resetCleanerForm();
   } catch (err) {
     setMessage(err.message || 'Failed to load page.', true);
@@ -774,6 +831,18 @@ document.getElementById('addPropertyForm').addEventListener('submit', async (e) 
 document.getElementById('logoutBtn').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/';
+});
+
+document.getElementById('scheduleDateMode').addEventListener('change', () => {
+  updateSchedulePreview();
+});
+
+document.getElementById('cleaningStartDate').addEventListener('change', () => {
+  updateSchedulePreview();
+});
+
+document.getElementById('cleaningDays').addEventListener('input', () => {
+  updateSchedulePreview();
 });
 
 document.getElementById('cleaningScheduleForm').addEventListener('submit', async (e) => {

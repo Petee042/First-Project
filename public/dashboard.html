@@ -67,9 +67,6 @@
       <section class="listing-form-section">
         <h3>Schedule</h3>
         <form id="cleaningScheduleForm" novalidate>
-          <div id="cleaningListings" class="cleaning-listings" aria-label="Select listings for cleaning schedule">
-            <p class="cleaning-empty">No listings available.</p>
-          </div>
           <div class="cleaning-actions-row">
             <label for="scheduleDateMode">Date basis</label>
             <select id="scheduleDateMode">
@@ -85,6 +82,12 @@
               <option value="txt">Text (.txt)</option>
               <option value="csv">CSV (.csv)</option>
             </select>
+          </div>
+          <div id="cleaningListings" class="cleaning-listings" aria-label="Select listings for schedule">
+            <p class="cleaning-empty">No listings available.</p>
+          </div>
+          <div id="schedulePreview" class="schedule-preview" aria-live="polite">
+            <p class="cleaning-empty">Select listings to preview the schedule.</p>
           </div>
           <div class="schedule-download-row">
             <button id="downloadCleaningScheduleBtn" type="submit" class="btn primary schedule-download-btn">Download Schedule</button>
