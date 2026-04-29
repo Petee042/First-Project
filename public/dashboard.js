@@ -259,6 +259,19 @@ function rowsToCsv(rows) {
   return [header].concat(body).join('\n');
 }
 
+function preparationRowsToCsv(rows) {
+  const header = 'Date,Checkout Date,Property,Listing';
+  const body = rows.map((row) => {
+    return [
+      csvEscape(row.date),
+      csvEscape(row.checkoutDate || ''),
+      csvEscape(row.property),
+      csvEscape(row.listing)
+    ].join(',');
+  });
+  return [header].concat(body).join('\n');
+}
+
 function rowsToText(rows, lineFormatter) {
   const grouped = {};
   rows.forEach((row) => {
@@ -400,8 +413,9 @@ async function buildPreparationSchedule(selectedListings, days, startDateUtc) {
           return;
         }
         const checkinKey = toDateKey(event.start);
+        const checkoutKey = toDateKey(event.end);
         if (checkinKey && checkinsByDay[checkinKey]) {
-          const rowKey = (listing.propertyName || '') + '||' + listing.name;
+          const rowKey = (listing.propertyName || '') + '||' + listing.name + '||' + (checkoutKey || '');
           checkinsByDay[checkinKey].add(rowKey);
         }
       });
@@ -417,7 +431,8 @@ async function buildPreparationSchedule(selectedListings, days, startDateUtc) {
       rows.push({
         date: dayKey,
         property: split[0] || '',
-        listing: split[1] || ''
+        listing: split[1] || '',
+        checkoutDate: split[2] || ''
       });
     });
   });
@@ -430,7 +445,7 @@ async function buildPreparationSchedule(selectedListings, days, startDateUtc) {
 
   return {
     text: rowsToText(rows, formatPreparationScheduleLine),
-    csv: rowsToCsv(rows),
+    csv: preparationRowsToCsv(rows),
     rowCount: rows.length,
     errors
   };

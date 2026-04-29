@@ -455,6 +455,7 @@ textarea:focus {
 .cleaning-actions-row {
   display: flex;
   align-items: end;
+  flex-wrap: wrap;
   gap: 0.6rem;
   margin-top: 0.75rem;
 }
@@ -463,8 +464,25 @@ textarea:focus {
   width: auto;
 }
 
+.cleaning-actions-row input,
+.cleaning-actions-row select {
+  min-width: 130px;
+}
+
 #cleaningDays {
   width: 120px;
+}
+
+#preparationDays {
+  width: 120px;
+}
+
+.schedule-download-row {
+  margin-top: 0.6rem;
+}
+
+.schedule-download-btn {
+  width: 100%;
 }
 
 .feed-actions {
