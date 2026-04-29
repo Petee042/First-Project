@@ -515,7 +515,7 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
 
   const thead = document.createElement('thead');
   const headRow = document.createElement('tr');
-  const headers = ['Checkin Date'].concat(dateMode === 'checkin' ? ['Checkout Date'] : []).concat(['Change Date', 'Property', 'Listing', 'Cleaner']);
+  const headers = ['Checkin Date'].concat(dateMode === 'checkin' ? ['Checkout Date'] : []).concat(['Property', 'Listing']);
   headers.forEach((label) => {
     const th = document.createElement('th');
     th.textContent = label;
@@ -526,36 +526,62 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
 
   const tbody = document.createElement('tbody');
   rows.forEach((row, idx) => {
-    const tr = document.createElement('tr');
+    // Main data row
+    const mainRow = document.createElement('tr');
+    mainRow.className = 'schedule-main-row';
 
     const dateCell = document.createElement('td');
     dateCell.textContent = formatDisplayDate(row.date);
-    tr.appendChild(dateCell);
+    mainRow.appendChild(dateCell);
 
     if (dateMode === 'checkin') {
       const checkoutCell = document.createElement('td');
       checkoutCell.textContent = formatDisplayDate(row.checkoutDate) || '';
-      tr.appendChild(checkoutCell);
+      mainRow.appendChild(checkoutCell);
     }
-
-    const changeDateCell = document.createElement('td');
-    const dateInput = document.createElement('input');
-    dateInput.type = 'date';
-    dateInput.value = dateMode === 'checkin' ? row.date : row.date;
-    dateInput.className = 'schedule-change-date';
-    dateInput.dataset.rowIndex = idx;
-    changeDateCell.appendChild(dateInput);
-    tr.appendChild(changeDateCell);
 
     const propertyCell = document.createElement('td');
     propertyCell.textContent = row.property || '';
-    tr.appendChild(propertyCell);
+    mainRow.appendChild(propertyCell);
 
     const listingCell = document.createElement('td');
     listingCell.textContent = row.listing || '';
-    tr.appendChild(listingCell);
+    mainRow.appendChild(listingCell);
 
-    const cleanerCell = document.createElement('td');
+    tbody.appendChild(mainRow);
+
+    // Sub-row with Change Date and Cleaner
+    const subRow = document.createElement('tr');
+    subRow.className = 'schedule-sub-row';
+
+    const controlsCell = document.createElement('td');
+    controlsCell.colSpan = headers.length;
+    controlsCell.className = 'schedule-controls-cell';
+
+    const controlsContainer = document.createElement('div');
+    controlsContainer.className = 'schedule-controls';
+
+    // Change Date input
+    const dateInputDiv = document.createElement('div');
+    dateInputDiv.className = 'schedule-control-group';
+    const dateLabel = document.createElement('label');
+    dateLabel.textContent = 'Change Date:';
+    dateLabel.className = 'schedule-control-label';
+    const dateInput = document.createElement('input');
+    dateInput.type = 'date';
+    dateInput.value = row.date;
+    dateInput.className = 'schedule-change-date';
+    dateInput.dataset.rowIndex = idx;
+    dateInputDiv.appendChild(dateLabel);
+    dateInputDiv.appendChild(dateInput);
+    controlsContainer.appendChild(dateInputDiv);
+
+    // Cleaner select
+    const cleanerDiv = document.createElement('div');
+    cleanerDiv.className = 'schedule-control-group';
+    const cleanerLabel = document.createElement('label');
+    cleanerLabel.textContent = 'Cleaner:';
+    cleanerLabel.className = 'schedule-control-label';
     const cleanerSelect = document.createElement('select');
     cleanerSelect.className = 'schedule-cleaner';
     cleanerSelect.dataset.rowIndex = idx;
@@ -572,10 +598,14 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
       cleanerSelect.appendChild(option);
     });
 
-    cleanerCell.appendChild(cleanerSelect);
-    tr.appendChild(cleanerCell);
+    cleanerDiv.appendChild(cleanerLabel);
+    cleanerDiv.appendChild(cleanerSelect);
+    controlsContainer.appendChild(cleanerDiv);
 
-    tbody.appendChild(tr);
+    controlsCell.appendChild(controlsContainer);
+    subRow.appendChild(controlsCell);
+
+    tbody.appendChild(subRow);
   });
   table.appendChild(tbody);
   container.appendChild(table);

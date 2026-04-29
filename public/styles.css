@@ -534,6 +534,46 @@ textarea:focus {
   box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.1);
 }
 
+.schedule-main-row {
+  background: #ffffff;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.schedule-sub-row {
+  background: #f9fafb;
+}
+
+.schedule-controls-cell {
+  padding: 0.6rem 0.7rem !important;
+}
+
+.schedule-controls {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+
+.schedule-control-group {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex: 1;
+  min-width: 200px;
+}
+
+.schedule-control-label {
+  font-weight: 500;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  color: #4a4a4a;
+}
+
+.schedule-control-group input,
+.schedule-control-group select {
+  flex: 1;
+  min-width: 120px;
+}
+
 .feed-actions {
   display: flex;
   gap: 0.6rem;
