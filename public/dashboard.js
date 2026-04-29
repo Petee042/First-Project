@@ -172,8 +172,50 @@ function renderCleaningListings(listings) {
   });
 }
 
+function renderPreparationListings(listings) {
+  const container = document.getElementById('preparationListings');
+  container.innerHTML = '';
+
+  if (!listings.length) {
+    const text = document.createElement('p');
+    text.className = 'cleaning-empty';
+    text.textContent = 'No listings available.';
+    container.appendChild(text);
+    return;
+  }
+
+  listings.forEach((listing) => {
+    const row = document.createElement('label');
+    row.className = 'cleaning-listing-row';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'preparation-listing-checkbox';
+    checkbox.value = String(listing.id);
+    checkbox.setAttribute('data-listing-name', listing.name);
+    checkbox.setAttribute('data-property-name', listing.property_name || '');
+
+    const name = document.createElement('span');
+    name.className = 'cleaning-listing-name';
+    name.textContent = listing.name;
+
+    row.appendChild(checkbox);
+    row.appendChild(name);
+    container.appendChild(row);
+  });
+}
+
 function getSelectedCleaningListings() {
   const checked = Array.from(document.querySelectorAll('.cleaning-listing-checkbox:checked'));
+  return checked.map((box) => ({
+    id: Number(box.value),
+    name: box.getAttribute('data-listing-name') || 'Listing',
+    propertyName: box.getAttribute('data-property-name') || ''
+  }));
+}
+
+function getSelectedPreparationListings() {
+  const checked = Array.from(document.querySelectorAll('.preparation-listing-checkbox:checked'));
   return checked.map((box) => ({
     id: Number(box.value),
     name: box.getAttribute('data-listing-name') || 'Listing',
@@ -188,6 +230,16 @@ function formatCleaningScheduleLine(dayKey, listingNames) {
   const month = MONTH_SHORT_NAMES[date.getUTCMonth()];
   const year = date.getUTCFullYear();
   const text = listingNames.length ? listingNames.join(', ') : 'No checkouts';
+  return weekday + ' ' + day + ' ' + month + ' ' + year + ': ' + text;
+}
+
+function formatPreparationScheduleLine(dayKey, listingNames) {
+  const date = utcDateFromKey(dayKey);
+  const weekday = WEEKDAY_NAMES[date.getUTCDay()];
+  const day = date.getUTCDate();
+  const month = MONTH_SHORT_NAMES[date.getUTCMonth()];
+  const year = date.getUTCFullYear();
+  const text = listingNames.length ? listingNames.join(', ') : 'No checkins';
   return weekday + ' ' + day + ' ' + month + ' ' + year + ': ' + text;
 }
 
@@ -209,6 +261,12 @@ function toDateInputValue(date) {
 
 function getSelectedStartDateUtc() {
   const raw = document.getElementById('cleaningStartDate').value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  return utcDateFromKey(raw);
+}
+
+function getSelectedPreparationStartDateUtc() {
+  const raw = document.getElementById('preparationStartDate').value;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
   return utcDateFromKey(raw);
 }
@@ -257,6 +315,58 @@ async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
   const lines = rangeKeys.map((dayKey) => {
     const names = Array.from(checkoutsByDay[dayKey]).sort((a, b) => a.localeCompare(b));
     return formatCleaningScheduleLine(dayKey, names);
+  });
+
+  return {
+    text: lines.join('\n'),
+    errors
+  };
+}
+
+async function buildPreparationSchedule(selectedListings, days, startDateUtc) {
+  const rangeKeys = [];
+  const checkinsByDay = {};
+
+  for (let i = 0; i < days; i += 1) {
+    const dayKey = keyFromUtcDate(addUtcDays(startDateUtc, i));
+    rangeKeys.push(dayKey);
+    checkinsByDay[dayKey] = new Set();
+  }
+
+  const errors = [];
+
+  await Promise.all(selectedListings.map(async (listing) => {
+    try {
+      const res = await fetch('/api/listings/' + encodeURIComponent(listing.id) + '/events');
+      if (res.status === 401) {
+        window.location.href = '/';
+        return;
+      }
+
+      const data = await res.json();
+      if (!res.ok) {
+        errors.push(listing.name + ': ' + (data.error || 'Failed to load events.'));
+        return;
+      }
+
+      (data.events || []).forEach((event) => {
+        if (event && event.isReservation === false) {
+          return;
+        }
+        const checkinKey = toDateKey(event.start);
+        if (checkinKey && checkinsByDay[checkinKey]) {
+          const label = listing.propertyName ? listing.propertyName + ' - ' + listing.name : listing.name;
+          checkinsByDay[checkinKey].add(label);
+        }
+      });
+    } catch {
+      errors.push(listing.name + ': Network error while loading events.');
+    }
+  }));
+
+  const lines = rangeKeys.map((dayKey) => {
+    const names = Array.from(checkinsByDay[dayKey]).sort((a, b) => a.localeCompare(b));
+    return formatPreparationScheduleLine(dayKey, names);
   });
 
   return {
@@ -359,6 +469,7 @@ async function fetchListings() {
   currentListings = data.listings || [];
   renderListings(currentListings);
   renderCleaningListings(currentListings);
+  renderPreparationListings(currentListings);
 }
 
 async function fetchProperties() {
@@ -406,6 +517,7 @@ async function fetchFeedSources() {
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     document.getElementById('cleaningStartDate').value = toDateInputValue(todayUtc);
+    document.getElementById('preparationStartDate').value = toDateInputValue(todayUtc);
   } catch (err) {
     setMessage(err.message || 'Failed to load page.', true);
   }
@@ -533,6 +645,50 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
     }
   } catch {
     setMessage('Failed to build cleaning schedule.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('preparationScheduleForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const button = document.getElementById('downloadPreparationScheduleBtn');
+  const daysValue = Number(document.getElementById('preparationDays').value);
+  const startDateUtc = getSelectedPreparationStartDateUtc();
+  const selectedListings = getSelectedPreparationListings();
+
+  if (!selectedListings.length) {
+    setMessage('Select at least one listing for the preparation schedule.', true);
+    return;
+  }
+
+  if (!Number.isInteger(daysValue) || daysValue < 1 || daysValue > 365) {
+    setMessage('Number of days must be between 1 and 365.', true);
+    return;
+  }
+
+  if (!startDateUtc) {
+    setMessage('Please select a valid start date.', true);
+    return;
+  }
+
+  button.disabled = true;
+  setMessage('Building preparation schedule from latest feeds...', false);
+
+  try {
+    const result = await buildPreparationSchedule(selectedListings, daysValue, startDateUtc);
+    const startKey = keyFromUtcDate(startDateUtc);
+    const fileName = 'preparation-schedule-' + startKey + '.txt';
+    downloadTextFile(fileName, result.text + '\n');
+
+    if (result.errors.length) {
+      setMessage('Downloaded with some issues: ' + result.errors.join(' | '), true);
+    } else {
+      setMessage('Preparation schedule downloaded.', false);
+    }
+  } catch {
+    setMessage('Failed to build preparation schedule.', true);
   } finally {
     button.disabled = false;
   }
