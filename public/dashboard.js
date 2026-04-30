@@ -582,8 +582,9 @@ function renderSchedulePreviewTable(rows, errors, notifications) {
   const tbody = document.createElement('tbody');
   rows.forEach((row, idx) => {
     // Main data row
+    const altClass = idx % 2 === 1 ? ' schedule-row-alt' : '';
     const mainRow = document.createElement('tr');
-    mainRow.className = 'schedule-main-row';
+    mainRow.className = 'schedule-main-row' + altClass;
 
     const dateCell = document.createElement('td');
     dateCell.textContent = formatDisplayDate(row.checkinDate || row.date);
@@ -605,7 +606,7 @@ function renderSchedulePreviewTable(rows, errors, notifications) {
 
     // Sub-row with Change Date and Cleaner
     const subRow = document.createElement('tr');
-    subRow.className = 'schedule-sub-row';
+    subRow.className = 'schedule-sub-row' + altClass;
 
     const controlsCell = document.createElement('td');
     controlsCell.colSpan = headers.length;

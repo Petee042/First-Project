@@ -562,6 +562,14 @@ textarea:focus {
   background: #f9fafb;
 }
 
+.schedule-main-row.schedule-row-alt {
+  background: #eef1fb;
+}
+
+.schedule-sub-row.schedule-row-alt {
+  background: #e6eaf7;
+}
+
 .schedule-controls-cell {
   padding: 0.6rem 0.7rem !important;
 }
