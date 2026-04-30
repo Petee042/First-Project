@@ -3464,10 +3464,11 @@ function buildIcsDateRange(event) {
   return { dtstart, dtend, isAllDay };
 }
 
-function buildIcsEventSummary(event) {
+function buildIcsEventSummary(listing, event) {
+  const listingName = String(listing && listing.name ? listing.name : '').trim();
   const source = String(event && event.source ? event.source : '').trim();
   if (!source) {
-    return 'Reservation';
+    return listingName ? ('Reservation - ' + listingName) : 'Reservation';
   }
 
   const lower = source.toLowerCase();
@@ -3475,10 +3476,10 @@ function buildIcsEventSummary(event) {
     return 'Airbnb';
   }
   if (lower.includes('booking')) {
-    return 'Booking.com';
+    return listingName ? ('Booking.com - ' + listingName) : 'Booking.com';
   }
 
-  return source;
+  return listingName ? (source + ' - ' + listingName) : source;
 }
 
 function buildIcsCalendar(listing, events) {
@@ -3509,7 +3510,7 @@ function buildIcsCalendar(listing, events) {
       lines.push('DTSTART:' + dtstart);
       lines.push('DTEND:' + dtend);
     }
-    lines.push('SUMMARY:' + escapeIcsText(buildIcsEventSummary(event)));
+    lines.push('SUMMARY:' + escapeIcsText(buildIcsEventSummary(listing, event)));
     if (event.description) {
       lines.push('DESCRIPTION:' + escapeIcsText(event.description));
     }
