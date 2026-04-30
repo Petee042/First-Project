@@ -3464,6 +3464,23 @@ function buildIcsDateRange(event) {
   return { dtstart, dtend, isAllDay };
 }
 
+function buildIcsEventSummary(event) {
+  const source = String(event && event.source ? event.source : '').trim();
+  if (!source) {
+    return 'Reservation';
+  }
+
+  const lower = source.toLowerCase();
+  if (lower.includes('airbnb')) {
+    return 'Airbnb';
+  }
+  if (lower.includes('booking')) {
+    return 'Booking.com';
+  }
+
+  return source;
+}
+
 function buildIcsCalendar(listing, events) {
   const now = buildIcsDateString(new Date().toISOString());
   const prodId = '-//herupa1//Listing ' + listing.id + '//EN';
@@ -3492,7 +3509,7 @@ function buildIcsCalendar(listing, events) {
       lines.push('DTSTART:' + dtstart);
       lines.push('DTEND:' + dtend);
     }
-    lines.push('SUMMARY:' + escapeIcsText(event.title || event.source || 'Reservation'));
+    lines.push('SUMMARY:' + escapeIcsText(buildIcsEventSummary(event)));
     if (event.description) {
       lines.push('DESCRIPTION:' + escapeIcsText(event.description));
     }
