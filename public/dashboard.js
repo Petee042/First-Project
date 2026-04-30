@@ -840,6 +840,38 @@ async function fetchCleaners() {
   await updateSchedulePreview();
 }
 
+async function persistCurrentScheduleChanges() {
+  if (!currentScheduleRows.length) {
+    return { ok: false, error: 'Generate a schedule preview before saving changes.' };
+  }
+
+  const saveRes = await fetch('/api/booked-in-changes/upsert', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      changes: currentScheduleRows.map((row) => ({
+        listingId: row.listingId,
+        reservationCheckinDate: row.checkinDate,
+        reservationCheckoutDate: row.checkoutDate,
+        changeoverDate: row.changeDate || row.date,
+        cleanerId: row.cleanerId
+      }))
+    })
+  });
+
+  if (saveRes.status === 401) {
+    window.location.href = '/';
+    return { ok: false, error: 'Session expired.' };
+  }
+
+  const saveData = await saveRes.json();
+  if (!saveRes.ok) {
+    return { ok: false, error: saveData.error || 'Failed to save schedule changes.' };
+  }
+
+  return { ok: true, saved: Number(saveData.saved || 0) };
+}
+
 (async () => {
   try {
     const meRes = await fetch('/api/me');
@@ -993,19 +1025,11 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
       return;
     }
 
-    await fetch('/api/booked-in-changes/upsert', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        changes: currentScheduleRows.map((row) => ({
-          listingId: row.listingId,
-          reservationCheckinDate: row.checkinDate,
-          reservationCheckoutDate: row.checkoutDate,
-          changeoverDate: row.changeDate || row.date,
-          cleanerId: row.cleanerId
-        }))
-      })
-    });
+    const saveResult = await persistCurrentScheduleChanges();
+    if (!saveResult.ok) {
+      setMessage(saveResult.error || 'Failed to save schedule changes.', true);
+      return;
+    }
 
     if (format === 'csv') {
       const fileName = 'schedule-' + startKey + '.csv';
@@ -1022,6 +1046,23 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
     }
   } catch {
     setMessage('Failed to build schedule.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('saveScheduleChangesBtn').addEventListener('click', async () => {
+  const button = document.getElementById('saveScheduleChangesBtn');
+  button.disabled = true;
+  try {
+    const saveResult = await persistCurrentScheduleChanges();
+    if (!saveResult.ok) {
+      setMessage(saveResult.error || 'Failed to save schedule changes.', true);
+      return;
+    }
+    setMessage('Saved ' + saveResult.saved + ' schedule change(s).', false);
+  } catch {
+    setMessage('Failed to save schedule changes.', true);
   } finally {
     button.disabled = false;
   }

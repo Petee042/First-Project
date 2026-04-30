@@ -481,6 +481,14 @@ textarea:focus {
   margin-top: 0.6rem;
 }
 
+.schedule-save-row {
+  margin-top: 0.6rem;
+}
+
+.schedule-save-btn {
+  width: 100%;
+}
+
 .schedule-download-btn {
   width: 100%;
 }
