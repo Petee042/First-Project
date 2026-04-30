@@ -3387,7 +3387,7 @@ function foldIcsLine(line) {
     }
   }
   if (current) parts.push(current);
-  return parts.join('\\r\\n');
+  return parts.join('\r\n');
 }
 
 function addOneDayIcsDate(yyyymmdd) {
@@ -3503,7 +3503,7 @@ function buildIcsCalendar(listing, events) {
   });
 
   lines.push('END:VCALENDAR');
-  return lines.map(foldIcsLine).join('\\r\\n') + '\\r\\n';
+  return lines.map(foldIcsLine).join('\r\n') + '\r\n';
 }
 
 function parseCachedEventsRows(cachedRows) {
