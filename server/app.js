@@ -3390,6 +3390,80 @@ function foldIcsLine(line) {
   return parts.join('\\r\\n');
 }
 
+function addOneDayIcsDate(yyyymmdd) {
+  const year = Number(yyyymmdd.slice(0, 4));
+  const month = Number(yyyymmdd.slice(4, 6)) - 1;
+  const day = Number(yyyymmdd.slice(6, 8));
+  const d = new Date(Date.UTC(year, month, day));
+  d.setUTCDate(d.getUTCDate() + 1);
+  const pad = (n) => String(n).padStart(2, '0');
+  return String(d.getUTCFullYear()) + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate());
+}
+
+function addOneHourIcsDateTime(yyyymmddThhmmssZ) {
+  const year = Number(yyyymmddThhmmssZ.slice(0, 4));
+  const month = Number(yyyymmddThhmmssZ.slice(4, 6)) - 1;
+  const day = Number(yyyymmddThhmmssZ.slice(6, 8));
+  const hour = Number(yyyymmddThhmmssZ.slice(9, 11));
+  const minute = Number(yyyymmddThhmmssZ.slice(11, 13));
+  const second = Number(yyyymmddThhmmssZ.slice(13, 15));
+  const d = new Date(Date.UTC(year, month, day, hour, minute, second));
+  d.setUTCHours(d.getUTCHours() + 1);
+  const pad = (n) => String(n).padStart(2, '0');
+  return String(d.getUTCFullYear()) + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) +
+    'T' + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + pad(d.getUTCSeconds()) + 'Z';
+}
+
+function isIcsEndAfterStart(startValue, endValue) {
+  if (!startValue || !endValue) return false;
+  if (/^\d{8}$/.test(startValue) && /^\d{8}$/.test(endValue)) {
+    return Number(endValue) > Number(startValue);
+  }
+  const toUtcMillis = (value) => {
+    if (!/^\d{8}T\d{6}Z$/.test(value)) return Number.NaN;
+    const year = Number(value.slice(0, 4));
+    const month = Number(value.slice(4, 6)) - 1;
+    const day = Number(value.slice(6, 8));
+    const hour = Number(value.slice(9, 11));
+    const minute = Number(value.slice(11, 13));
+    const second = Number(value.slice(13, 15));
+    return Date.UTC(year, month, day, hour, minute, second);
+  };
+  const startMs = toUtcMillis(startValue);
+  const endMs = toUtcMillis(endValue);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return false;
+  return endMs > startMs;
+}
+
+function buildIcsDateRange(event) {
+  const dtstart = buildIcsDateString(event.start);
+  if (!dtstart) {
+    return null;
+  }
+
+  const isAllDay = /^\d{8}$/.test(dtstart);
+  const rawEnd = buildIcsDateString(event.end);
+  let dtend = rawEnd;
+
+  if (isAllDay) {
+    if (!/^\d{8}$/.test(String(dtend || ''))) {
+      dtend = addOneDayIcsDate(dtstart);
+    }
+    if (!isIcsEndAfterStart(dtstart, dtend)) {
+      dtend = addOneDayIcsDate(dtstart);
+    }
+  } else {
+    if (!/^\d{8}T\d{6}Z$/.test(String(dtend || ''))) {
+      dtend = addOneHourIcsDateTime(dtstart);
+    }
+    if (!isIcsEndAfterStart(dtstart, dtend)) {
+      dtend = addOneHourIcsDateTime(dtstart);
+    }
+  }
+
+  return { dtstart, dtend, isAllDay };
+}
+
 function buildIcsCalendar(listing, events) {
   const now = buildIcsDateString(new Date().toISOString());
   const prodId = '-//herupa1//Listing ' + listing.id + '//EN';
@@ -3403,11 +3477,9 @@ function buildIcsCalendar(listing, events) {
   ];
 
   events.forEach((event, idx) => {
-    const dtstart = buildIcsDateString(event.start);
-    const dtend = buildIcsDateString(event.end);
-    if (!dtstart || !dtend) return;
-
-    const isAllDay = /^\d{8}$/.test(dtstart);
+    const range = buildIcsDateRange(event);
+    if (!range) return;
+    const { dtstart, dtend, isAllDay } = range;
     const uid = 'listing-' + listing.id + '-' + idx + '@herupa1';
 
     lines.push('BEGIN:VEVENT');
