@@ -569,6 +569,11 @@ async function loadListing() {
   const cleaners = await loadCleaners();
   populateUsualCleanerSelect(cleaners, listing.usual_cleaner_id || null);
 
+  const icsUrlInput = document.getElementById('icsExportUrl');
+  if (icsUrlInput) {
+    icsUrlInput.value = window.location.origin + '/api/listings/' + listingId + '/calendar.ics';
+  }
+
   const feedsRes = await fetch('/api/listings/' + listingId + '/feeds');
   const feedsData = await feedsRes.json();
   if (!feedsRes.ok) {
@@ -774,6 +779,20 @@ document.getElementById('cancelFeedEditBtn').addEventListener('click', () => {
 });
 
 document.getElementById('updateCalendarsBtn').addEventListener('click', updateCalendars);
+
+document.getElementById('copyIcsUrlBtn').addEventListener('click', async () => {
+  const url = document.getElementById('icsExportUrl').value;
+  if (!url) return;
+  try {
+    await navigator.clipboard.writeText(url);
+    const btn = document.getElementById('copyIcsUrlBtn');
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 1800);
+  } catch {
+    setListingMessage('Could not copy to clipboard.', true);
+  }
+});
 
 document.getElementById('prevMonthBtn').addEventListener('click', () => {
   currentMonthDate = new Date(Date.UTC(currentMonthDate.getUTCFullYear(), currentMonthDate.getUTCMonth() - 1, 1));

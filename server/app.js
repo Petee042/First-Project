@@ -3297,6 +3297,120 @@ app.put('/api/listings/:listingId/feeds/:feedId', requireAuth, async (req, res) 
   }
 });
 
+function buildIcsDateString(dateValue) {
+  const raw = String(dateValue || '').trim();
+  if (!raw) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return raw.replace(/-/g, '');
+  }
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) +
+    'T' + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + pad(d.getUTCSeconds()) + 'Z';
+}
+
+function escapeIcsText(value) {
+  return String(value || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+}
+
+function foldIcsLine(line) {
+  const chars = [...line];
+  if (chars.length <= 75) return line;
+  const parts = [];
+  let current = '';
+  for (const ch of chars) {
+    if (current.length >= 75) {
+      parts.push(current);
+      current = ' ' + ch;
+    } else {
+      current += ch;
+    }
+  }
+  if (current) parts.push(current);
+  return parts.join('\\r\\n');
+}
+
+function buildIcsCalendar(listing, events) {
+  const now = buildIcsDateString(new Date().toISOString());
+  const prodId = '-//herupa1//Listing ' + listing.id + '//EN';
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:' + prodId,
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:' + escapeIcsText(listing.name)
+  ];
+
+  events.forEach((event, idx) => {
+    const dtstart = buildIcsDateString(event.start);
+    const dtend = buildIcsDateString(event.end);
+    if (!dtstart || !dtend) return;
+
+    const isAllDay = /^\d{8}$/.test(dtstart);
+    const uid = 'listing-' + listing.id + '-' + idx + '@herupa1';
+
+    lines.push('BEGIN:VEVENT');
+    lines.push('UID:' + uid);
+    lines.push('DTSTAMP:' + now);
+    if (isAllDay) {
+      lines.push('DTSTART;VALUE=DATE:' + dtstart);
+      lines.push('DTEND;VALUE=DATE:' + dtend);
+    } else {
+      lines.push('DTSTART:' + dtstart);
+      lines.push('DTEND:' + dtend);
+    }
+    lines.push('SUMMARY:' + escapeIcsText(event.title || event.source || 'Reservation'));
+    if (event.description) {
+      lines.push('DESCRIPTION:' + escapeIcsText(event.description));
+    }
+    if (event.location) {
+      lines.push('LOCATION:' + escapeIcsText(event.location));
+    }
+    lines.push('END:VEVENT');
+  });
+
+  lines.push('END:VCALENDAR');
+  return lines.map(foldIcsLine).join('\\r\\n') + '\\r\\n';
+}
+
+// GET /api/listings/:listingId/calendar.ics — export merged calendar as ICS
+app.get('/api/listings/:listingId/calendar.ics', requireAuth, async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).send('Invalid listing id.');
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.session.userId);
+    if (!listing) {
+      return res.status(404).send('Listing not found.');
+    }
+
+    const cached = await getCachedEventsForListing(listingId);
+    const events = cached
+      .filter((c) => !c.error_text)
+      .flatMap((c) => {
+        try { return JSON.parse(c.events_json || '[]'); } catch { return []; }
+      })
+      .sort((a, b) => {
+        const aTime = a.start ? new Date(a.start).getTime() : 0;
+        const bTime = b.start ? new Date(b.start).getTime() : 0;
+        return aTime - bTime;
+      });
+
+    const icsContent = buildIcsCalendar(listing, events);
+    const safeName = String(listing.name || 'listing').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + safeName + '.ics"');
+    return res.send(icsContent);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).send('Failed to generate calendar.');
+  }
+});
+
 // GET /api/listings/:listingId/events — serve events from the persistent cache
 app.get('/api/listings/:listingId/events', requireAuth, async (req, res) => {
   const listingId = Number(req.params.listingId);
