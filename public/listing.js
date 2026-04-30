@@ -541,6 +541,9 @@ async function loadListing() {
   document.getElementById('listingPropertyId').value = String(listing.property_id || '');
   document.getElementById('listingDateBasis').value = listing.date_basis === 'checkin' ? 'checkin' : 'checkout';
 
+  const cleaners = await loadCleaners();
+  populateUsualCleanerSelect(cleaners, listing.usual_cleaner_id || null);
+
   const feedsRes = await fetch('/api/listings/' + listingId + '/feeds');
   const feedsData = await feedsRes.json();
   if (!feedsRes.ok) {
@@ -635,12 +638,34 @@ async function updateCalendars() {
   }
 })();
 
+async function loadCleaners() {
+  const res = await fetch('/api/cleaners');
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.cleaners || [];
+}
+
+function populateUsualCleanerSelect(cleaners, selectedId) {
+  const select = document.getElementById('listingUsualCleaner');
+  select.innerHTML = '<option value="">— None —</option>';
+  cleaners.forEach((cleaner) => {
+    const option = document.createElement('option');
+    option.value = String(cleaner.id);
+    option.textContent = (cleaner.first_name || '') + ' ' + (cleaner.last_name || '');
+    select.appendChild(option);
+  });
+  select.value = selectedId ? String(selectedId) : '';
+}
+
+
 document.getElementById('renameListingForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const button = e.target.querySelector('button[type="submit"]');
   const name = document.getElementById('listingName').value.trim();
   const propertyId = Number(document.getElementById('listingPropertyId').value);
   const dateBasis = document.getElementById('listingDateBasis').value === 'checkin' ? 'checkin' : 'checkout';
+  const usualCleanerRaw = document.getElementById('listingUsualCleaner').value;
+  const usualCleanerId = usualCleanerRaw ? Number(usualCleanerRaw) : null;
 
   if (!name) {
     setListingMessage('Listing name is required.', true);
@@ -657,7 +682,7 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     const res = await fetch('/api/listings/' + listingId, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, propertyId, dateBasis })
+      body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId })
     });
     const data = await res.json();
 

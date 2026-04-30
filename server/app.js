@@ -160,6 +160,9 @@ function readListingsStore() {
     if (listing.date_basis !== 'checkin' && listing.date_basis !== 'checkout') {
       listing.date_basis = 'checkout';
     }
+    if (!Object.prototype.hasOwnProperty.call(listing, 'usual_cleaner_id')) {
+      listing.usual_cleaner_id = null;
+    }
   });
   return parsed;
 }
@@ -296,6 +299,11 @@ async function initializeUserStore() {
   await pool.query(`
     ALTER TABLE listings
     ADD CONSTRAINT listings_date_basis_check CHECK (date_basis IN ('checkin', 'checkout'))
+  `);
+
+  await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS usual_cleaner_id BIGINT REFERENCES cleaners(id) ON DELETE SET NULL
   `);
 
   await pool.query(`
@@ -1610,7 +1618,7 @@ async function getListingsForUser(userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.user_id = $1
@@ -1647,7 +1655,7 @@ async function getListingByIdForUser(listingId, userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1 AND l.user_id = $2
@@ -1674,7 +1682,7 @@ async function getListingByIdForUser(listingId, userId) {
   return listing;
 }
 
-async function createListingForUser(userId, name, propertyId, dateBasis) {
+async function createListingForUser(userId, name, propertyId, dateBasis, usualCleanerId) {
   if (!usePostgres) {
     const store = readListingsStore();
     const alreadyExists = store.listings.some(
@@ -1699,6 +1707,7 @@ async function createListingForUser(userId, name, propertyId, dateBasis) {
       user_id: Number(userId),
       property_id: Number(property.id),
       date_basis: normaliseDateBasis(dateBasis),
+      usual_cleaner_id: normaliseCleanerId(usualCleanerId),
       name,
       created_at: new Date().toISOString()
     };
@@ -1716,11 +1725,11 @@ async function createListingForUser(userId, name, propertyId, dateBasis) {
 
     const result = await pool.query(
       `
-        INSERT INTO listings (user_id, name, property_id, date_basis)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, user_id, name, property_id, date_basis, created_at
+        INSERT INTO listings (user_id, name, property_id, date_basis, usual_cleaner_id)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, user_id, name, property_id, date_basis, usual_cleaner_id, created_at
       `,
-      [userId, name, property.id, normaliseDateBasis(dateBasis)]
+      [userId, name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId)]
     );
     result.rows[0].property_name = property.name;
     return { listing: result.rows[0] };
@@ -1732,7 +1741,7 @@ async function createListingForUser(userId, name, propertyId, dateBasis) {
   }
 }
 
-async function updateListingForUser(listingId, userId, name, propertyId, dateBasis) {
+async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId) {
   if (!usePostgres) {
     const store = readListingsStore();
     const idx = store.listings.findIndex(
@@ -1762,6 +1771,7 @@ async function updateListingForUser(listingId, userId, name, propertyId, dateBas
     store.listings[idx].name = name;
     store.listings[idx].property_id = Number(property.id);
     store.listings[idx].date_basis = normaliseDateBasis(dateBasis);
+    store.listings[idx].usual_cleaner_id = normaliseCleanerId(usualCleanerId);
     writeListingsStore(store);
     return {
       listing: {
@@ -1780,11 +1790,11 @@ async function updateListingForUser(listingId, userId, name, propertyId, dateBas
     const result = await pool.query(
       `
         UPDATE listings
-        SET name = $1, property_id = $2, date_basis = $3
-        WHERE id = $4 AND user_id = $5
-        RETURNING id, user_id, name, property_id, date_basis, created_at
+        SET name = $1, property_id = $2, date_basis = $3, usual_cleaner_id = $4
+        WHERE id = $5 AND user_id = $6
+        RETURNING id, user_id, name, property_id, date_basis, usual_cleaner_id, created_at
       `,
-      [name, property.id, normaliseDateBasis(dateBasis), listingId, userId]
+      [name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId), listingId, userId]
     );
 
     if (!result.rows[0]) {
@@ -3088,6 +3098,7 @@ app.post('/api/listings', requireAuth, async (req, res) => {
   const name = String(req.body.name || '').trim();
   const propertyId = Number(req.body.propertyId);
   const dateBasis = normaliseDateBasis(req.body.dateBasis);
+  const usualCleanerId = req.body.usualCleanerId;
   if (!name) {
     return res.status(400).json({ error: 'Listing name is required.' });
   }
@@ -3097,7 +3108,8 @@ app.post('/api/listings', requireAuth, async (req, res) => {
       req.session.userId,
       name,
       Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null,
-      dateBasis
+      dateBasis,
+      usualCleanerId
     );
     if (error) {
       return res.status(error === 'Property not found.' ? 404 : 409).json({ error });
@@ -3134,6 +3146,7 @@ app.put('/api/listings/:listingId', requireAuth, async (req, res) => {
   const name = String(req.body.name || '').trim();
   const propertyId = Number(req.body.propertyId);
   const dateBasis = normaliseDateBasis(req.body.dateBasis);
+  const usualCleanerId = req.body.usualCleanerId;
 
   if (!Number.isInteger(listingId) || listingId <= 0) {
     return res.status(400).json({ error: 'Invalid listing id.' });
@@ -3148,7 +3161,8 @@ app.put('/api/listings/:listingId', requireAuth, async (req, res) => {
       req.session.userId,
       name,
       Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null,
-      dateBasis
+      dateBasis,
+      usualCleanerId
     );
     if (error === 'Listing not found.') {
       return res.status(404).json({ error });

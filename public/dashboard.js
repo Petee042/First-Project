@@ -244,6 +244,7 @@ function renderCleaningListings(listings) {
     checkbox.setAttribute('data-listing-name', listing.name);
     checkbox.setAttribute('data-property-name', listing.property_name || '');
     checkbox.setAttribute('data-date-basis', listing.date_basis === 'checkin' ? 'checkin' : 'checkout');
+    checkbox.setAttribute('data-usual-cleaner-id', listing.usual_cleaner_id ? String(listing.usual_cleaner_id) : '');
     checkbox.addEventListener('change', () => {
       updateSchedulePreview();
     });
@@ -264,7 +265,8 @@ function getSelectedCleaningListings() {
     id: Number(box.value),
     name: box.getAttribute('data-listing-name') || 'Listing',
     propertyName: box.getAttribute('data-property-name') || '',
-    dateBasis: box.getAttribute('data-date-basis') === 'checkin' ? 'checkin' : 'checkout'
+    dateBasis: box.getAttribute('data-date-basis') === 'checkin' ? 'checkin' : 'checkout',
+    usualCleanerId: box.getAttribute('data-usual-cleaner-id') ? Number(box.getAttribute('data-usual-cleaner-id')) : null
   }));
 }
 
@@ -431,6 +433,16 @@ async function buildSchedule(selectedListings, days, startDateUtc) {
           return;
         }
 
+        const cleanerById = new Map((currentCleaners || []).map((c) => [Number(c.id), c]));
+        const usualCleanerId = listing.usualCleanerId || null;
+        let defaultCleanerId = null;
+        let defaultCleanerName = 'Unallocated';
+        if (usualCleanerId && cleanerById.has(usualCleanerId)) {
+          const uc = cleanerById.get(usualCleanerId);
+          defaultCleanerId = usualCleanerId;
+          defaultCleanerName = (uc.first_name || '') + ' ' + (uc.last_name || '');
+        }
+
         rows.push({
           listingId: Number(listing.id),
           property: listing.propertyName || '',
@@ -441,8 +453,8 @@ async function buildSchedule(selectedListings, days, startDateUtc) {
           date: basisDate,
           reservationKey: reservationKey(listing.id, checkinKey, checkoutKey),
           changeDate: basisDate,
-          cleanerId: null,
-          cleanerName: 'Unallocated'
+          cleanerId: defaultCleanerId,
+          cleanerName: defaultCleanerName
         });
       });
     } catch {
