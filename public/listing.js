@@ -125,6 +125,19 @@ function getEventSummary(event) {
   return event.title || (event.raw && event.raw.SUMMARY) || '(untitled)';
 }
 
+function isAirbnbNotAvailableEvent(event, sourceLabel) {
+  const sourceKey = normaliseSourceKey(sourceLabel || (event && event.source));
+  if (!sourceKey.includes('airbnb')) {
+    return false;
+  }
+  const summary = String(getEventSummary(event) || '').toLowerCase();
+  return summary.includes('not available');
+}
+
+function shouldDimBar(events, sourceLabel) {
+  return (events || []).some((event) => isAirbnbNotAvailableEvent(event, sourceLabel));
+}
+
 function buildBarTooltip(events) {
   if (!events || !events.length) return '';
 
@@ -407,6 +420,9 @@ function renderReservationCalendar(events) {
           bar.classList.add('day-transition-bar');
           // Same-channel checkout + checkin on one day: show a thin center split/gap.
           bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 47%, ' + transparentStop + ' 47% 53%, ' + color + ' 53% 100%)';
+          if (shouldDimBar(transitionEvents, source)) {
+            bar.style.opacity = '0.5';
+          }
           bar.title = buildBarTooltip(transitionEvents);
           if (hasDisplayUnavailable(transitionEvents) && !hasReservationEligible(transitionEvents)) {
             applyUnavailableHatch(bar);
@@ -415,6 +431,9 @@ function renderReservationCalendar(events) {
           const checkoutEvents = dayEntry.checkoutEventsBySource[source] || [];
           bar.classList.add('day-transition-bar');
           bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + transparentStop + ' 50% 100%)';
+          if (shouldDimBar(checkoutEvents, source)) {
+            bar.style.opacity = '0.5';
+          }
           bar.title = buildBarTooltip(checkoutEvents);
           if (hasDisplayUnavailable(checkoutEvents) && !hasReservationEligible(checkoutEvents)) {
             applyUnavailableHatch(bar);
@@ -423,6 +442,9 @@ function renderReservationCalendar(events) {
           const checkinEvents = dayEntry.checkinEventsBySource[source] || [];
           bar.classList.add('day-transition-bar');
           bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 50%, ' + color + ' 50% 100%)';
+          if (shouldDimBar(checkinEvents, source)) {
+            bar.style.opacity = '0.5';
+          }
           bar.title = buildBarTooltip(checkinEvents);
           if (hasDisplayUnavailable(checkinEvents) && !hasReservationEligible(checkinEvents)) {
             applyUnavailableHatch(bar);
@@ -430,6 +452,9 @@ function renderReservationCalendar(events) {
         } else if (hasStay) {
           const stayEvents = dayEntry.stayEventsBySource[source] || [];
           bar.style.backgroundColor = color;
+          if (shouldDimBar(stayEvents, source)) {
+            bar.style.opacity = '0.5';
+          }
           bar.title = buildBarTooltip(stayEvents);
           if (hasDisplayUnavailable(stayEvents) && !hasReservationEligible(stayEvents)) {
             applyUnavailableHatch(bar);

@@ -334,10 +334,23 @@ function rowsToText(rows, lineFormatter) {
     grouped[changeDateKey].push((row.property ? row.property + ' - ' + row.listing : row.listing) + ' [' + cleanerText + ']');
   });
 
-  return Object.keys(grouped)
+  const headers = [];
+  const properties = Array.from(new Set(rows.map((row) => String(row.property || '').trim()).filter(Boolean)));
+  if (properties.length === 1) {
+    headers.push(properties[0]);
+  }
+
+  const cleaners = Array.from(new Set(rows.map((row) => String(row.cleanerName || 'Unallocated').trim()).filter(Boolean)));
+  if (cleaners.length === 1) {
+    headers.push(cleaners[0]);
+  }
+
+  const body = Object.keys(grouped)
     .sort()
     .map((dateKey) => lineFormatter(dateKey, grouped[dateKey].sort((a, b) => a.localeCompare(b))))
     .join('\n');
+
+  return headers.length ? headers.join('\n') + '\n' + body : body;
 }
 
 function downloadTextFile(fileName, content) {
