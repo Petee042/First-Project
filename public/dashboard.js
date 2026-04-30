@@ -324,26 +324,30 @@ function preparationRowsToCsv(rows) {
 }
 
 function rowsToText(rows, lineFormatter) {
+  const headers = [];
+
+  const properties = Array.from(new Set(rows.map((row) => String(row.property || '').trim()).filter(Boolean)));
+  const singleProperty = properties.length === 1;
+  if (singleProperty) {
+    headers.push(properties[0]);
+  }
+
+  const cleaners = Array.from(new Set(rows.map((row) => String(row.cleanerName || 'Unallocated').trim()).filter(Boolean)));
+  const singleCleaner = cleaners.length === 1;
+  if (singleCleaner) {
+    headers.push(cleaners[0]);
+  }
+
   const grouped = {};
   rows.forEach((row) => {
     const changeDateKey = row.changeDate || row.date;
     if (!grouped[changeDateKey]) {
       grouped[changeDateKey] = [];
     }
-    const cleanerText = row.cleanerName || 'Unallocated';
-    grouped[changeDateKey].push((row.property ? row.property + ' - ' + row.listing : row.listing) + ' [' + cleanerText + ']');
+    const propertyPrefix = singleProperty ? '' : (row.property ? row.property + ' - ' : '');
+    const cleanerSuffix = singleCleaner ? '' : ' [' + (row.cleanerName || 'Unallocated') + ']';
+    grouped[changeDateKey].push(propertyPrefix + row.listing + cleanerSuffix);
   });
-
-  const headers = [];
-  const properties = Array.from(new Set(rows.map((row) => String(row.property || '').trim()).filter(Boolean)));
-  if (properties.length === 1) {
-    headers.push(properties[0]);
-  }
-
-  const cleaners = Array.from(new Set(rows.map((row) => String(row.cleanerName || 'Unallocated').trim()).filter(Boolean)));
-  if (cleaners.length === 1) {
-    headers.push(cleaners[0]);
-  }
 
   const body = Object.keys(grouped)
     .sort()
