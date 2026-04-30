@@ -539,6 +539,7 @@ async function loadListing() {
   document.getElementById('listingTitle').textContent = 'Listing: ' + listing.name;
   document.getElementById('listingName').value = listing.name;
   document.getElementById('listingPropertyId').value = String(listing.property_id || '');
+  document.getElementById('listingDateBasis').value = listing.date_basis === 'checkin' ? 'checkin' : 'checkout';
 
   const feedsRes = await fetch('/api/listings/' + listingId + '/feeds');
   const feedsData = await feedsRes.json();
@@ -639,6 +640,7 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
   const button = e.target.querySelector('button[type="submit"]');
   const name = document.getElementById('listingName').value.trim();
   const propertyId = Number(document.getElementById('listingPropertyId').value);
+  const dateBasis = document.getElementById('listingDateBasis').value === 'checkin' ? 'checkin' : 'checkout';
 
   if (!name) {
     setListingMessage('Listing name is required.', true);
@@ -655,7 +657,7 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     const res = await fetch('/api/listings/' + listingId, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, propertyId })
+      body: JSON.stringify({ name, propertyId, dateBasis })
     });
     const data = await res.json();
 

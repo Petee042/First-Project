@@ -130,7 +130,7 @@ function writeUsersToFile(users) {
 
 function ensureLocalListingsStore() {
   if (!fs.existsSync(listingsFile)) {
-    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [] }, null, 2), 'utf8');
+    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [], booked_in_changes: [] }, null, 2), 'utf8');
   }
 }
 
@@ -139,7 +139,7 @@ function readListingsStore() {
   const content = fs.readFileSync(listingsFile, 'utf8');
   const parsed = JSON.parse(content);
   if (!parsed || !Array.isArray(parsed.listings) || !Array.isArray(parsed.feeds)) {
-    return { listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [] };
+    return { listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [], booked_in_changes: [] };
   }
   if (!Array.isArray(parsed.source_colors)) {
     parsed.source_colors = [];
@@ -153,6 +153,14 @@ function readListingsStore() {
   if (!Array.isArray(parsed.cleaners)) {
     parsed.cleaners = [];
   }
+  if (!Array.isArray(parsed.booked_in_changes)) {
+    parsed.booked_in_changes = [];
+  }
+  parsed.listings.forEach((listing) => {
+    if (listing.date_basis !== 'checkin' && listing.date_basis !== 'checkout') {
+      listing.date_basis = 'checkout';
+    }
+  });
   return parsed;
 }
 
@@ -276,6 +284,21 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS date_basis TEXT NOT NULL DEFAULT 'checkout'
+  `);
+
+  await pool.query(`
+    ALTER TABLE listings
+    DROP CONSTRAINT IF EXISTS listings_date_basis_check
+  `);
+
+  await pool.query(`
+    ALTER TABLE listings
+    ADD CONSTRAINT listings_date_basis_check CHECK (date_basis IN ('checkin', 'checkout'))
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS calendar_feeds (
       id BIGSERIAL PRIMARY KEY,
       listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
@@ -322,6 +345,22 @@ async function initializeUserStore() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (user_id, email)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS booked_in_changes (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      property_id BIGINT REFERENCES properties(id) ON DELETE SET NULL,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      reservation_checkin_date DATE NOT NULL,
+      reservation_checkout_date DATE NOT NULL,
+      changeover_date DATE NOT NULL,
+      cleaner_id BIGINT REFERENCES cleaners(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (user_id, listing_id, reservation_checkin_date, reservation_checkout_date)
     )
   `);
 
@@ -443,6 +482,24 @@ function normaliseTelephone(value) {
     return null;
   }
   return telephone;
+}
+
+function normaliseDateBasis(value) {
+  const basis = String(value || '').trim().toLowerCase();
+  return basis === 'checkin' ? 'checkin' : 'checkout';
+}
+
+function normaliseDateKey(value) {
+  const raw = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
+function normaliseCleanerId(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
 }
 
 async function getCleanersForUser(userId) {
@@ -1006,7 +1063,8 @@ async function deleteUserAndData(userId) {
       feeds: store.feeds.filter((feed) => !removedListingIds.has(Number(feed.listing_id))),
       source_colors: (store.source_colors || []).filter((row) => Number(row.user_id) !== Number(userId)),
       cleaners: (store.cleaners || []).filter((cleaner) => Number(cleaner.user_id) !== Number(userId)),
-      cached_events: (store.cached_events || []).filter((row) => !removedListingIds.has(Number(row.listing_id)))
+      cached_events: (store.cached_events || []).filter((row) => !removedListingIds.has(Number(row.listing_id))),
+      booked_in_changes: (store.booked_in_changes || []).filter((row) => Number(row.user_id) !== Number(userId))
     };
     writeListingsStore(updatedStore);
 
@@ -1530,7 +1588,8 @@ async function getListingsForUser(userId) {
         return {
           ...listing,
           property_id: Number(listing.property_id || (defaultProperty ? defaultProperty.id : 0)) || null,
-          property_name: property ? property.name : (defaultProperty ? defaultProperty.name : null)
+          property_name: property ? property.name : (defaultProperty ? defaultProperty.name : null),
+          date_basis: normaliseDateBasis(listing.date_basis)
         };
       })
       .sort((a, b) => String(a.name).localeCompare(String(b.name)));
@@ -1551,7 +1610,7 @@ async function getListingsForUser(userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.user_id = $1
@@ -1581,13 +1640,14 @@ async function getListingByIdForUser(listingId, userId) {
     return {
       ...listing,
       property_id: Number(listing.property_id || (defaultProperty ? defaultProperty.id : 0)) || null,
-      property_name: property ? property.name : (defaultProperty ? defaultProperty.name : null)
+      property_name: property ? property.name : (defaultProperty ? defaultProperty.name : null),
+      date_basis: normaliseDateBasis(listing.date_basis)
     };
   }
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1 AND l.user_id = $2
@@ -1614,7 +1674,7 @@ async function getListingByIdForUser(listingId, userId) {
   return listing;
 }
 
-async function createListingForUser(userId, name, propertyId) {
+async function createListingForUser(userId, name, propertyId, dateBasis) {
   if (!usePostgres) {
     const store = readListingsStore();
     const alreadyExists = store.listings.some(
@@ -1638,6 +1698,7 @@ async function createListingForUser(userId, name, propertyId) {
       id: nextId,
       user_id: Number(userId),
       property_id: Number(property.id),
+      date_basis: normaliseDateBasis(dateBasis),
       name,
       created_at: new Date().toISOString()
     };
@@ -1655,11 +1716,11 @@ async function createListingForUser(userId, name, propertyId) {
 
     const result = await pool.query(
       `
-        INSERT INTO listings (user_id, name, property_id)
-        VALUES ($1, $2, $3)
-        RETURNING id, user_id, name, property_id, created_at
+        INSERT INTO listings (user_id, name, property_id, date_basis)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, user_id, name, property_id, date_basis, created_at
       `,
-      [userId, name, property.id]
+      [userId, name, property.id, normaliseDateBasis(dateBasis)]
     );
     result.rows[0].property_name = property.name;
     return { listing: result.rows[0] };
@@ -1671,7 +1732,7 @@ async function createListingForUser(userId, name, propertyId) {
   }
 }
 
-async function updateListingForUser(listingId, userId, name, propertyId) {
+async function updateListingForUser(listingId, userId, name, propertyId, dateBasis) {
   if (!usePostgres) {
     const store = readListingsStore();
     const idx = store.listings.findIndex(
@@ -1700,6 +1761,7 @@ async function updateListingForUser(listingId, userId, name, propertyId) {
 
     store.listings[idx].name = name;
     store.listings[idx].property_id = Number(property.id);
+    store.listings[idx].date_basis = normaliseDateBasis(dateBasis);
     writeListingsStore(store);
     return {
       listing: {
@@ -1718,11 +1780,11 @@ async function updateListingForUser(listingId, userId, name, propertyId) {
     const result = await pool.query(
       `
         UPDATE listings
-        SET name = $1, property_id = $2
-        WHERE id = $3 AND user_id = $4
-        RETURNING id, user_id, name, property_id, created_at
+        SET name = $1, property_id = $2, date_basis = $3
+        WHERE id = $4 AND user_id = $5
+        RETURNING id, user_id, name, property_id, date_basis, created_at
       `,
-      [name, property.id, listingId, userId]
+      [name, property.id, normaliseDateBasis(dateBasis), listingId, userId]
     );
 
     if (!result.rows[0]) {
@@ -1736,6 +1798,171 @@ async function updateListingForUser(listingId, userId, name, propertyId) {
     }
     throw err;
   }
+}
+
+async function getBookedInChangesForUserByListings(userId, listingIds) {
+  const uniqueListingIds = Array.from(new Set((listingIds || [])
+    .map((id) => Number(id))
+    .filter((id) => Number.isInteger(id) && id > 0)));
+
+  if (!uniqueListingIds.length) {
+    return [];
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return (store.booked_in_changes || [])
+      .filter((row) => Number(row.user_id) === Number(userId) && uniqueListingIds.includes(Number(row.listing_id)))
+      .map((row) => ({
+        id: row.id,
+        user_id: row.user_id,
+        property_id: row.property_id || null,
+        listing_id: row.listing_id,
+        reservation_checkin_date: row.reservation_checkin_date,
+        reservation_checkout_date: row.reservation_checkout_date,
+        changeover_date: row.changeover_date,
+        cleaner_id: row.cleaner_id || null,
+        created_at: row.created_at,
+        updated_at: row.updated_at
+      }));
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, user_id, property_id, listing_id,
+             reservation_checkin_date::text AS reservation_checkin_date,
+             reservation_checkout_date::text AS reservation_checkout_date,
+             changeover_date::text AS changeover_date,
+             cleaner_id, created_at, updated_at
+      FROM booked_in_changes
+      WHERE user_id = $1
+        AND listing_id = ANY($2::bigint[])
+    `,
+    [userId, uniqueListingIds]
+  );
+  return result.rows;
+}
+
+async function upsertBookedInChangesForUser(userId, changes) {
+  const payload = Array.isArray(changes) ? changes : [];
+  if (!payload.length) {
+    return { saved: 0 };
+  }
+
+  const listings = await getListingsForUser(userId);
+  const listingById = new Map((listings || []).map((listing) => [Number(listing.id), listing]));
+  const cleaners = await getCleanersForUser(userId);
+  const cleanerIdSet = new Set((cleaners || []).map((cleaner) => Number(cleaner.id)));
+
+  const normalised = [];
+  payload.forEach((entry) => {
+    const listingId = Number(entry.listingId);
+    if (!Number.isInteger(listingId) || listingId <= 0 || !listingById.has(listingId)) {
+      return;
+    }
+
+    const reservationCheckinDate = normaliseDateKey(entry.reservationCheckinDate);
+    const reservationCheckoutDate = normaliseDateKey(entry.reservationCheckoutDate);
+    const changeoverDate = normaliseDateKey(entry.changeoverDate);
+    if (!reservationCheckinDate || !reservationCheckoutDate || !changeoverDate) {
+      return;
+    }
+
+    const cleanerId = normaliseCleanerId(entry.cleanerId);
+    if (cleanerId && !cleanerIdSet.has(cleanerId)) {
+      return;
+    }
+
+    const listing = listingById.get(listingId);
+    normalised.push({
+      listingId,
+      propertyId: listing && listing.property_id ? Number(listing.property_id) : null,
+      reservationCheckinDate,
+      reservationCheckoutDate,
+      changeoverDate,
+      cleanerId
+    });
+  });
+
+  if (!normalised.length) {
+    return { saved: 0 };
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const nextIdStart = (store.booked_in_changes || []).length
+      ? Math.max(...store.booked_in_changes.map((item) => Number(item.id))) + 1
+      : 1;
+    let nextId = nextIdStart;
+    const now = new Date().toISOString();
+
+    normalised.forEach((entry) => {
+      const idx = (store.booked_in_changes || []).findIndex((item) =>
+        Number(item.user_id) === Number(userId)
+        && Number(item.listing_id) === Number(entry.listingId)
+        && String(item.reservation_checkin_date) === entry.reservationCheckinDate
+        && String(item.reservation_checkout_date) === entry.reservationCheckoutDate
+      );
+
+      if (idx >= 0) {
+        store.booked_in_changes[idx].property_id = entry.propertyId;
+        store.booked_in_changes[idx].changeover_date = entry.changeoverDate;
+        store.booked_in_changes[idx].cleaner_id = entry.cleanerId;
+        store.booked_in_changes[idx].updated_at = now;
+      } else {
+        store.booked_in_changes.push({
+          id: nextId,
+          user_id: Number(userId),
+          property_id: entry.propertyId,
+          listing_id: entry.listingId,
+          reservation_checkin_date: entry.reservationCheckinDate,
+          reservation_checkout_date: entry.reservationCheckoutDate,
+          changeover_date: entry.changeoverDate,
+          cleaner_id: entry.cleanerId,
+          created_at: now,
+          updated_at: now
+        });
+        nextId += 1;
+      }
+    });
+
+    writeListingsStore(store);
+    return { saved: normalised.length };
+  }
+
+  for (const entry of normalised) {
+    await pool.query(
+      `
+        INSERT INTO booked_in_changes (
+          user_id,
+          property_id,
+          listing_id,
+          reservation_checkin_date,
+          reservation_checkout_date,
+          changeover_date,
+          cleaner_id
+        )
+        VALUES ($1, $2, $3, $4::date, $5::date, $6::date, $7)
+        ON CONFLICT (user_id, listing_id, reservation_checkin_date, reservation_checkout_date)
+        DO UPDATE SET
+          property_id = EXCLUDED.property_id,
+          changeover_date = EXCLUDED.changeover_date,
+          cleaner_id = EXCLUDED.cleaner_id,
+          updated_at = CURRENT_TIMESTAMP
+      `,
+      [
+        userId,
+        entry.propertyId,
+        entry.listingId,
+        entry.reservationCheckinDate,
+        entry.reservationCheckoutDate,
+        entry.changeoverDate,
+        entry.cleanerId
+      ]
+    );
+  }
+
+  return { saved: normalised.length };
 }
 
 async function getFeedsForListing(listingId, userId) {
@@ -2721,6 +2948,32 @@ app.put('/api/cleaners/:cleanerId', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/booked-in-changes/lookup — fetch booked-in changes for selected listings
+app.post('/api/booked-in-changes/lookup', requireAuth, async (req, res) => {
+  const listingIds = Array.isArray(req.body.listingIds) ? req.body.listingIds : [];
+
+  try {
+    const changes = await getBookedInChangesForUserByListings(req.session.userId, listingIds);
+    return res.json({ changes });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load booked-in changes.' });
+  }
+});
+
+// POST /api/booked-in-changes/upsert — persist changeover overrides for reservations
+app.post('/api/booked-in-changes/upsert', requireAuth, async (req, res) => {
+  const changes = Array.isArray(req.body.changes) ? req.body.changes : [];
+
+  try {
+    const result = await upsertBookedInChangesForUser(req.session.userId, changes);
+    return res.json({ saved: result.saved });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to save booked-in changes.' });
+  }
+});
+
 // GET /api/properties — all properties for current user
 app.get('/api/properties', requireAuth, async (req, res) => {
   try {
@@ -2834,6 +3087,7 @@ app.get('/api/listings', requireAuth, async (req, res) => {
 app.post('/api/listings', requireAuth, async (req, res) => {
   const name = String(req.body.name || '').trim();
   const propertyId = Number(req.body.propertyId);
+  const dateBasis = normaliseDateBasis(req.body.dateBasis);
   if (!name) {
     return res.status(400).json({ error: 'Listing name is required.' });
   }
@@ -2842,7 +3096,8 @@ app.post('/api/listings', requireAuth, async (req, res) => {
     const { listing, error } = await createListingForUser(
       req.session.userId,
       name,
-      Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null
+      Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null,
+      dateBasis
     );
     if (error) {
       return res.status(error === 'Property not found.' ? 404 : 409).json({ error });
@@ -2878,6 +3133,7 @@ app.put('/api/listings/:listingId', requireAuth, async (req, res) => {
   const listingId = Number(req.params.listingId);
   const name = String(req.body.name || '').trim();
   const propertyId = Number(req.body.propertyId);
+  const dateBasis = normaliseDateBasis(req.body.dateBasis);
 
   if (!Number.isInteger(listingId) || listingId <= 0) {
     return res.status(400).json({ error: 'Invalid listing id.' });
@@ -2891,7 +3147,8 @@ app.put('/api/listings/:listingId', requireAuth, async (req, res) => {
       listingId,
       req.session.userId,
       name,
-      Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null
+      Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null,
+      dateBasis
     );
     if (error === 'Listing not found.') {
       return res.status(404).json({ error });

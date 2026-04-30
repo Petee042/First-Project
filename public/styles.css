@@ -574,6 +574,28 @@ textarea:focus {
   min-width: 120px;
 }
 
+.notification-log {
+  margin-top: 0.5rem;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid #dbe1ef;
+  border-radius: 8px;
+  background: #f8faff;
+  padding: 0.7rem;
+}
+
+.notification-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.notification-list li {
+  font-size: 0.9rem;
+  color: #31415f;
+}
+
 .feed-actions {
   display: flex;
   gap: 0.6rem;

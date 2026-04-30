@@ -68,11 +68,6 @@
         <h3>Schedule</h3>
         <form id="cleaningScheduleForm" novalidate>
           <div class="cleaning-actions-row">
-            <label for="scheduleDateMode">Date basis</label>
-            <select id="scheduleDateMode">
-              <option value="checkin">Use Checkin Date</option>
-              <option value="checkout" selected>Use Checkout Date</option>
-            </select>
             <label for="cleaningStartDate">Start date</label>
             <input id="cleaningStartDate" type="date" required />
             <label for="cleaningDays">Number of days</label>
@@ -176,6 +171,13 @@
             <button id="cancelCleanerEditBtn" type="button" class="btn secondary hidden">Cancel Edit</button>
           </div>
         </form>
+      </section>
+
+      <section class="listing-form-section">
+        <h3>Notification Log</h3>
+        <div id="notificationLog" class="notification-log" aria-live="polite">
+          <p class="cleaning-empty">No notifications.</p>
+        </div>
       </section>
     </div>
   </main>

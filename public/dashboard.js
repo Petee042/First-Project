@@ -16,6 +16,8 @@ let currentListings = [];
 let currentProperties = [];
 let currentCleaners = [];
 let schedulePreviewRequestId = 0;
+let currentScheduleRows = [];
+let currentScheduleErrors = [];
 
 function setMessage(text, isError) {
   const el = document.getElementById('dashboardMessage');
@@ -241,6 +243,7 @@ function renderCleaningListings(listings) {
     checkbox.value = String(listing.id);
     checkbox.setAttribute('data-listing-name', listing.name);
     checkbox.setAttribute('data-property-name', listing.property_name || '');
+    checkbox.setAttribute('data-date-basis', listing.date_basis === 'checkin' ? 'checkin' : 'checkout');
     checkbox.addEventListener('change', () => {
       updateSchedulePreview();
     });
@@ -260,7 +263,8 @@ function getSelectedCleaningListings() {
   return checked.map((box) => ({
     id: Number(box.value),
     name: box.getAttribute('data-listing-name') || 'Listing',
-    propertyName: box.getAttribute('data-property-name') || ''
+    propertyName: box.getAttribute('data-property-name') || '',
+    dateBasis: box.getAttribute('data-date-basis') === 'checkin' ? 'checkin' : 'checkout'
   }));
 }
 
@@ -293,9 +297,16 @@ function csvEscape(value) {
 }
 
 function rowsToCsv(rows) {
-  const header = 'Date,Property,Listing';
+  const header = 'Checkin Date,Checkout Date,Change Date,Property,Listing,Cleaner';
   const body = rows.map((row) => {
-    return [csvEscape(row.date), csvEscape(row.property), csvEscape(row.listing)].join(',');
+    return [
+      csvEscape(row.checkinDate || ''),
+      csvEscape(row.checkoutDate || ''),
+      csvEscape(row.changeDate || row.date || ''),
+      csvEscape(row.property),
+      csvEscape(row.listing),
+      csvEscape(row.cleanerName || 'Unallocated')
+    ].join(',');
   });
   return [header].concat(body).join('\n');
 }
@@ -316,10 +327,12 @@ function preparationRowsToCsv(rows) {
 function rowsToText(rows, lineFormatter) {
   const grouped = {};
   rows.forEach((row) => {
-    if (!grouped[row.date]) {
-      grouped[row.date] = [];
+    const changeDateKey = row.changeDate || row.date;
+    if (!grouped[changeDateKey]) {
+      grouped[changeDateKey] = [];
     }
-    grouped[row.date].push(row.property ? row.property + ' - ' + row.listing : row.listing);
+    const cleanerText = row.cleanerName || 'Unallocated';
+    grouped[changeDateKey].push((row.property ? row.property + ' - ' + row.listing : row.listing) + ' [' + cleanerText + ']');
   });
 
   return Object.keys(grouped)
@@ -350,16 +363,41 @@ function getSelectedStartDateUtc() {
   return utcDateFromKey(raw);
 }
 
-async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
-  const rangeKeys = [];
-  const checkoutsByDay = {};
+function reservationKey(listingId, checkinDate, checkoutDate) {
+  return String(listingId) + '|' + String(checkinDate || '') + '|' + String(checkoutDate || '');
+}
 
-  for (let i = 0; i < days; i += 1) {
-    const dayKey = keyFromUtcDate(addUtcDays(startDateUtc, i));
-    rangeKeys.push(dayKey);
-    checkoutsByDay[dayKey] = new Set();
+function renderNotificationLog(lines) {
+  const container = document.getElementById('notificationLog');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  if (!lines.length) {
+    const empty = document.createElement('p');
+    empty.className = 'cleaning-empty';
+    empty.textContent = 'No notifications.';
+    container.appendChild(empty);
+    return;
   }
 
+  const list = document.createElement('ul');
+  list.className = 'notification-list';
+  lines.forEach((line) => {
+    const item = document.createElement('li');
+    item.textContent = line;
+    list.appendChild(item);
+  });
+  container.appendChild(list);
+}
+
+async function buildSchedule(selectedListings, days, startDateUtc) {
+  const rangeKeySet = new Set();
+  for (let i = 0; i < days; i += 1) {
+    rangeKeySet.add(keyFromUtcDate(addUtcDays(startDateUtc, i)));
+  }
+
+  const rows = [];
   const errors = [];
 
   await Promise.all(selectedListings.map(async (listing) => {
@@ -380,114 +418,101 @@ async function buildCleaningSchedule(selectedListings, days, startDateUtc) {
         if (event && event.isReservation === false) {
           return;
         }
+
         const checkinKey = toDateKey(event.start);
         const checkoutKey = toDateKey(event.end);
-        if (checkoutKey && checkoutsByDay[checkoutKey]) {
-          const rowKey = (listing.propertyName || '') + '||' + listing.name + '||' + (checkinKey || '') + '||' + (checkoutKey || '');
-          checkoutsByDay[checkoutKey].add(rowKey);
+        if (!checkinKey || !checkoutKey) {
+          return;
         }
+
+        const basis = listing.dateBasis === 'checkin' ? 'checkin' : 'checkout';
+        const basisDate = basis === 'checkin' ? checkinKey : checkoutKey;
+        if (!rangeKeySet.has(basisDate)) {
+          return;
+        }
+
+        rows.push({
+          listingId: Number(listing.id),
+          property: listing.propertyName || '',
+          listing: listing.name || '',
+          listingDateBasis: basis,
+          checkinDate: checkinKey,
+          checkoutDate: checkoutKey,
+          date: basisDate,
+          reservationKey: reservationKey(listing.id, checkinKey, checkoutKey),
+          changeDate: basisDate,
+          cleanerId: null,
+          cleanerName: 'Unallocated'
+        });
       });
     } catch {
       errors.push(listing.name + ': Network error while loading events.');
     }
   }));
 
-  const rows = [];
-  rangeKeys.forEach((dayKey) => {
-    Array.from(checkoutsByDay[dayKey]).forEach((key) => {
-      const split = key.split('||');
-      rows.push({
-        date: dayKey,
-        checkinDate: split[2] || '',
-        property: split[0] || '',
-        listing: split[1] || '',
-        checkoutDate: split[3] || dayKey
-      });
-    });
-  });
-
   rows.sort((a, b) => {
     if (a.date !== b.date) return a.date.localeCompare(b.date);
     if (a.property !== b.property) return a.property.localeCompare(b.property);
     return a.listing.localeCompare(b.listing);
   });
+
+  let bookedChanges = [];
+  try {
+    const lookupRes = await fetch('/api/booked-in-changes/lookup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ listingIds: selectedListings.map((listing) => Number(listing.id)) })
+    });
+
+    if (lookupRes.status === 401) {
+      window.location.href = '/';
+      return { rows: [], errors: [], text: '', csv: '', rowCount: 0, notifications: [] };
+    }
+
+    const lookupData = await lookupRes.json();
+    if (lookupRes.ok) {
+      bookedChanges = lookupData.changes || [];
+    }
+  } catch {
+    errors.push('Could not load booked-in changes.');
+  }
+
+  const bookedMap = new Map();
+  bookedChanges.forEach((row) => {
+    const key = reservationKey(row.listing_id, row.reservation_checkin_date, row.reservation_checkout_date);
+    bookedMap.set(key, row);
+  });
+
+  const cleanerById = new Map((currentCleaners || []).map((cleaner) => [Number(cleaner.id), cleaner]));
+  rows.forEach((row) => {
+    const existing = bookedMap.get(row.reservationKey);
+    if (!existing) {
+      return;
+    }
+    row.changeDate = existing.changeover_date || row.changeDate;
+    row.cleanerId = existing.cleaner_id ? Number(existing.cleaner_id) : null;
+    if (row.cleanerId && cleanerById.has(row.cleanerId)) {
+      const cleaner = cleanerById.get(row.cleanerId);
+      row.cleanerName = (cleaner.first_name || '') + ' ' + (cleaner.last_name || '');
+    }
+  });
+
+  const reservationKeySet = new Set(rows.map((row) => row.reservationKey));
+  const notifications = bookedChanges
+    .filter((row) => !reservationKeySet.has(reservationKey(row.listing_id, row.reservation_checkin_date, row.reservation_checkout_date)))
+    .map((row) => {
+      const listing = selectedListings.find((item) => Number(item.id) === Number(row.listing_id));
+      const listingName = listing ? listing.name : ('Listing #' + row.listing_id);
+      return listingName + ': booked-in change ' + row.reservation_checkin_date + ' to ' + row.reservation_checkout_date + ' no longer matches a reservation.';
+    });
 
   return {
     text: rowsToText(rows, formatCleaningScheduleLine),
     csv: rowsToCsv(rows),
     rows,
     rowCount: rows.length,
-    errors
-  };
-}
-
-async function buildPreparationSchedule(selectedListings, days, startDateUtc) {
-  const rangeKeys = [];
-  const checkinsByDay = {};
-
-  for (let i = 0; i < days; i += 1) {
-    const dayKey = keyFromUtcDate(addUtcDays(startDateUtc, i));
-    rangeKeys.push(dayKey);
-    checkinsByDay[dayKey] = new Set();
-  }
-
-  const errors = [];
-
-  await Promise.all(selectedListings.map(async (listing) => {
-    try {
-      const res = await fetch('/api/listings/' + encodeURIComponent(listing.id) + '/events');
-      if (res.status === 401) {
-        window.location.href = '/';
-        return;
-      }
-
-      const data = await res.json();
-      if (!res.ok) {
-        errors.push(listing.name + ': ' + (data.error || 'Failed to load events.'));
-        return;
-      }
-
-      (data.events || []).forEach((event) => {
-        if (event && event.isReservation === false) {
-          return;
-        }
-        const checkinKey = toDateKey(event.start);
-        const checkoutKey = toDateKey(event.end);
-        if (checkinKey && checkinsByDay[checkinKey]) {
-          const rowKey = (listing.propertyName || '') + '||' + listing.name + '||' + (checkoutKey || '');
-          checkinsByDay[checkinKey].add(rowKey);
-        }
-      });
-    } catch {
-      errors.push(listing.name + ': Network error while loading events.');
-    }
-  }));
-
-  const rows = [];
-  rangeKeys.forEach((dayKey) => {
-    Array.from(checkinsByDay[dayKey]).forEach((key) => {
-      const split = key.split('||');
-      rows.push({
-        date: dayKey,
-        property: split[0] || '',
-        listing: split[1] || '',
-        checkoutDate: split[2] || ''
-      });
-    });
-  });
-
-  rows.sort((a, b) => {
-    if (a.date !== b.date) return a.date.localeCompare(b.date);
-    if (a.property !== b.property) return a.property.localeCompare(b.property);
-    return a.listing.localeCompare(b.listing);
-  });
-
-  return {
-    text: rowsToText(rows, formatPreparationScheduleLine),
-    csv: preparationRowsToCsv(rows),
-    rows,
-    rowCount: rows.length,
-    errors
+    errors,
+    notifications
   };
 }
 
@@ -501,9 +526,10 @@ function formatDisplayDate(dateKey) {
   return dayName + ' ' + day + ' ' + monthName + ' ' + year;
 }
 
-function renderSchedulePreviewTable(rows, dateMode, errors) {
+function renderSchedulePreviewTable(rows, errors, notifications) {
   const container = document.getElementById('schedulePreview');
   container.innerHTML = '';
+  renderNotificationLog(notifications || []);
 
   if (!rows.length) {
     const empty = document.createElement('p');
@@ -570,9 +596,14 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
     dateLabel.className = 'schedule-control-label';
     const dateInput = document.createElement('input');
     dateInput.type = 'date';
-    dateInput.value = dateMode === 'checkout' ? (row.checkoutDate || row.date) : row.date;
+    dateInput.value = row.changeDate || row.date;
     dateInput.className = 'schedule-change-date';
     dateInput.dataset.rowIndex = idx;
+    dateInput.addEventListener('change', (event) => {
+      const rowIndex = Number(event.target.dataset.rowIndex);
+      if (!Number.isInteger(rowIndex) || !currentScheduleRows[rowIndex]) return;
+      currentScheduleRows[rowIndex].changeDate = event.target.value || currentScheduleRows[rowIndex].changeDate;
+    });
     dateInputDiv.appendChild(dateLabel);
     dateInputDiv.appendChild(dateInput);
     controlsContainer.appendChild(dateInputDiv);
@@ -598,6 +629,16 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
       option.textContent = (cleaner.first_name || '') + ' ' + (cleaner.last_name || '');
       cleanerSelect.appendChild(option);
     });
+    cleanerSelect.value = row.cleanerId ? String(row.cleanerId) : '';
+    cleanerSelect.addEventListener('change', (event) => {
+      const rowIndex = Number(event.target.dataset.rowIndex);
+      if (!Number.isInteger(rowIndex) || !currentScheduleRows[rowIndex]) return;
+      const cleanerId = event.target.value ? Number(event.target.value) : null;
+      currentScheduleRows[rowIndex].cleanerId = cleanerId;
+      currentScheduleRows[rowIndex].cleanerName = cleanerId
+        ? event.target.options[event.target.selectedIndex].textContent
+        : 'Unallocated';
+    });
 
     cleanerDiv.appendChild(cleanerLabel);
     cleanerDiv.appendChild(cleanerSelect);
@@ -621,7 +662,6 @@ function renderSchedulePreviewTable(rows, dateMode, errors) {
 
 async function updateSchedulePreview() {
   const container = document.getElementById('schedulePreview');
-  const dateMode = document.getElementById('scheduleDateMode').value;
   const daysValue = Number(document.getElementById('cleaningDays').value);
   const startDateUtc = getSelectedStartDateUtc();
   const selectedListings = getSelectedCleaningListings();
@@ -639,20 +679,21 @@ async function updateSchedulePreview() {
   container.innerHTML = '<p class="cleaning-empty">Loading schedule preview...</p>';
 
   try {
-    const result = dateMode === 'checkin'
-      ? await buildPreparationSchedule(selectedListings, daysValue, startDateUtc)
-      : await buildCleaningSchedule(selectedListings, daysValue, startDateUtc);
+    const result = await buildSchedule(selectedListings, daysValue, startDateUtc);
 
     if (requestId !== schedulePreviewRequestId) {
       return;
     }
 
-    renderSchedulePreviewTable(result.rows || [], dateMode, result.errors || []);
+    currentScheduleRows = result.rows || [];
+    currentScheduleErrors = result.errors || [];
+    renderSchedulePreviewTable(currentScheduleRows, currentScheduleErrors, result.notifications || []);
   } catch {
     if (requestId !== schedulePreviewRequestId) {
       return;
     }
     container.innerHTML = '<p class="cleaning-empty">Failed to build schedule preview.</p>';
+    renderNotificationLog([]);
   }
 }
 
@@ -796,6 +837,7 @@ async function fetchCleaners() {
   }
 
   renderCleaners(data.cleaners || []);
+  await updateSchedulePreview();
 }
 
 (async () => {
@@ -842,7 +884,7 @@ document.getElementById('addListingForm').addEventListener('submit', async (e) =
     const res = await fetch('/api/listings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, propertyId })
+      body: JSON.stringify({ name, propertyId, dateBasis: 'checkout' })
     });
 
     const data = await res.json();
@@ -904,10 +946,6 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
   window.location.href = '/';
 });
 
-document.getElementById('scheduleDateMode').addEventListener('change', () => {
-  updateSchedulePreview();
-});
-
 document.getElementById('cleaningStartDate').addEventListener('change', () => {
   updateSchedulePreview();
 });
@@ -920,7 +958,6 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
   e.preventDefault();
 
   const button = document.getElementById('downloadCleaningScheduleBtn');
-  const dateMode = document.getElementById('scheduleDateMode').value;
   const daysValue = Number(document.getElementById('cleaningDays').value);
   const format = document.getElementById('cleaningFormat').value;
   const startDateUtc = getSelectedStartDateUtc();
@@ -945,31 +982,41 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
   setMessage('Building schedule from latest feeds...', false);
 
   try {
-    const result = dateMode === 'checkin'
-      ? await buildPreparationSchedule(selectedListings, daysValue, startDateUtc)
-      : await buildCleaningSchedule(selectedListings, daysValue, startDateUtc);
+    const result = await buildSchedule(selectedListings, daysValue, startDateUtc);
+    currentScheduleRows = result.rows || [];
+    currentScheduleErrors = result.errors || [];
+    renderSchedulePreviewTable(currentScheduleRows, currentScheduleErrors, result.notifications || []);
+
     const startKey = keyFromUtcDate(startDateUtc);
     if (result.rowCount < 1) {
-      setMessage(
-        dateMode === 'checkin'
-          ? 'No checkin events found in the selected range.'
-          : 'No checkout events found in the selected range.',
-        true
-      );
+      setMessage('No reservations found in the selected range.', true);
       return;
     }
 
-    const modeSuffix = dateMode === 'checkin' ? 'checkin' : 'checkout';
+    await fetch('/api/booked-in-changes/upsert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        changes: currentScheduleRows.map((row) => ({
+          listingId: row.listingId,
+          reservationCheckinDate: row.checkinDate,
+          reservationCheckoutDate: row.checkoutDate,
+          changeoverDate: row.changeDate || row.date,
+          cleanerId: row.cleanerId
+        }))
+      })
+    });
+
     if (format === 'csv') {
-      const fileName = 'schedule-' + modeSuffix + '-' + startKey + '.csv';
-      downloadTextFile(fileName, result.csv + '\n');
+      const fileName = 'schedule-' + startKey + '.csv';
+      downloadTextFile(fileName, rowsToCsv(currentScheduleRows) + '\n');
     } else {
-      const fileName = 'schedule-' + modeSuffix + '-' + startKey + '.txt';
-      downloadTextFile(fileName, result.text + '\n');
+      const fileName = 'schedule-' + startKey + '.txt';
+      downloadTextFile(fileName, rowsToText(currentScheduleRows, formatCleaningScheduleLine) + '\n');
     }
 
-    if (result.errors.length) {
-      setMessage('Downloaded with some issues: ' + result.errors.join(' | '), true);
+    if (currentScheduleErrors.length) {
+      setMessage('Downloaded with some issues: ' + currentScheduleErrors.join(' | '), true);
     } else {
       setMessage('Schedule downloaded.', false);
     }
