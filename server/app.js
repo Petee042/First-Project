@@ -3506,6 +3506,23 @@ function buildIcsCalendar(listing, events) {
   return lines.map(foldIcsLine).join('\\r\\n') + '\\r\\n';
 }
 
+function parseCachedEventsRows(cachedRows) {
+  return (cachedRows || [])
+    .filter((row) => !row.error_text)
+    .flatMap((row) => {
+      try {
+        return JSON.parse(row.events_json || '[]');
+      } catch {
+        return [];
+      }
+    })
+    .sort((a, b) => {
+      const aTime = a.start ? new Date(a.start).getTime() : 0;
+      const bTime = b.start ? new Date(b.start).getTime() : 0;
+      return aTime - bTime;
+    });
+}
+
 // GET /api/listings/:listingId/calendar.ics — export merged calendar as ICS
 app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
   const listingId = Number(req.params.listingId);
@@ -3534,22 +3551,25 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
       return res.status(404).send('Listing not found.');
     }
 
-    const cached = await getCachedEventsForListing(listingId);
-    const events = cached
-      .filter((c) => !c.error_text)
-      .flatMap((c) => {
-        try { return JSON.parse(c.events_json || '[]'); } catch { return []; }
-      })
-      .sort((a, b) => {
-        const aTime = a.start ? new Date(a.start).getTime() : 0;
-        const bTime = b.start ? new Date(b.start).getTime() : 0;
-        return aTime - bTime;
-      });
+    let cached = await getCachedEventsForListing(listingId);
+    let events = parseCachedEventsRows(cached);
+
+    if (events.length === 0) {
+      try {
+        await refreshEventsForListing(listingId);
+        cached = await getCachedEventsForListing(listingId);
+        events = parseCachedEventsRows(cached);
+      } catch (refreshErr) {
+        console.error('ICS refresh fallback failed for listing', listingId, refreshErr && refreshErr.message);
+      }
+    }
 
     const icsContent = buildIcsCalendar(listing, events);
     const safeName = String(listing.name || 'listing').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="' + safeName + '.ics"');
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('X-Calendar-Event-Count', String(events.length));
     return res.send(icsContent);
   } catch (err) {
     console.error(err);
