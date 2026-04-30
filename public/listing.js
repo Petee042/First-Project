@@ -571,7 +571,12 @@ async function loadListing() {
 
   const icsUrlInput = document.getElementById('icsExportUrl');
   if (icsUrlInput) {
-    icsUrlInput.value = window.location.origin + '/api/listings/' + listingId + '/calendar.ics';
+    const baseUrl = window.location.origin + '/api/listings/' + listingId + '/calendar.ics';
+    if (listing.ics_token) {
+      icsUrlInput.value = baseUrl + '?token=' + encodeURIComponent(listing.ics_token);
+    } else {
+      icsUrlInput.value = baseUrl;
+    }
   }
 
   const feedsRes = await fetch('/api/listings/' + listingId + '/feeds');

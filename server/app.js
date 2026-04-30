@@ -5,7 +5,7 @@ const session = require('express-session');
 const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
-const { randomUUID } = require('crypto');
+const { randomUUID, createHmac, timingSafeEqual } = require('crypto');
 const { Pool } = require('pg');
 
 const app = express();
@@ -1682,6 +1682,60 @@ async function getListingByIdForUser(listingId, userId) {
   return listing;
 }
 
+async function getListingById(listingId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const listing = store.listings.find((item) => Number(item.id) === Number(listingId));
+    if (!listing) {
+      return null;
+    }
+    const defaultProperty = await ensureDefaultPropertyForUser(listing.user_id);
+    if (!listing.property_id && defaultProperty) {
+      listing.property_id = defaultProperty.id;
+      writeListingsStore(store);
+    }
+    const property = store.properties.find((item) => Number(item.id) === Number(listing.property_id));
+    return {
+      ...listing,
+      property_id: Number(listing.property_id || (defaultProperty ? defaultProperty.id : 0)) || null,
+      property_name: property ? property.name : (defaultProperty ? defaultProperty.name : null),
+      date_basis: normaliseDateBasis(listing.date_basis)
+    };
+  }
+
+  const result = await pool.query(
+    `
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.created_at, p.name AS property_name
+      FROM listings l
+      LEFT JOIN properties p ON p.id = l.property_id
+      WHERE l.id = $1
+      LIMIT 1
+    `,
+    [listingId]
+  );
+
+  return result.rows[0] || null;
+}
+
+function buildIcsAccessToken(listing) {
+  const payload = String(listing.id) + ':' + String(listing.user_id);
+  return createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+}
+
+function isValidIcsAccessToken(listing, token) {
+  const provided = String(token || '').trim();
+  if (!provided) {
+    return false;
+  }
+  const expected = buildIcsAccessToken(listing);
+  const expectedBuffer = Buffer.from(expected);
+  const providedBuffer = Buffer.from(provided);
+  if (expectedBuffer.length !== providedBuffer.length) {
+    return false;
+  }
+  return timingSafeEqual(expectedBuffer, providedBuffer);
+}
+
 async function createListingForUser(userId, name, propertyId, dateBasis, usualCleanerId) {
   if (!usePostgres) {
     const store = readListingsStore();
@@ -3133,7 +3187,12 @@ app.get('/api/listings/:listingId', requireAuth, async (req, res) => {
     if (!listing) {
       return res.status(404).json({ error: 'Listing not found.' });
     }
-    return res.json({ listing });
+    return res.json({
+      listing: {
+        ...listing,
+        ics_token: buildIcsAccessToken(listing)
+      }
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load listing.' });
@@ -3376,14 +3435,29 @@ function buildIcsCalendar(listing, events) {
 }
 
 // GET /api/listings/:listingId/calendar.ics — export merged calendar as ICS
-app.get('/api/listings/:listingId/calendar.ics', requireAuth, async (req, res) => {
+app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
   const listingId = Number(req.params.listingId);
   if (!Number.isInteger(listingId) || listingId <= 0) {
     return res.status(400).send('Invalid listing id.');
   }
 
   try {
-    const listing = await getListingByIdForUser(listingId, req.session.userId);
+    let listing = null;
+    if (req.session && Number.isInteger(req.session.userId)) {
+      listing = await getListingByIdForUser(listingId, req.session.userId);
+    }
+
+    if (!listing) {
+      const token = String(req.query.token || '').trim();
+      if (!token) {
+        return res.status(401).send('Authentication required.');
+      }
+      listing = await getListingById(listingId);
+      if (!listing || !isValidIcsAccessToken(listing, token)) {
+        return res.status(404).send('Calendar not found.');
+      }
+    }
+
     if (!listing) {
       return res.status(404).send('Listing not found.');
     }
