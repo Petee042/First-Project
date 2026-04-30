@@ -478,6 +478,13 @@ textarea:focus {
 }
 
 .schedule-download-row {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  margin-top: 0.6rem;
+}
+
+.schedule-refresh-row {
   margin-top: 0.6rem;
 }
 
@@ -485,12 +492,14 @@ textarea:focus {
   margin-top: 0.6rem;
 }
 
+.schedule-refresh-btn,
 .schedule-save-btn {
   width: 100%;
 }
 
 .schedule-download-btn {
-  width: 100%;
+  width: auto;
+  margin-top: 0;
 }
 
 .schedule-preview {
@@ -509,7 +518,8 @@ textarea:focus {
   display: flex;
   gap: 0.8rem;
   align-items: center;
-  margin-top: 0.6rem;
+  margin-top: 0;
+  flex: 1;
 }
 
 .schedule-format-row label {
@@ -519,6 +529,7 @@ textarea:focus {
 
 .schedule-format-row select {
   flex: 1;
+  min-width: 160px;
   padding: 0.5rem 0.6rem;
   border: 1px solid #ccc;
   border-radius: 4px;
@@ -828,6 +839,15 @@ textarea:focus {
   .cleaning-actions-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .schedule-download-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .schedule-download-btn {
+    width: 100%;
   }
 
   #cleaningDays {

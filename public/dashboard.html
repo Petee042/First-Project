@@ -79,17 +79,20 @@
           <div id="schedulePreview" class="schedule-preview" aria-live="polite">
             <p class="cleaning-empty">Select listings to preview the schedule.</p>
           </div>
-          <div class="schedule-format-row">
-            <label for="cleaningFormat">Download format</label>
-            <select id="cleaningFormat">
-              <option value="txt">Text (.txt)</option>
-              <option value="csv">CSV (.csv)</option>
-            </select>
+          <div class="schedule-refresh-row">
+            <button id="refreshScheduleBtn" type="button" class="btn secondary schedule-refresh-btn">Refresh Schedule</button>
           </div>
           <div class="schedule-save-row">
             <button id="saveScheduleChangesBtn" type="button" class="btn secondary schedule-save-btn">Save Changes</button>
           </div>
           <div class="schedule-download-row">
+            <div class="schedule-format-row">
+              <label for="cleaningFormat">Download format</label>
+              <select id="cleaningFormat">
+                <option value="txt">Text (.txt)</option>
+                <option value="csv">CSV (.csv)</option>
+              </select>
+            </div>
             <button id="downloadCleaningScheduleBtn" type="submit" class="btn primary schedule-download-btn">Download Schedule</button>
           </div>
         </form>

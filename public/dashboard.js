@@ -245,9 +245,6 @@ function renderCleaningListings(listings) {
     checkbox.setAttribute('data-property-name', listing.property_name || '');
     checkbox.setAttribute('data-date-basis', listing.date_basis === 'checkin' ? 'checkin' : 'checkout');
     checkbox.setAttribute('data-usual-cleaner-id', listing.usual_cleaner_id ? String(listing.usual_cleaner_id) : '');
-    checkbox.addEventListener('change', () => {
-      updateSchedulePreview();
-    });
 
     const name = document.createElement('span');
     name.className = 'cleaning-listing-name';
@@ -803,7 +800,6 @@ async function fetchListings() {
   currentListings = data.listings || [];
   renderListings(currentListings);
   renderCleaningListings(currentListings);
-  await updateSchedulePreview();
 }
 
 async function fetchProperties() {
@@ -849,7 +845,6 @@ async function fetchCleaners() {
   }
 
   renderCleaners(data.cleaners || []);
-  await updateSchedulePreview();
 }
 
 async function persistCurrentScheduleChanges() {
@@ -900,7 +895,6 @@ async function persistCurrentScheduleChanges() {
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     document.getElementById('cleaningStartDate').value = toDateInputValue(todayUtc);
-    await updateSchedulePreview();
     resetCleanerForm();
   } catch (err) {
     setMessage(err.message || 'Failed to load page.', true);
@@ -990,12 +984,14 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
   window.location.href = '/';
 });
 
-document.getElementById('cleaningStartDate').addEventListener('change', () => {
-  updateSchedulePreview();
-});
-
-document.getElementById('cleaningDays').addEventListener('input', () => {
-  updateSchedulePreview();
+document.getElementById('refreshScheduleBtn').addEventListener('click', async () => {
+  const button = document.getElementById('refreshScheduleBtn');
+  button.disabled = true;
+  try {
+    await updateSchedulePreview();
+  } finally {
+    button.disabled = false;
+  }
 });
 
 document.getElementById('cleaningScheduleForm').addEventListener('submit', async (e) => {
