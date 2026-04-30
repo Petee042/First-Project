@@ -916,3 +916,9 @@ textarea:focus {
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+.ics-export-help {
+  margin: 0.5rem 0 0;
+  font-size: 0.76rem;
+  color: #5f6675;
+}
