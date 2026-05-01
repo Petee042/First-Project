@@ -19,6 +19,16 @@ let schedulePreviewRequestId = 0;
 let currentScheduleRows = [];
 let currentScheduleErrors = [];
 
+function setConsolidatedIcsUrl(token) {
+  const input = document.getElementById('consolidatedIcsExportUrl');
+  if (!input) {
+    return;
+  }
+
+  const baseUrl = window.location.origin + '/api/calendar.ics';
+  input.value = token ? (baseUrl + '?token=' + encodeURIComponent(token)) : baseUrl;
+}
+
 function setMessage(text, isError) {
   const el = document.getElementById('dashboardMessage');
   el.textContent = text;
@@ -904,6 +914,8 @@ async function persistCurrentScheduleChanges() {
       window.location.href = '/';
       return;
     }
+    const meData = await meRes.json();
+    setConsolidatedIcsUrl(meData.consolidated_ics_token || '');
 
     await fetchProperties();
     await fetchListings();
@@ -1146,4 +1158,21 @@ document.getElementById('cleanerForm').addEventListener('submit', async (e) => {
 
 document.getElementById('cancelCleanerEditBtn').addEventListener('click', () => {
   resetCleanerForm();
+});
+
+document.getElementById('copyConsolidatedIcsUrlBtn').addEventListener('click', async () => {
+  const url = document.getElementById('consolidatedIcsExportUrl').value;
+  if (!url) return;
+
+  try {
+    await navigator.clipboard.writeText(url);
+    const btn = document.getElementById('copyConsolidatedIcsUrlBtn');
+    const originalText = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => {
+      btn.textContent = originalText;
+    }, 1800);
+  } catch {
+    setMessage('Could not copy consolidated calendar URL.', true);
+  }
 });

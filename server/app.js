@@ -1722,6 +1722,59 @@ function buildIcsAccessToken(listing) {
   return createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
 }
 
+function buildConsolidatedIcsToken(userId) {
+  const normalisedUserId = Number(userId);
+  if (!Number.isInteger(normalisedUserId) || normalisedUserId <= 0) {
+    return null;
+  }
+
+  const userPart = String(normalisedUserId);
+  const signature = createHmac('sha256', SESSION_SECRET)
+    .update('consolidated-ics:' + userPart)
+    .digest('hex');
+  return userPart + '.' + signature;
+}
+
+function getUserIdFromConsolidatedIcsToken(token) {
+  const raw = String(token || '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  const dotIndex = raw.indexOf('.');
+  if (dotIndex <= 0 || dotIndex === raw.length - 1) {
+    return null;
+  }
+
+  const userPart = raw.slice(0, dotIndex);
+  const signaturePart = raw.slice(dotIndex + 1);
+  const userId = Number(userPart);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return null;
+  }
+
+  const expected = buildConsolidatedIcsToken(userId);
+  if (!expected) {
+    return null;
+  }
+
+  const expectedBuffer = Buffer.from(expected);
+  const providedBuffer = Buffer.from(raw);
+  if (expectedBuffer.length !== providedBuffer.length) {
+    return null;
+  }
+
+  if (!timingSafeEqual(expectedBuffer, providedBuffer)) {
+    return null;
+  }
+
+  if (!/^[0-9a-fA-F]+$/.test(signaturePart)) {
+    return null;
+  }
+
+  return userId;
+}
+
 function isValidIcsAccessToken(listing, token) {
   const provided = String(token || '').trim();
   if (!provided) {
@@ -2949,7 +3002,8 @@ app.post('/api/admin/kayak/request', requireAdminAuth, async (req, res) => {
 app.get('/api/me', requireAuth, (req, res) => {
   res.json({
     username: req.session.username,
-    email: req.session.email
+    email: req.session.email,
+    consolidated_ics_token: buildConsolidatedIcsToken(req.session.userId)
   });
 });
 
@@ -3465,21 +3519,33 @@ function buildIcsDateRange(event) {
 }
 
 function buildIcsEventSummary(listing, event) {
-  const listingName = String(listing && listing.name ? listing.name : '').trim();
+  const listingName = String(
+    (event && event.listingName)
+      || (listing && listing.name)
+      || ''
+  ).trim();
+  const propertyName = String(
+    (event && event.propertyName)
+      || (listing && listing.property_name)
+      || ''
+  ).trim();
   const source = String(event && event.source ? event.source : '').trim();
-  if (!source) {
-    return listingName ? ('Reservation - ' + listingName) : 'Reservation';
-  }
+  let sourceLabel = source;
 
   const lower = source.toLowerCase();
   if (lower.includes('airbnb')) {
-    return 'Airbnb';
+    sourceLabel = 'Airbnb';
   }
   if (lower.includes('booking')) {
-    return listingName ? ('Booking.com - ' + listingName) : 'Booking.com';
+    sourceLabel = 'Booking.com';
   }
 
-  return listingName ? (source + ' - ' + listingName) : source;
+  const parts = [sourceLabel, propertyName, listingName].filter(Boolean);
+  if (parts.length) {
+    return parts.join(' - ');
+  }
+
+  return 'Reservation';
 }
 
 function buildIcsCalendar(listing, events) {
@@ -3541,6 +3607,23 @@ function parseCachedEventsRows(cachedRows) {
     });
 }
 
+async function getIcsEventsForListing(listingId) {
+  let cached = await getCachedEventsForListing(listingId);
+  let events = parseCachedEventsRows(cached);
+
+  if (events.length === 0) {
+    try {
+      await refreshEventsForListing(listingId);
+      cached = await getCachedEventsForListing(listingId);
+      events = parseCachedEventsRows(cached);
+    } catch (refreshErr) {
+      console.error('ICS refresh fallback failed for listing', listingId, refreshErr && refreshErr.message);
+    }
+  }
+
+  return events;
+}
+
 // GET /api/listings/:listingId/calendar.ics — export merged calendar as ICS
 app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
   const listingId = Number(req.params.listingId);
@@ -3569,18 +3652,7 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
       return res.status(404).send('Listing not found.');
     }
 
-    let cached = await getCachedEventsForListing(listingId);
-    let events = parseCachedEventsRows(cached);
-
-    if (events.length === 0) {
-      try {
-        await refreshEventsForListing(listingId);
-        cached = await getCachedEventsForListing(listingId);
-        events = parseCachedEventsRows(cached);
-      } catch (refreshErr) {
-        console.error('ICS refresh fallback failed for listing', listingId, refreshErr && refreshErr.message);
-      }
-    }
+    const events = await getIcsEventsForListing(listingId);
 
     const icsContent = buildIcsCalendar(listing, events);
     const safeName = String(listing.name || 'listing').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
@@ -3592,6 +3664,58 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).send('Failed to generate calendar.');
+  }
+});
+
+// GET /api/calendar.ics — export consolidated calendar across all listings
+app.get('/api/calendar.ics', async (req, res) => {
+  try {
+    let userId = req.session && Number.isInteger(req.session.userId)
+      ? req.session.userId
+      : null;
+
+    if (!userId) {
+      const token = String(req.query.token || '').trim();
+      userId = getUserIdFromConsolidatedIcsToken(token);
+      if (!userId) {
+        return res.status(401).send('Authentication required.');
+      }
+    }
+
+    const listings = await getListingsForUser(userId);
+
+    const combinedEvents = [];
+    for (const listing of listings) {
+      const listingEvents = await getIcsEventsForListing(listing.id);
+      listingEvents.forEach((event) => {
+        combinedEvents.push({
+          ...event,
+          listingName: listing.name,
+          propertyName: listing.property_name || ''
+        });
+      });
+    }
+
+    combinedEvents.sort((a, b) => {
+      const aTime = a.start ? new Date(a.start).getTime() : 0;
+      const bTime = b.start ? new Date(b.start).getTime() : 0;
+      return aTime - bTime;
+    });
+
+    const calendarListing = {
+      id: 'all',
+      name: 'All Listings',
+      property_name: ''
+    };
+    const icsContent = buildIcsCalendar(calendarListing, combinedEvents);
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="all-listings.ics"');
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('X-Calendar-Event-Count', String(combinedEvents.length));
+    return res.send(icsContent);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).send('Failed to generate consolidated calendar.');
   }
 });
 
