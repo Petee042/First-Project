@@ -3,6 +3,7 @@
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcrypt');
+const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 const { randomUUID, createHmac, timingSafeEqual } = require('crypto');
@@ -482,6 +483,50 @@ function normaliseOptionalEmail(value) {
   }
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email) ? email.toLowerCase() : null;
+}
+
+let scheduleEmailTransporter = null;
+let scheduleEmailTransporterKey = null;
+
+function getScheduleEmailTransportConfig() {
+  const host = String(process.env.SMTP_HOST || '').trim();
+  const port = Number(process.env.SMTP_PORT || 587);
+  const secure = String(process.env.SMTP_SECURE || '').trim().toLowerCase() === 'true';
+  const user = String(process.env.SMTP_USER || '').trim();
+  const pass = String(process.env.SMTP_PASS || '').trim();
+  const from = String(process.env.SMTP_FROM || user).trim();
+
+  if (!host || !Number.isInteger(port) || port <= 0 || !user || !pass || !from) {
+    return null;
+  }
+
+  return { host, port, secure, user, pass, from };
+}
+
+function getScheduleEmailTransporter() {
+  const config = getScheduleEmailTransportConfig();
+  if (!config) {
+    return { error: 'Schedule email is not configured on the server.' };
+  }
+
+  const nextKey = [config.host, config.port, config.secure, config.user, config.pass, config.from].join('|');
+  if (!scheduleEmailTransporter || scheduleEmailTransporterKey !== nextKey) {
+    scheduleEmailTransporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      auth: {
+        user: config.user,
+        pass: config.pass
+      }
+    });
+    scheduleEmailTransporterKey = nextKey;
+  }
+
+  return {
+    transporter: scheduleEmailTransporter,
+    from: config.from
+  };
 }
 
 function normaliseTelephone(value) {
@@ -3089,6 +3134,48 @@ app.post('/api/booked-in-changes/upsert', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to save booked-in changes.' });
+  }
+});
+
+// POST /api/schedules/email — email txt schedule to a recipient
+app.post('/api/schedules/email', requireAuth, async (req, res) => {
+  const to = normaliseOptionalEmail(req.body.email);
+  const textContent = String(req.body.textContent || '');
+  const subject = String(req.body.subject || 'Cleaning schedule').trim().slice(0, 160) || 'Cleaning schedule';
+  const rawFileName = String(req.body.fileName || 'schedule.txt').trim();
+  const safeFileName = rawFileName.replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || 'schedule.txt';
+
+  if (!to) {
+    return res.status(400).json({ error: 'A valid email address is required.' });
+  }
+
+  if (!textContent.trim()) {
+    return res.status(400).json({ error: 'Schedule text is required.' });
+  }
+
+  const transportResult = getScheduleEmailTransporter();
+  if (transportResult.error) {
+    return res.status(503).json({ error: transportResult.error });
+  }
+
+  try {
+    await transportResult.transporter.sendMail({
+      from: transportResult.from,
+      to,
+      subject,
+      text: textContent,
+      attachments: [
+        {
+          filename: safeFileName.toLowerCase().endsWith('.txt') ? safeFileName : (safeFileName + '.txt'),
+          content: textContent,
+          contentType: 'text/plain; charset=utf-8'
+        }
+      ]
+    });
+    return res.json({ message: 'Schedule email sent.' });
+  } catch (err) {
+    console.error('Failed to send schedule email:', err);
+    return res.status(500).json({ error: 'Failed to send schedule email.' });
   }
 });
 

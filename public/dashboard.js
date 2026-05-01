@@ -916,6 +916,9 @@ async function persistCurrentScheduleChanges() {
     }
     const meData = await meRes.json();
     setConsolidatedIcsUrl(meData.consolidated_ics_token || '');
+    if (meData.email) {
+      document.getElementById('scheduleEmailTo').value = meData.email;
+    }
 
     await fetchProperties();
     await fetchListings();
@@ -1019,6 +1022,92 @@ document.getElementById('refreshScheduleBtn').addEventListener('click', async ()
   button.disabled = true;
   try {
     await updateSchedulePreview();
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('sendScheduleEmailBtn').addEventListener('click', async () => {
+  const button = document.getElementById('sendScheduleEmailBtn');
+  const toEmail = document.getElementById('scheduleEmailTo').value.trim().toLowerCase();
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailRegex.test(toEmail)) {
+    setMessage('Enter a valid email address.', true);
+    return;
+  }
+
+  const daysValue = Number(document.getElementById('cleaningDays').value);
+  const startDateUtc = getSelectedStartDateUtc();
+  const selectedListings = getSelectedCleaningListings();
+
+  if (!selectedListings.length) {
+    setMessage('Select at least one listing for the schedule.', true);
+    return;
+  }
+  if (!Number.isInteger(daysValue) || daysValue < 1 || daysValue > 365) {
+    setMessage('Number of days must be between 1 and 365.', true);
+    return;
+  }
+  if (!startDateUtc) {
+    setMessage('Please select a valid start date.', true);
+    return;
+  }
+
+  button.disabled = true;
+  setMessage('Preparing schedule email...', false);
+
+  try {
+    let rows = currentScheduleRows || [];
+    let errors = currentScheduleErrors || [];
+
+    if (!rows.length) {
+      const result = await buildSchedule(selectedListings, daysValue, startDateUtc);
+      rows = result.rows || [];
+      errors = result.errors || [];
+      currentScheduleRows = rows;
+      currentScheduleErrors = errors;
+      renderSchedulePreviewTable(rows, errors, result.notifications || []);
+    }
+
+    if (!rows.length) {
+      setMessage('No reservations found in the selected range.', true);
+      return;
+    }
+
+    const startKey = keyFromUtcDate(startDateUtc);
+    const textContent = rowsToText(rows, formatCleaningScheduleLine) + '\n';
+    const fileName = 'schedule-' + startKey + '.txt';
+
+    const sendRes = await fetch('/api/schedules/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: toEmail,
+        subject: 'Cleaning schedule ' + startKey,
+        fileName,
+        textContent
+      })
+    });
+
+    if (sendRes.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const sendData = await sendRes.json();
+    if (!sendRes.ok) {
+      setMessage(sendData.error || 'Failed to send schedule email.', true);
+      return;
+    }
+
+    if (errors.length) {
+      setMessage('Email sent with some feed issues: ' + errors.join(' | '), true);
+    } else {
+      setMessage('Schedule email sent to ' + toEmail + '.', false);
+    }
+  } catch {
+    setMessage('Failed to send schedule email.', true);
   } finally {
     button.disabled = false;
   }
