@@ -19,6 +19,13 @@ let schedulePreviewRequestId = 0;
 let currentScheduleRows = [];
 let currentScheduleErrors = [];
 
+function setScheduleEmailMessage(text, isError) {
+  const el = document.getElementById('scheduleEmailMessage');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = text ? ('schedule-email-message ' + (isError ? 'error' : 'success')) : 'schedule-email-message';
+}
+
 function setConsolidatedIcsUrl(token) {
   const input = document.getElementById('consolidatedIcsExportUrl');
   if (!input) {
@@ -1034,6 +1041,7 @@ document.getElementById('sendScheduleEmailBtn').addEventListener('click', async 
 
   if (!emailRegex.test(toEmail)) {
     setMessage('Enter a valid email address.', true);
+    setScheduleEmailMessage('Enter a valid email address.', true);
     return;
   }
 
@@ -1043,19 +1051,23 @@ document.getElementById('sendScheduleEmailBtn').addEventListener('click', async 
 
   if (!selectedListings.length) {
     setMessage('Select at least one listing for the schedule.', true);
+    setScheduleEmailMessage('Select at least one listing for the schedule.', true);
     return;
   }
   if (!Number.isInteger(daysValue) || daysValue < 1 || daysValue > 365) {
     setMessage('Number of days must be between 1 and 365.', true);
+    setScheduleEmailMessage('Number of days must be between 1 and 365.', true);
     return;
   }
   if (!startDateUtc) {
     setMessage('Please select a valid start date.', true);
+    setScheduleEmailMessage('Please select a valid start date.', true);
     return;
   }
 
   button.disabled = true;
   setMessage('Preparing schedule email...', false);
+  setScheduleEmailMessage('Preparing schedule email...', false);
 
   try {
     let rows = currentScheduleRows || [];
@@ -1072,6 +1084,7 @@ document.getElementById('sendScheduleEmailBtn').addEventListener('click', async 
 
     if (!rows.length) {
       setMessage('No reservations found in the selected range.', true);
+      setScheduleEmailMessage('No reservations found in the selected range.', true);
       return;
     }
 
@@ -1098,16 +1111,20 @@ document.getElementById('sendScheduleEmailBtn').addEventListener('click', async 
     const sendData = await sendRes.json();
     if (!sendRes.ok) {
       setMessage(sendData.error || 'Failed to send schedule email.', true);
+      setScheduleEmailMessage(sendData.error || 'Failed to send schedule email.', true);
       return;
     }
 
     if (errors.length) {
       setMessage('Email sent with some feed issues: ' + errors.join(' | '), true);
+      setScheduleEmailMessage('Email sent with some feed issues.', false);
     } else {
       setMessage('Schedule email sent to ' + toEmail + '.', false);
+      setScheduleEmailMessage('Schedule email sent to ' + toEmail + '.', false);
     }
   } catch {
     setMessage('Failed to send schedule email.', true);
+    setScheduleEmailMessage('Failed to send schedule email.', true);
   } finally {
     button.disabled = false;
   }

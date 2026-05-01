@@ -515,6 +515,20 @@ textarea:focus {
   flex-shrink: 0;
 }
 
+.schedule-email-message {
+  margin: 0.35rem 0 0;
+  font-size: 0.86rem;
+  color: #4b556e;
+}
+
+.schedule-email-message.success {
+  color: #1f7a37;
+}
+
+.schedule-email-message.error {
+  color: #b31d1d;
+}
+
 .schedule-refresh-btn,
 .schedule-save-btn {
   width: 100%;
