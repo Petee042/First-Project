@@ -479,6 +479,14 @@ function setListingMessage(text, isError) {
   el.className = text ? 'message ' + (isError ? 'error' : 'success') : 'message';
 }
 
+function formatEntityId(value) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    return '';
+  }
+  return String(numeric).padStart(8, '0');
+}
+
 function setCalendarMessage(text, isError) {
   const el = document.getElementById('calendarMessage');
   el.textContent = text;
@@ -562,6 +570,7 @@ async function loadListing() {
 
   const listing = listingData.listing;
   document.getElementById('listingTitle').textContent = 'Listing: ' + listing.name;
+  document.getElementById('listingPublicId').value = formatEntityId(listing.id);
   document.getElementById('listingName').value = listing.name;
   document.getElementById('listingPropertyId').value = String(listing.property_id || '');
   document.getElementById('listingDateBasis').value = listing.date_basis === 'checkin' ? 'checkin' : 'checkout';

@@ -24,6 +24,10 @@
         <h3>Edit Listing Details</h3>
         <form id="renameListingForm" novalidate>
           <div class="calendar-source-row">
+            <label for="listingPublicId">Listing ID</label>
+            <input id="listingPublicId" type="text" readonly />
+          </div>
+          <div class="calendar-source-row">
             <label for="listingName">Name</label>
             <input id="listingName" type="text" maxlength="120" required />
           </div>

@@ -9,6 +9,14 @@ function setPropertyMessage(text, isError) {
   el.className = text ? 'message ' + (isError ? 'error' : 'success') : 'message';
 }
 
+function formatEntityId(value) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    return '';
+  }
+  return String(numeric).padStart(8, '0');
+}
+
 async function loadProperty() {
   const res = await fetch('/api/properties/' + propertyId);
   if (res.status === 401) {
@@ -27,6 +35,7 @@ async function loadProperty() {
 
   const property = data.property;
   document.getElementById('propertyTitle').textContent = 'Property: ' + property.name;
+  document.getElementById('propertyPublicId').value = formatEntityId(property.id);
   document.getElementById('propertyName').value = property.name || '';
   document.getElementById('postalAddress').value = property.postal_address || '';
   document.getElementById('managerName').value = property.manager_name || '';
