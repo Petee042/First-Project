@@ -238,7 +238,11 @@ function buildEffectiveCleaningChanges(events, apiCleaningChanges, listingMeta) 
 
   const merged = [];
   (events || []).forEach((event) => {
-    if (!event || event.isReservation === false) {
+    if (!event) {
+      return;
+    }
+    const isExplicitUnavailable = event.isUnavailableBlock === true && event.isReservation === false;
+    if (isExplicitUnavailable) {
       return;
     }
     const checkinKey = toDateKey(event.start);

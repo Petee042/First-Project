@@ -719,10 +719,6 @@ textarea:focus {
   font-size: 0.88rem;
 }
 
-#calendarLegend {
-  display: none;
-}
-
 .calendar-cleaner-legend {
   display: flex;
   flex-wrap: wrap;
