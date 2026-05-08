@@ -606,7 +606,7 @@ function renderSchedulePreviewTable(rows, errors, notifications) {
     tbody.appendChild(dividerRow);
 
     // Main data row
-    const altClass = idx % 2 === 1 ? ' schedule-row-alt' : '';
+    const altClass = '';
     const mainRow = document.createElement('tr');
     mainRow.className = 'schedule-main-row' + altClass;
 
