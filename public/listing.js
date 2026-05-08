@@ -422,6 +422,66 @@ function renderLegend(events) {
   });
 }
 
+function getCleanerDisplayName(change) {
+  if (!change) return '';
+  if (change.cleaner_id && cleanerNameById.has(Number(change.cleaner_id))) {
+    return cleanerNameById.get(Number(change.cleaner_id));
+  }
+  const fallback = String(change.cleaner_name || '').trim();
+  if (!fallback || fallback.toLowerCase() === 'unallocated') {
+    return '';
+  }
+  return fallback;
+}
+
+function renderCleanerLegend(changes) {
+  const legend = document.getElementById('cleanerLegend');
+  if (!legend) {
+    return;
+  }
+  legend.innerHTML = '';
+
+  const byKey = new Map();
+  (changes || []).forEach((change) => {
+    const initials = getCleanerInitials(change);
+    const name = getCleanerDisplayName(change);
+    if (!initials || !name) {
+      return;
+    }
+    const key = getCleanerBadgeKey(change) || ('name:' + name.toLowerCase());
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        initials,
+        name,
+        color: getCleanerBadgeColor(change)
+      });
+    }
+  });
+
+  const items = Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name));
+  if (!items.length) {
+    return;
+  }
+
+  items.forEach((itemData) => {
+    const item = document.createElement('div');
+    item.className = 'cleaner-legend-item';
+
+    const badge = document.createElement('span');
+    badge.className = 'calendar-day-cleaner-badge';
+    badge.textContent = itemData.initials;
+    badge.style.backgroundColor = itemData.color;
+
+    const name = document.createElement('span');
+    name.className = 'cleaner-legend-name';
+    name.textContent = itemData.name;
+
+    item.appendChild(badge);
+    item.appendChild(name);
+    legend.appendChild(item);
+  });
+}
+
 function getCalendarSources(events) {
   const sources = [];
   const seen = new Set();
@@ -781,6 +841,7 @@ function applyEventsData(data) {
     ? apiCleaningChanges
     : deriveCleaningChangesFromEvents(currentEvents, currentListingMeta);
   renderLegend(currentEvents);
+  renderCleanerLegend(currentCleaningChanges);
   renderReservationCalendar(currentEvents);
   setFetchedAt(data.fetchedAt || null);
 

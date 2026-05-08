@@ -719,6 +719,29 @@ textarea:focus {
   font-size: 0.88rem;
 }
 
+.calendar-cleaner-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.7rem;
+  margin: -0.2rem 0 0.8rem;
+}
+
+.cleaner-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid #dfe5f4;
+  border-radius: 999px;
+  background: #f7f9ff;
+}
+
+.cleaner-legend-name {
+  font-size: 0.77rem;
+  color: #3a4561;
+  white-space: nowrap;
+}
+
 .legend-item {
   display: inline-flex;
   align-items: center;
