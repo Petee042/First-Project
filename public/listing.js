@@ -11,9 +11,11 @@ let currentCleaningChanges = [];
 let cleanerInitialsById = new Map();
 let cleanerNameById = new Map();
 let currentListingMeta = null;
+const cleanerBadgeColorMap = {};
 
 const sourceColorMap = {};
 const sourcePalette = ['#ff5a5f', '#003580', '#2a9d8f', '#e76f51', '#264653', '#f4a261', '#8a5cf6'];
+const cleanerBadgePalette = ['#0f766e', '#1d4ed8', '#b45309', '#be123c', '#4338ca', '#166534', '#92400e', '#0369a1'];
 
 function normaliseSourceKey(source) {
   return String(source || 'Unknown').trim().toLowerCase();
@@ -144,6 +146,35 @@ function getCleanerInitials(change) {
   return initialsFromName(cleanerName);
 }
 
+function getCleanerBadgeKey(change) {
+  if (change && change.cleaner_id) {
+    return 'id:' + String(change.cleaner_id);
+  }
+  const name = String(change && change.cleaner_name ? change.cleaner_name : '').trim().toLowerCase();
+  return name ? ('name:' + name) : '';
+}
+
+function hashString(value) {
+  let hash = 0;
+  const text = String(value || '');
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+function getCleanerBadgeColor(change) {
+  const key = getCleanerBadgeKey(change);
+  if (!key) {
+    return '#2d3d66';
+  }
+  if (!cleanerBadgeColorMap[key]) {
+    const idx = hashString(key) % cleanerBadgePalette.length;
+    cleanerBadgeColorMap[key] = cleanerBadgePalette[idx];
+  }
+  return cleanerBadgeColorMap[key];
+}
+
 function deriveCleaningChangesFromEvents(events, listingMeta) {
   const cleanerId = listingMeta && listingMeta.usual_cleaner_id
     ? Number(listingMeta.usual_cleaner_id)
@@ -172,7 +203,7 @@ function deriveCleaningChangesFromEvents(events, listingMeta) {
     .filter(Boolean);
 }
 
-function buildCleaningInitialsByDate(changes) {
+function buildCleaningBadgesByDate(changes) {
   const byDate = {};
   (changes || []).forEach((change) => {
     const checkinKey = toDateKey(change.reservation_checkin_date);
@@ -186,6 +217,8 @@ function buildCleaningInitialsByDate(changes) {
     if (!initials) {
       return;
     }
+    const cleanerKey = getCleanerBadgeKey(change);
+    const badgeColor = getCleanerBadgeColor(change);
 
     let startKey = cleanKey;
     let endKey = cleanKey;
@@ -200,9 +233,15 @@ function buildCleaningInitialsByDate(changes) {
 
     eachDateKeyInclusive(startKey, endKey, (dateKey) => {
       if (!byDate[dateKey]) {
-        byDate[dateKey] = new Set();
+        byDate[dateKey] = new Map();
       }
-      byDate[dateKey].add(initials);
+      const key = cleanerKey || ('initials:' + initials);
+      if (!byDate[dateKey].has(key)) {
+        byDate[dateKey].set(key, {
+          initials,
+          color: badgeColor
+        });
+      }
     });
   });
 
@@ -405,7 +444,7 @@ function renderReservationCalendar(events) {
   const monthLabel = document.getElementById('monthLabel');
   const monthStart = monthStartUtc(currentMonthDate);
   const dayIndex = buildDayIndex(events);
-  const cleanerInitialsByDate = buildCleaningInitialsByDate(currentCleaningChanges);
+  const cleanerBadgesByDate = buildCleaningBadgesByDate(currentCleaningChanges);
   const sources = getCalendarSources(events);
 
   monthLabel.textContent = formatMonthLabel(monthStart);
@@ -500,14 +539,15 @@ function renderReservationCalendar(events) {
       num.textContent = String(dayNum);
       cell.appendChild(num);
 
-      const dayCleanerInitials = cleanerInitialsByDate[key] ? Array.from(cleanerInitialsByDate[key]) : [];
-      if (dayCleanerInitials.length) {
+      const dayCleanerBadges = cleanerBadgesByDate[key] ? Array.from(cleanerBadgesByDate[key].values()) : [];
+      if (dayCleanerBadges.length) {
         const cleanersEl = document.createElement('div');
         cleanersEl.className = 'calendar-day-cleaners';
-        dayCleanerInitials.forEach((initials) => {
+        dayCleanerBadges.forEach((badgeInfo) => {
           const badge = document.createElement('span');
           badge.className = 'calendar-day-cleaner-badge';
-          badge.textContent = initials;
+          badge.textContent = badgeInfo.initials;
+          badge.style.backgroundColor = badgeInfo.color;
           cleanersEl.appendChild(badge);
         });
         cell.appendChild(cleanersEl);
