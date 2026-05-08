@@ -9,6 +9,8 @@ let sourceColorPreferences = {};
 let currentProperties = [];
 let currentCleaningChanges = [];
 let cleanerInitialsById = new Map();
+let cleanerNameById = new Map();
+let currentListingMeta = null;
 
 const sourceColorMap = {};
 const sourcePalette = ['#ff5a5f', '#003580', '#2a9d8f', '#e76f51', '#264653', '#f4a261', '#8a5cf6'];
@@ -135,7 +137,39 @@ function getCleanerInitials(change) {
   if (change && change.cleaner_id && cleanerInitialsById.has(Number(change.cleaner_id))) {
     return cleanerInitialsById.get(Number(change.cleaner_id));
   }
-  return initialsFromName(change ? change.cleaner_name : '');
+  const cleanerName = String(change && change.cleaner_name ? change.cleaner_name : '').trim();
+  if (!cleanerName || cleanerName.toLowerCase() === 'unallocated') {
+    return '';
+  }
+  return initialsFromName(cleanerName);
+}
+
+function deriveCleaningChangesFromEvents(events, listingMeta) {
+  const cleanerId = listingMeta && listingMeta.usual_cleaner_id
+    ? Number(listingMeta.usual_cleaner_id)
+    : null;
+  const cleanerName = cleanerId && cleanerNameById.has(cleanerId)
+    ? cleanerNameById.get(cleanerId)
+    : '';
+  const dateBasis = listingMeta && listingMeta.date_basis === 'checkin' ? 'checkin' : 'checkout';
+
+  return (events || [])
+    .filter((event) => event && event.isReservation !== false)
+    .map((event) => {
+      const checkinKey = toDateKey(event.start);
+      const checkoutKey = toDateKey(event.end);
+      if (!checkinKey || !checkoutKey) {
+        return null;
+      }
+      return {
+        reservation_checkin_date: checkinKey,
+        reservation_checkout_date: checkoutKey,
+        changeover_date: dateBasis === 'checkin' ? checkinKey : checkoutKey,
+        cleaner_id: cleanerId || null,
+        cleaner_name: cleanerName || 'Unallocated'
+      };
+    })
+    .filter(Boolean);
 }
 
 function buildCleaningInitialsByDate(changes) {
@@ -658,6 +692,7 @@ async function loadListing() {
   }
 
   const listing = listingData.listing;
+  currentListingMeta = listing;
   document.getElementById('listingTitle').textContent = 'Listing: ' + listing.name;
   document.getElementById('listingPublicId').value = formatEntityId(listing.id);
   document.getElementById('listingName').value = listing.name;
@@ -699,8 +734,12 @@ function setFetchedAt(isoString) {
 }
 
 function applyEventsData(data) {
+  currentListingMeta = data.listing || currentListingMeta;
   currentEvents = data.events || [];
-  currentCleaningChanges = data.cleaningChanges || [];
+  const apiCleaningChanges = data.cleaningChanges || [];
+  currentCleaningChanges = apiCleaningChanges.length
+    ? apiCleaningChanges
+    : deriveCleaningChangesFromEvents(currentEvents, currentListingMeta);
   renderLegend(currentEvents);
   renderReservationCalendar(currentEvents);
   setFetchedAt(data.fetchedAt || null);
@@ -777,6 +816,12 @@ async function loadCleaners() {
   if (!res.ok) return [];
   const data = await res.json();
   const cleaners = data.cleaners || [];
+  cleanerNameById = new Map(
+    cleaners.map((cleaner) => {
+      const fullName = [cleaner.first_name || '', cleaner.last_name || ''].join(' ').trim();
+      return [Number(cleaner.id), fullName];
+    })
+  );
   cleanerInitialsById = new Map(
     cleaners.map((cleaner) => {
       const fullName = [cleaner.first_name || '', cleaner.last_name || ''].join(' ').trim();
