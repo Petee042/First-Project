@@ -1071,22 +1071,46 @@ textarea:focus {
 .resource-payment-options {
   flex: 1;
   min-width: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0.45rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
 }
 
 .resource-payment-option {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 0.45rem;
   font-size: 0.9rem;
   color: #2d334a;
+  width: auto;
+  font-weight: 400;
+}
+
+.resource-payment-row .resource-payment-option {
+  width: auto;
+}
+
+.resource-payment-row .resource-payment-option input[type="checkbox"] {
+  flex: 0 0 auto;
+  min-width: 16px;
+  max-width: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  background: transparent;
 }
 
 .resource-payment-option input[type="checkbox"] {
   width: 16px;
   height: 16px;
+}
+
+.resource-payment-option span {
+  flex: 0 1 auto;
 }
 
 .resource-payment-option.disabled {
