@@ -203,6 +203,77 @@ function deriveCleaningChangesFromEvents(events, listingMeta) {
     .filter(Boolean);
 }
 
+function reservationKey(checkinKey, checkoutKey) {
+  return String(checkinKey || '') + '|' + String(checkoutKey || '');
+}
+
+function hasAssignedCleaner(change) {
+  if (!change) return false;
+  if (change.cleaner_id && Number(change.cleaner_id) > 0) return true;
+  const name = String(change.cleaner_name || '').trim().toLowerCase();
+  return Boolean(name && name !== 'unallocated');
+}
+
+function buildEffectiveCleaningChanges(events, apiCleaningChanges, listingMeta) {
+  const cleanerId = listingMeta && listingMeta.usual_cleaner_id
+    ? Number(listingMeta.usual_cleaner_id)
+    : null;
+  const cleanerName = cleanerId && cleanerNameById.has(cleanerId)
+    ? cleanerNameById.get(cleanerId)
+    : '';
+  const dateBasis = listingMeta && listingMeta.date_basis === 'checkin' ? 'checkin' : 'checkout';
+
+  const bookedMap = new Map();
+  (apiCleaningChanges || []).forEach((change) => {
+    const checkinKey = toDateKey(change.reservation_checkin_date);
+    const checkoutKey = toDateKey(change.reservation_checkout_date);
+    if (!checkinKey || !checkoutKey) return;
+    bookedMap.set(reservationKey(checkinKey, checkoutKey), {
+      ...change,
+      reservation_checkin_date: checkinKey,
+      reservation_checkout_date: checkoutKey,
+      changeover_date: toDateKey(change.changeover_date) || (dateBasis === 'checkin' ? checkinKey : checkoutKey)
+    });
+  });
+
+  const merged = [];
+  (events || []).forEach((event) => {
+    if (!event || event.isReservation === false) {
+      return;
+    }
+    const checkinKey = toDateKey(event.start);
+    const checkoutKey = toDateKey(event.end);
+    if (!checkinKey || !checkoutKey) {
+      return;
+    }
+
+    const key = reservationKey(checkinKey, checkoutKey);
+    const existing = bookedMap.get(key);
+
+    if (existing && hasAssignedCleaner(existing)) {
+      merged.push(existing);
+      return;
+    }
+
+    if (cleanerId) {
+      merged.push({
+        reservation_checkin_date: checkinKey,
+        reservation_checkout_date: checkoutKey,
+        changeover_date: dateBasis === 'checkin' ? checkinKey : checkoutKey,
+        cleaner_id: cleanerId,
+        cleaner_name: cleanerName || 'Unallocated'
+      });
+      return;
+    }
+
+    if (existing) {
+      merged.push(existing);
+    }
+  });
+
+  return merged;
+}
+
 function buildCleaningBadgesByDate(changes) {
   const byDate = {};
   (changes || []).forEach((change) => {
@@ -394,6 +465,15 @@ function buildDayTooltip(dayEntry) {
 
 function renderLegend(events) {
   const legend = document.getElementById('calendarLegend');
+  if (!legend) return;
+  // Channel labels are rendered on the left side of the calendar grid.
+  // Keep the top legend hidden to avoid duplicate channel legends.
+  legend.innerHTML = '';
+  legend.style.display = 'none';
+  return;
+
+  // Unreachable legacy top-legend logic retained for quick restore if needed.
+  /*
   legend.innerHTML = '';
 
   const labels = new Set();
@@ -420,6 +500,7 @@ function renderLegend(events) {
     item.appendChild(text);
     legend.appendChild(item);
   });
+  */
 }
 
 function getCleanerDisplayName(change) {
@@ -837,9 +918,7 @@ function applyEventsData(data) {
   currentListingMeta = data.listing || currentListingMeta;
   currentEvents = data.events || [];
   const apiCleaningChanges = data.cleaningChanges || [];
-  currentCleaningChanges = apiCleaningChanges.length
-    ? apiCleaningChanges
-    : deriveCleaningChangesFromEvents(currentEvents, currentListingMeta);
+  currentCleaningChanges = buildEffectiveCleaningChanges(currentEvents, apiCleaningChanges, currentListingMeta);
   renderLegend(currentEvents);
   renderCleanerLegend(currentCleaningChanges);
   renderReservationCalendar(currentEvents);
