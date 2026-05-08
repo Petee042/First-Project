@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shared Resource - herupa1</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <div class="header-left">
+      <button id="backBtn" class="btn secondary">Back</button>
+      <span class="site-title top-title">herupa1</span>
+    </div>
+    <button id="logoutBtn" class="btn secondary">Log Out</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide">
+      <h2 id="sharedResourceTitle">Shared Resource</h2>
+      <p id="sharedResourceMessage" class="message"></p>
+
+      <section class="listing-form-section">
+        <h3>Bookable Shared Resource Configuration</h3>
+        <form id="sharedResourceForm" novalidate>
+          <div class="calendar-source-row">
+            <label for="shortDescription">Short Description</label>
+            <input id="shortDescription" type="text" maxlength="160" required />
+          </div>
+
+          <div class="calendar-source-row resource-editor-row">
+            <label>Full Description</label>
+            <div class="resource-editor-wrap">
+              <div class="resource-editor-toolbar" role="toolbar" aria-label="Formatting toolbar">
+                <button type="button" class="btn secondary editor-btn" data-command="bold"><strong>B</strong></button>
+                <button type="button" class="btn secondary editor-btn" data-command="italic"><em>I</em></button>
+                <button type="button" class="btn secondary editor-btn" data-command="underline"><span class="editor-underline">U</span></button>
+                <button type="button" class="btn secondary editor-btn" data-command="insertUnorderedList">Bullets</button>
+                <button type="button" class="btn secondary editor-btn" data-command="insertOrderedList">Numbers</button>
+              </div>
+              <div id="fullDescriptionEditor" class="resource-editor" contenteditable="true" spellcheck="true" aria-label="Full description editor"></div>
+            </div>
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="maxUnits">Maximum Units</label>
+            <input id="maxUnits" type="number" min="1" step="1" required />
+          </div>
+
+          <div class="feed-actions">
+            <button type="submit" class="btn primary calendar-btn">Save Shared Resource</button>
+            <button type="button" id="deleteSharedResourceBtn" class="btn secondary">Delete Shared Resource</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <script src="shared-resource.js"></script>
+</body>
+</html>

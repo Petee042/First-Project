@@ -200,6 +200,33 @@
           <p class="cleaning-empty">No notifications.</p>
         </div>
       </section>
+
+      <section class="listing-form-section">
+        <h3>Bookable Shared Resources (Parking)</h3>
+        <div class="listings-block">
+          <table class="calendar-table" aria-label="Bookable shared resources">
+            <thead>
+              <tr>
+                <th>Short Description</th>
+                <th>Add/Edit</th>
+              </tr>
+            </thead>
+            <tbody id="sharedResourcesTableBody">
+              <tr>
+                <td colspan="2">No shared resources yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <form id="addSharedResourceForm" novalidate>
+          <div class="calendar-source-row">
+            <label for="sharedResourceShortDescription">Short Description</label>
+            <input id="sharedResourceShortDescription" type="text" maxlength="160" required />
+          </div>
+          <button type="submit" class="btn primary calendar-btn">Create New</button>
+        </form>
+      </section>
     </div>
   </main>
 

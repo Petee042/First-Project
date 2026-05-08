@@ -1020,3 +1020,46 @@ textarea:focus {
   font-size: 0.76rem;
   color: #5f6675;
 }
+
+.resource-editor-row {
+  align-items: flex-start;
+}
+
+.resource-editor-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.resource-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.45rem;
+}
+
+.editor-btn {
+  width: auto;
+  margin-top: 0;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.84rem;
+}
+
+.editor-underline {
+  text-decoration: underline;
+}
+
+.resource-editor {
+  min-height: 170px;
+  border: 1.5px solid #d0d0d0;
+  border-radius: 7px;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  background: #ffffff;
+}
+
+.resource-editor:focus {
+  outline: none;
+  border-color: #4361ee;
+  box-shadow: 0 0 0 3px rgba(67,97,238,0.15);
+}

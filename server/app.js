@@ -131,7 +131,7 @@ function writeUsersToFile(users) {
 
 function ensureLocalListingsStore() {
   if (!fs.existsSync(listingsFile)) {
-    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [], booked_in_changes: [] }, null, 2), 'utf8');
+    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [], booked_in_changes: [], shared_resources: [] }, null, 2), 'utf8');
   }
 }
 
@@ -140,7 +140,7 @@ function readListingsStore() {
   const content = fs.readFileSync(listingsFile, 'utf8');
   const parsed = JSON.parse(content);
   if (!parsed || !Array.isArray(parsed.listings) || !Array.isArray(parsed.feeds)) {
-    return { listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [], booked_in_changes: [] };
+    return { listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [], booked_in_changes: [], shared_resources: [] };
   }
   if (!Array.isArray(parsed.source_colors)) {
     parsed.source_colors = [];
@@ -156,6 +156,9 @@ function readListingsStore() {
   }
   if (!Array.isArray(parsed.booked_in_changes)) {
     parsed.booked_in_changes = [];
+  }
+  if (!Array.isArray(parsed.shared_resources)) {
+    parsed.shared_resources = [];
   }
   parsed.listings.forEach((listing) => {
     if (listing.date_basis !== 'checkin' && listing.date_basis !== 'checkout') {
@@ -373,6 +376,18 @@ async function initializeUserStore() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shared_resources (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      short_description TEXT NOT NULL,
+      full_description_html TEXT NOT NULL DEFAULT '',
+      max_units INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   await migrateUsersFromFile();
 
   await pool.query(`
@@ -483,6 +498,30 @@ function normaliseOptionalEmail(value) {
   }
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email) ? email.toLowerCase() : null;
+}
+
+function normaliseSharedResourceShortDescription(value) {
+  return String(value || '').trim().slice(0, 160);
+}
+
+function normaliseSharedResourceMaxUnits(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function sanitiseRichTextHtml(value) {
+  let html = String(value || '');
+  // Drop script/style blocks and inline handlers/JS URLs.
+  html = html.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '');
+  html = html.replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '');
+  html = html.replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '');
+  html = html.replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '');
+  html = html.replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '');
+  html = html.replace(/javascript:/gi, '');
+  return html.trim();
 }
 
 let scheduleEmailTransporter = null;
@@ -1062,6 +1101,158 @@ async function deletePropertyForUser(propertyId, userId) {
   return { deletedPropertyId: Number(result.rows[0].id) };
 }
 
+async function getSharedResourcesForUser(userId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return (store.shared_resources || [])
+      .filter((resource) => Number(resource.user_id) === Number(userId))
+      .sort((a, b) => String(a.short_description || '').localeCompare(String(b.short_description || '')));
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, user_id, short_description, full_description_html, max_units, created_at, updated_at
+      FROM shared_resources
+      WHERE user_id = $1
+      ORDER BY short_description ASC, id ASC
+    `,
+    [userId]
+  );
+  return result.rows;
+}
+
+async function getSharedResourceByIdForUser(resourceId, userId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return (store.shared_resources || []).find(
+      (resource) => Number(resource.id) === Number(resourceId) && Number(resource.user_id) === Number(userId)
+    ) || null;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, user_id, short_description, full_description_html, max_units, created_at, updated_at
+      FROM shared_resources
+      WHERE id = $1 AND user_id = $2
+      LIMIT 1
+    `,
+    [resourceId, userId]
+  );
+  return result.rows[0] || null;
+}
+
+async function createSharedResourceForUser(userId, input) {
+  const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
+  if (!shortDescription) {
+    return { error: 'Short description is required.' };
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const nextId = store.shared_resources.length
+      ? Math.max(...store.shared_resources.map((resource) => Number(resource.id))) + 1
+      : 1;
+    const resource = {
+      id: nextId,
+      user_id: Number(userId),
+      short_description: shortDescription,
+      full_description_html: '',
+      max_units: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    store.shared_resources.push(resource);
+    writeListingsStore(store);
+    return { resource };
+  }
+
+  const result = await pool.query(
+    `
+      INSERT INTO shared_resources (user_id, short_description, full_description_html, max_units)
+      VALUES ($1, $2, '', 1)
+      RETURNING id, user_id, short_description, full_description_html, max_units, created_at, updated_at
+    `,
+    [userId, shortDescription]
+  );
+  return { resource: result.rows[0] };
+}
+
+async function updateSharedResourceForUser(resourceId, userId, input) {
+  const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
+  const fullDescriptionHtml = sanitiseRichTextHtml(input.fullDescriptionHtml);
+  const maxUnits = normaliseSharedResourceMaxUnits(input.maxUnits);
+
+  if (!shortDescription) {
+    return { error: 'Short description is required.' };
+  }
+  if (!maxUnits) {
+    return { error: 'Maximum units must be a whole number greater than zero.' };
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const idx = (store.shared_resources || []).findIndex(
+      (resource) => Number(resource.id) === Number(resourceId) && Number(resource.user_id) === Number(userId)
+    );
+    if (idx === -1) {
+      return { error: 'Shared resource not found.' };
+    }
+    store.shared_resources[idx].short_description = shortDescription;
+    store.shared_resources[idx].full_description_html = fullDescriptionHtml;
+    store.shared_resources[idx].max_units = maxUnits;
+    store.shared_resources[idx].updated_at = new Date().toISOString();
+    writeListingsStore(store);
+    return { resource: store.shared_resources[idx] };
+  }
+
+  const result = await pool.query(
+    `
+      UPDATE shared_resources
+      SET short_description = $1,
+          full_description_html = $2,
+          max_units = $3,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $4 AND user_id = $5
+      RETURNING id, user_id, short_description, full_description_html, max_units, created_at, updated_at
+    `,
+    [shortDescription, fullDescriptionHtml, maxUnits, resourceId, userId]
+  );
+
+  if (!result.rows[0]) {
+    return { error: 'Shared resource not found.' };
+  }
+
+  return { resource: result.rows[0] };
+}
+
+async function deleteSharedResourceForUser(resourceId, userId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const existing = (store.shared_resources || []).find(
+      (resource) => Number(resource.id) === Number(resourceId) && Number(resource.user_id) === Number(userId)
+    );
+    if (!existing) {
+      return { error: 'Shared resource not found.' };
+    }
+
+    store.shared_resources = (store.shared_resources || []).filter(
+      (resource) => !(Number(resource.id) === Number(resourceId) && Number(resource.user_id) === Number(userId))
+    );
+    writeListingsStore(store);
+    return { deletedResourceId: Number(resourceId) };
+  }
+
+  const result = await pool.query(
+    'DELETE FROM shared_resources WHERE id = $1 AND user_id = $2 RETURNING id',
+    [resourceId, userId]
+  );
+  if (!result.rows[0]) {
+    return { error: 'Shared resource not found.' };
+  }
+
+  return { deletedResourceId: Number(result.rows[0].id) };
+}
+
 async function resolvePropertyForListing(userId, propertyId) {
   if (Number.isInteger(Number(propertyId)) && Number(propertyId) > 0) {
     const property = await getPropertyByIdForUser(Number(propertyId), userId);
@@ -1117,7 +1308,8 @@ async function deleteUserAndData(userId) {
       source_colors: (store.source_colors || []).filter((row) => Number(row.user_id) !== Number(userId)),
       cleaners: (store.cleaners || []).filter((cleaner) => Number(cleaner.user_id) !== Number(userId)),
       cached_events: (store.cached_events || []).filter((row) => !removedListingIds.has(Number(row.listing_id))),
-      booked_in_changes: (store.booked_in_changes || []).filter((row) => Number(row.user_id) !== Number(userId))
+      booked_in_changes: (store.booked_in_changes || []).filter((row) => Number(row.user_id) !== Number(userId)),
+      shared_resources: (store.shared_resources || []).filter((row) => Number(row.user_id) !== Number(userId))
     };
     writeListingsStore(updatedStore);
 
@@ -3176,6 +3368,100 @@ app.post('/api/schedules/email', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Failed to send schedule email:', err);
     return res.status(500).json({ error: 'Failed to send schedule email.' });
+  }
+});
+
+// GET /api/shared-resources — all shared resources for current user
+app.get('/api/shared-resources', requireAuth, async (req, res) => {
+  try {
+    const resources = await getSharedResourcesForUser(req.session.userId);
+    return res.json({ resources });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load shared resources.' });
+  }
+});
+
+// POST /api/shared-resources — create shared resource with short description
+app.post('/api/shared-resources', requireAuth, async (req, res) => {
+  try {
+    const { resource, error } = await createSharedResourceForUser(req.session.userId, {
+      shortDescription: req.body.shortDescription
+    });
+    if (error) {
+      return res.status(400).json({ error });
+    }
+    return res.status(201).json({ resource });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create shared resource.' });
+  }
+});
+
+// GET /api/shared-resources/:resourceId — one shared resource for current user
+app.get('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
+  const resourceId = Number(req.params.resourceId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0) {
+    return res.status(400).json({ error: 'Invalid shared resource id.' });
+  }
+
+  try {
+    const resource = await getSharedResourceByIdForUser(resourceId, req.session.userId);
+    if (!resource) {
+      return res.status(404).json({ error: 'Shared resource not found.' });
+    }
+    return res.json({ resource });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load shared resource.' });
+  }
+});
+
+// PUT /api/shared-resources/:resourceId — update shared resource
+app.put('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
+  const resourceId = Number(req.params.resourceId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0) {
+    return res.status(400).json({ error: 'Invalid shared resource id.' });
+  }
+
+  try {
+    const { resource, error } = await updateSharedResourceForUser(resourceId, req.session.userId, {
+      shortDescription: req.body.shortDescription,
+      fullDescriptionHtml: req.body.fullDescriptionHtml,
+      maxUnits: req.body.maxUnits
+    });
+    if (error === 'Shared resource not found.') {
+      return res.status(404).json({ error });
+    }
+    if (error) {
+      return res.status(400).json({ error });
+    }
+    return res.json({ resource });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to update shared resource.' });
+  }
+});
+
+// DELETE /api/shared-resources/:resourceId — delete shared resource
+app.delete('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
+  const resourceId = Number(req.params.resourceId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0) {
+    return res.status(400).json({ error: 'Invalid shared resource id.' });
+  }
+
+  try {
+    const result = await deleteSharedResourceForUser(resourceId, req.session.userId);
+    if (result.error === 'Shared resource not found.') {
+      return res.status(404).json({ error: result.error });
+    }
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json({ deletedResourceId: result.deletedResourceId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete shared resource.' });
   }
 });
 

@@ -15,6 +15,7 @@ const MONTH_SHORT_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug
 let currentListings = [];
 let currentProperties = [];
 let currentCleaners = [];
+let currentSharedResources = [];
 let schedulePreviewRequestId = 0;
 let currentScheduleRows = [];
 let currentScheduleErrors = [];
@@ -206,6 +207,47 @@ function renderCleaners(cleaners) {
     row.appendChild(lastNameCell);
     row.appendChild(actionCell);
 
+    tbody.appendChild(row);
+  });
+}
+
+function renderSharedResources(resources) {
+  currentSharedResources = resources || [];
+
+  const tbody = document.getElementById('sharedResourcesTableBody');
+  if (!tbody) {
+    return;
+  }
+  tbody.innerHTML = '';
+
+  if (!currentSharedResources.length) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 2;
+    cell.textContent = 'No shared resources yet.';
+    row.appendChild(cell);
+    tbody.appendChild(row);
+    return;
+  }
+
+  currentSharedResources.forEach((resource) => {
+    const row = document.createElement('tr');
+
+    const shortCell = document.createElement('td');
+    shortCell.textContent = resource.short_description || '';
+
+    const actionCell = document.createElement('td');
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className = 'btn secondary';
+    editBtn.textContent = 'View / Edit';
+    editBtn.addEventListener('click', () => {
+      window.location.href = '/shared-resource.html?id=' + encodeURIComponent(resource.id);
+    });
+    actionCell.appendChild(editBtn);
+
+    row.appendChild(shortCell);
+    row.appendChild(actionCell);
     tbody.appendChild(row);
   });
 }
@@ -889,6 +931,21 @@ async function fetchCleaners() {
   renderCleaners(data.cleaners || []);
 }
 
+async function fetchSharedResources() {
+  const res = await fetch('/api/shared-resources');
+  if (res.status === 401) {
+    window.location.href = '/';
+    return;
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to load shared resources.');
+  }
+
+  renderSharedResources(data.resources || []);
+}
+
 async function persistCurrentScheduleChanges() {
   if (!currentScheduleRows.length) {
     return { ok: false, error: 'Generate a schedule preview before saving changes.' };
@@ -938,6 +995,7 @@ async function persistCurrentScheduleChanges() {
     await fetchListings();
     await fetchFeedSources();
     await fetchCleaners();
+    await fetchSharedResources();
 
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -1021,6 +1079,39 @@ document.getElementById('addPropertyForm').addEventListener('submit', async (e) 
     await fetchListings();
   } catch {
     setMessage('Network error creating property.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.getElementById('addSharedResourceForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const button = e.target.querySelector('button[type="submit"]');
+  const shortDescription = document.getElementById('sharedResourceShortDescription').value.trim();
+
+  if (!shortDescription) {
+    setMessage('Shared resource short description is required.', true);
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    const res = await fetch('/api/shared-resources', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shortDescription })
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setMessage(data.error || 'Failed to create shared resource.', true);
+      return;
+    }
+
+    window.location.href = '/shared-resource.html?id=' + encodeURIComponent(data.resource.id);
+  } catch {
+    setMessage('Network error creating shared resource.', true);
   } finally {
     button.disabled = false;
   }
