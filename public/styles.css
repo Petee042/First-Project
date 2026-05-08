@@ -595,8 +595,12 @@ textarea:focus {
   border-bottom: 1px solid #e0e0e0;
 }
 
-.schedule-main-row td {
-  box-shadow: inset 0 2px 0 #c2cbe1;
+.schedule-entry-divider td {
+  padding: 0;
+  height: 0;
+  line-height: 0;
+  border-bottom: 0;
+  border-top: 2px solid #b7c3df;
 }
 
 .schedule-sub-row {

@@ -598,6 +598,13 @@ function renderSchedulePreviewTable(rows, errors, notifications) {
 
   const tbody = document.createElement('tbody');
   rows.forEach((row, idx) => {
+    const dividerRow = document.createElement('tr');
+    dividerRow.className = 'schedule-entry-divider';
+    const dividerCell = document.createElement('td');
+    dividerCell.colSpan = headers.length;
+    dividerRow.appendChild(dividerCell);
+    tbody.appendChild(dividerRow);
+
     // Main data row
     const altClass = idx % 2 === 1 ? ' schedule-row-alt' : '';
     const mainRow = document.createElement('tr');
