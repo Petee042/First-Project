@@ -3844,7 +3844,23 @@ app.get('/api/listings/:listingId/events', requireAuth, async (req, res) => {
       ? cached.map((c) => c.fetched_at).sort().pop()
       : null;
 
-    return res.json({ listing, events, feedErrors, fetchedAt });
+    const bookedChanges = await getBookedInChangesForUserByListings(req.session.userId, [listingId]);
+    const cleaners = await getCleanersForUser(req.session.userId);
+    const cleanerNameById = new Map(
+      (cleaners || []).map((cleaner) => {
+        const fullName = [cleaner.first_name || '', cleaner.last_name || ''].join(' ').trim();
+        return [Number(cleaner.id), fullName || 'Unallocated'];
+      })
+    );
+    const cleaningChanges = (bookedChanges || []).map((row) => ({
+      reservation_checkin_date: row.reservation_checkin_date,
+      reservation_checkout_date: row.reservation_checkout_date,
+      changeover_date: row.changeover_date,
+      cleaner_id: row.cleaner_id ? Number(row.cleaner_id) : null,
+      cleaner_name: row.cleaner_id ? (cleanerNameById.get(Number(row.cleaner_id)) || 'Unallocated') : 'Unallocated'
+    }));
+
+    return res.json({ listing, events, feedErrors, fetchedAt, cleaningChanges });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load listing events.' });
@@ -3891,7 +3907,23 @@ app.post('/api/listings/:listingId/events/refresh', requireAuth, async (req, res
       ? cached.map((c) => c.fetched_at).sort().pop()
       : null;
 
-    return res.json({ listing, events, feedErrors, fetchedAt });
+    const bookedChanges = await getBookedInChangesForUserByListings(req.session.userId, [listingId]);
+    const cleaners = await getCleanersForUser(req.session.userId);
+    const cleanerNameById = new Map(
+      (cleaners || []).map((cleaner) => {
+        const fullName = [cleaner.first_name || '', cleaner.last_name || ''].join(' ').trim();
+        return [Number(cleaner.id), fullName || 'Unallocated'];
+      })
+    );
+    const cleaningChanges = (bookedChanges || []).map((row) => ({
+      reservation_checkin_date: row.reservation_checkin_date,
+      reservation_checkout_date: row.reservation_checkout_date,
+      changeover_date: row.changeover_date,
+      cleaner_id: row.cleaner_id ? Number(row.cleaner_id) : null,
+      cleaner_name: row.cleaner_id ? (cleanerNameById.get(Number(row.cleaner_id)) || 'Unallocated') : 'Unallocated'
+    }));
+
+    return res.json({ listing, events, feedErrors, fetchedAt, cleaningChanges });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to refresh listing events.' });

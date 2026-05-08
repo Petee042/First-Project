@@ -817,6 +817,27 @@ textarea:focus {
   color: #2e3350;
 }
 
+.calendar-day-cleaners {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.18rem;
+}
+
+.calendar-day-cleaner-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.2rem;
+  height: 1.05rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: #2d3d66;
+  color: #ffffff;
+  font-size: 0.63rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .calendar-day-bars {
   display: flex;
   flex-direction: column;

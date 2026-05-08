@@ -7,6 +7,8 @@ let currentEvents = [];
 let currentMonthDate = new Date();
 let sourceColorPreferences = {};
 let currentProperties = [];
+let currentCleaningChanges = [];
+let cleanerInitialsById = new Map();
 
 const sourceColorMap = {};
 const sourcePalette = ['#ff5a5f', '#003580', '#2a9d8f', '#e76f51', '#264653', '#f4a261', '#8a5cf6'];
@@ -98,6 +100,79 @@ function addUtcDays(date, days) {
   const copy = new Date(date.getTime());
   copy.setUTCDate(copy.getUTCDate() + days);
   return copy;
+}
+
+function dateKeyLess(a, b) {
+  return String(a || '') < String(b || '');
+}
+
+function dateKeyGreater(a, b) {
+  return String(a || '') > String(b || '');
+}
+
+function eachDateKeyInclusive(startKey, endKey, callback) {
+  if (!startKey || !endKey) return;
+  const startDate = utcDateFromKey(startKey);
+  const endDate = utcDateFromKey(endKey);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return;
+  const step = startDate <= endDate ? 1 : -1;
+  for (let cursor = new Date(startDate.getTime()); ; cursor = addUtcDays(cursor, step)) {
+    callback(keyFromUtcDate(cursor));
+    if (cursor.getTime() === endDate.getTime()) {
+      break;
+    }
+  }
+}
+
+function initialsFromName(name) {
+  const tokens = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return '';
+  if (tokens.length === 1) return tokens[0].charAt(0).toUpperCase();
+  return (tokens[0].charAt(0) + tokens[tokens.length - 1].charAt(0)).toUpperCase();
+}
+
+function getCleanerInitials(change) {
+  if (change && change.cleaner_id && cleanerInitialsById.has(Number(change.cleaner_id))) {
+    return cleanerInitialsById.get(Number(change.cleaner_id));
+  }
+  return initialsFromName(change ? change.cleaner_name : '');
+}
+
+function buildCleaningInitialsByDate(changes) {
+  const byDate = {};
+  (changes || []).forEach((change) => {
+    const checkinKey = toDateKey(change.reservation_checkin_date);
+    const checkoutKey = toDateKey(change.reservation_checkout_date);
+    const cleanKey = toDateKey(change.changeover_date);
+    if (!checkinKey || !checkoutKey || !cleanKey) {
+      return;
+    }
+
+    const initials = getCleanerInitials(change);
+    if (!initials) {
+      return;
+    }
+
+    let startKey = cleanKey;
+    let endKey = cleanKey;
+
+    if (dateKeyLess(cleanKey, checkinKey)) {
+      startKey = cleanKey;
+      endKey = checkinKey;
+    } else if (dateKeyGreater(cleanKey, checkoutKey)) {
+      startKey = checkoutKey;
+      endKey = cleanKey;
+    }
+
+    eachDateKeyInclusive(startKey, endKey, (dateKey) => {
+      if (!byDate[dateKey]) {
+        byDate[dateKey] = new Set();
+      }
+      byDate[dateKey].add(initials);
+    });
+  });
+
+  return byDate;
 }
 
 function toDateKey(value) {
@@ -296,6 +371,7 @@ function renderReservationCalendar(events) {
   const monthLabel = document.getElementById('monthLabel');
   const monthStart = monthStartUtc(currentMonthDate);
   const dayIndex = buildDayIndex(events);
+  const cleanerInitialsByDate = buildCleaningInitialsByDate(currentCleaningChanges);
   const sources = getCalendarSources(events);
 
   monthLabel.textContent = formatMonthLabel(monthStart);
@@ -389,6 +465,19 @@ function renderReservationCalendar(events) {
       num.className = 'calendar-day-number';
       num.textContent = String(dayNum);
       cell.appendChild(num);
+
+      const dayCleanerInitials = cleanerInitialsByDate[key] ? Array.from(cleanerInitialsByDate[key]) : [];
+      if (dayCleanerInitials.length) {
+        const cleanersEl = document.createElement('div');
+        cleanersEl.className = 'calendar-day-cleaners';
+        dayCleanerInitials.forEach((initials) => {
+          const badge = document.createElement('span');
+          badge.className = 'calendar-day-cleaner-badge';
+          badge.textContent = initials;
+          cleanersEl.appendChild(badge);
+        });
+        cell.appendChild(cleanersEl);
+      }
 
       const bars = document.createElement('div');
       bars.className = 'calendar-day-bars';
@@ -611,6 +700,7 @@ function setFetchedAt(isoString) {
 
 function applyEventsData(data) {
   currentEvents = data.events || [];
+  currentCleaningChanges = data.cleaningChanges || [];
   renderLegend(currentEvents);
   renderReservationCalendar(currentEvents);
   setFetchedAt(data.fetchedAt || null);
@@ -686,7 +776,14 @@ async function loadCleaners() {
   const res = await fetch('/api/cleaners');
   if (!res.ok) return [];
   const data = await res.json();
-  return data.cleaners || [];
+  const cleaners = data.cleaners || [];
+  cleanerInitialsById = new Map(
+    cleaners.map((cleaner) => {
+      const fullName = [cleaner.first_name || '', cleaner.last_name || ''].join(' ').trim();
+      return [Number(cleaner.id), initialsFromName(fullName)];
+    })
+  );
+  return cleaners;
 }
 
 function populateUsualCleanerSelect(cleaners, selectedId) {
