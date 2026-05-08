@@ -591,7 +591,7 @@ textarea:focus {
 }
 
 .schedule-main-row {
-  background: #ffffff;
+  background: #d7e3fb;
   border-bottom: 1px solid #e0e0e0;
 }
 
@@ -604,15 +604,15 @@ textarea:focus {
 }
 
 .schedule-sub-row {
-  background: #f9fafb;
+  background: #ffffff;
 }
 
 .schedule-main-row.schedule-row-alt {
-  background: #eef1fb;
+  background: #c8d7f8;
 }
 
 .schedule-sub-row.schedule-row-alt {
-  background: #e6eaf7;
+  background: #ffffff;
 }
 
 .schedule-controls-cell {
