@@ -1407,6 +1407,37 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
   };
 }
 
+async function getSharedResourceByIdPublic(resourceId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const resource = (store.shared_resources || []).find(
+      (row) => Number(row.id) === Number(resourceId)
+    ) || null;
+    if (!resource) {
+      return null;
+    }
+    return {
+      id: Number(resource.id),
+      short_description: String(resource.short_description || ''),
+      full_description_html: String(resource.full_description_html || ''),
+      max_units: Number(resource.max_units || 0) || null,
+      property_id: normaliseOptionalPositiveInteger(resource.property_id),
+      listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
+    };
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, short_description, full_description_html, max_units, property_id, listing_id
+      FROM shared_resources
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [resourceId]
+  );
+  return result.rows[0] || null;
+}
+
 async function createSharedResourceForUser(userId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
@@ -3843,6 +3874,25 @@ app.get('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
 
   try {
     const resource = await getSharedResourceByIdForUser(resourceId, req.session.userId);
+    if (!resource) {
+      return res.status(404).json({ error: 'Shared resource not found.' });
+    }
+    return res.json({ resource });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load shared resource.' });
+  }
+});
+
+// GET /api/public/shared-resources/:resourceId — public view of one shared resource
+app.get('/api/public/shared-resources/:resourceId', async (req, res) => {
+  const resourceId = Number(req.params.resourceId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0) {
+    return res.status(400).json({ error: 'Invalid shared resource id.' });
+  }
+
+  try {
+    const resource = await getSharedResourceByIdPublic(resourceId);
     if (!resource) {
       return res.status(404).json({ error: 'Shared resource not found.' });
     }

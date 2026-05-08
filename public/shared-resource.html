@@ -23,6 +23,14 @@
       <section class="listing-form-section">
         <h3>Bookable Shared Resource Configuration</h3>
         <form id="sharedResourceForm" novalidate>
+          <div class="calendar-source-row resource-booking-url-row">
+            <label for="bookingPageUrl">Booking Page URL</label>
+            <div class="resource-booking-url-wrap">
+              <input id="bookingPageUrl" type="text" readonly />
+              <button type="button" id="copyBookingPageUrlBtn" class="btn secondary">Copy</button>
+            </div>
+          </div>
+
           <div class="calendar-source-row">
             <label for="shortDescription">Short Description</label>
             <input id="shortDescription" type="text" maxlength="160" required />

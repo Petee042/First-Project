@@ -23,6 +23,21 @@ function getEditorHtml() {
   return document.getElementById('fullDescriptionEditor').innerHTML.trim();
 }
 
+function buildBookingPageUrl() {
+  if (!Number.isInteger(resourceId) || resourceId <= 0) {
+    return '';
+  }
+  return window.location.origin + '/public-pages/booking.html?resourceId=' + encodeURIComponent(resourceId);
+}
+
+function setBookingPageUrl() {
+  const input = document.getElementById('bookingPageUrl');
+  const copyBtn = document.getElementById('copyBookingPageUrlBtn');
+  const url = buildBookingPageUrl();
+  input.value = url;
+  copyBtn.disabled = !url;
+}
+
 function applyEditorCommand(command) {
   document.execCommand(command, false, null);
   document.getElementById('fullDescriptionEditor').focus();
@@ -409,6 +424,8 @@ async function loadSharedResource() {
 }
 
 (async () => {
+  setBookingPageUrl();
+
   if (!Number.isInteger(resourceId) || resourceId <= 0) {
     setSharedResourceMessage('Invalid shared resource id.', true);
     return;
@@ -460,6 +477,27 @@ document.getElementById('openChargeConfigBtn').addEventListener('click', () => {
 
 document.getElementById('closeChargeConfigBtn').addEventListener('click', () => {
   getChargeDialog().close();
+});
+
+document.getElementById('copyBookingPageUrlBtn').addEventListener('click', async () => {
+  const input = document.getElementById('bookingPageUrl');
+  const value = input.value.trim();
+  if (!value) {
+    return;
+  }
+
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      input.focus();
+      input.select();
+      document.execCommand('copy');
+    }
+    setSharedResourceMessage('Booking page URL copied.', false);
+  } catch {
+    setSharedResourceMessage('Could not copy booking page URL.', true);
+  }
 });
 
 document.querySelectorAll('input[name="chargeBasis"]').forEach((input) => {
