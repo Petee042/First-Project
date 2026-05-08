@@ -146,6 +146,31 @@ function getCleanerInitials(change) {
   return initialsFromName(cleanerName);
 }
 
+function getDefaultCleanerForListing(listingMeta) {
+  const cleanerId = listingMeta && listingMeta.usual_cleaner_id
+    ? Number(listingMeta.usual_cleaner_id)
+    : null;
+  if (!cleanerId || !Number.isInteger(cleanerId) || cleanerId <= 0) {
+    return { cleanerId: null, cleanerName: '' };
+  }
+
+  let cleanerName = cleanerNameById.get(cleanerId) || '';
+  if (!cleanerName) {
+    const select = document.getElementById('listingUsualCleaner');
+    if (select) {
+      const option = Array.from(select.options || []).find((item) => Number(item.value) === cleanerId);
+      if (option) {
+        cleanerName = String(option.textContent || '').trim();
+      }
+    }
+  }
+
+  return {
+    cleanerId,
+    cleanerName
+  };
+}
+
 function getCleanerBadgeKey(change) {
   if (change && change.cleaner_id) {
     return 'id:' + String(change.cleaner_id);
@@ -176,12 +201,9 @@ function getCleanerBadgeColor(change) {
 }
 
 function deriveCleaningChangesFromEvents(events, listingMeta) {
-  const cleanerId = listingMeta && listingMeta.usual_cleaner_id
-    ? Number(listingMeta.usual_cleaner_id)
-    : null;
-  const cleanerName = cleanerId && cleanerNameById.has(cleanerId)
-    ? cleanerNameById.get(cleanerId)
-    : '';
+  const defaultCleaner = getDefaultCleanerForListing(listingMeta);
+  const cleanerId = defaultCleaner.cleanerId;
+  const cleanerName = defaultCleaner.cleanerName;
   const dateBasis = listingMeta && listingMeta.date_basis === 'checkin' ? 'checkin' : 'checkout';
 
   return (events || [])
@@ -215,12 +237,9 @@ function hasAssignedCleaner(change) {
 }
 
 function buildEffectiveCleaningChanges(events, apiCleaningChanges, listingMeta) {
-  const cleanerId = listingMeta && listingMeta.usual_cleaner_id
-    ? Number(listingMeta.usual_cleaner_id)
-    : null;
-  const cleanerName = cleanerId && cleanerNameById.has(cleanerId)
-    ? cleanerNameById.get(cleanerId)
-    : '';
+  const defaultCleaner = getDefaultCleanerForListing(listingMeta);
+  const cleanerId = defaultCleaner.cleanerId;
+  const cleanerName = defaultCleaner.cleanerName;
   const dateBasis = listingMeta && listingMeta.date_basis === 'checkin' ? 'checkin' : 'checkout';
 
   const bookedMap = new Map();
@@ -599,7 +618,7 @@ function renderReservationCalendar(events) {
 
   const corner = document.createElement('div');
   corner.className = 'calendar-weekday calendar-weekday-corner';
-  corner.textContent = 'Channels';
+  corner.textContent = '';
   calendar.appendChild(corner);
 
   weekdayNames.forEach((name) => {
