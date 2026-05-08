@@ -820,6 +820,12 @@ function setCalendarMessage(text, isError) {
   el.className = text ? 'message ' + (isError ? 'error' : 'success') : 'message';
 }
 
+function setCalendarDebugInfo(text) {
+  const el = document.getElementById('calendarDebugInfo');
+  if (!el) return;
+  el.textContent = text || '';
+}
+
 function renderFeeds(feeds) {
   currentFeeds = feeds;
   const tbody = document.getElementById('feedsTableBody');
@@ -942,6 +948,16 @@ function applyEventsData(data) {
   currentEvents = data.events || [];
   const apiCleaningChanges = data.cleaningChanges || [];
   currentCleaningChanges = buildEffectiveCleaningChanges(currentEvents, apiCleaningChanges, currentListingMeta);
+
+  const defaultCleaner = getDefaultCleanerForListing(currentListingMeta);
+  setCalendarDebugInfo(
+    'Debug: defaultCleanerId=' + (defaultCleaner.cleanerId || 'none')
+    + ', defaultCleanerName=' + (defaultCleaner.cleanerName || 'none')
+    + ', apiCleaningChanges=' + apiCleaningChanges.length
+    + ', effectiveCleaningChanges=' + currentCleaningChanges.length
+    + ', events=' + currentEvents.length
+  );
+
   renderLegend(currentEvents);
   renderCleanerLegend(currentCleaningChanges);
   renderReservationCalendar(currentEvents);
