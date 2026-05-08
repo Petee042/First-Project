@@ -7,6 +7,7 @@ let currentListings = [];
 let currentChargeConfig = {
   chargeBasis: null,
   dailyChargeMode: null,
+  dailyRate: '',
   hourlyChargeMode: null,
   hourlyRate: '',
   hourlyRates: Array.from({ length: 24 }, () => '')
@@ -51,12 +52,13 @@ function renderChargeConfigSummary() {
   }
 
   if (currentChargeConfig.chargeBasis === 'daily') {
+    const rateSuffix = currentChargeConfig.dailyRate ? (' at ' + currentChargeConfig.dailyRate + ' per day') : '';
     if (currentChargeConfig.dailyChargeMode === 'per_24_hours') {
-      summary.textContent = 'Daily charge basis: Per 24 hours.';
+      summary.textContent = 'Daily charge basis: Per 24 hours' + rateSuffix + '.';
       return;
     }
     if (currentChargeConfig.dailyChargeMode === 'per_calendar_day') {
-      summary.textContent = 'Daily charge basis: Per Calendar Day.';
+      summary.textContent = 'Daily charge basis: Per Calendar Day' + rateSuffix + '.';
       return;
     }
   }
@@ -126,6 +128,7 @@ function populateChargeDialogFromState() {
 
   document.getElementById('dailyChargePer24Hours').checked = currentChargeConfig.dailyChargeMode === 'per_24_hours';
   document.getElementById('dailyChargePerCalendarDay').checked = currentChargeConfig.dailyChargeMode === 'per_calendar_day';
+  document.getElementById('dailyRate').value = currentChargeConfig.dailyRate;
   document.getElementById('hourlyChargeSingleRate').checked = currentChargeConfig.hourlyChargeMode === 'single_rate';
   document.getElementById('hourlyChargePerHourOfDay').checked = currentChargeConfig.hourlyChargeMode === 'per_hour_of_day';
   document.getElementById('singleHourlyRate').value = currentChargeConfig.hourlyRate;
@@ -142,6 +145,7 @@ function readChargeDialogState() {
   return {
     chargeBasis: chargeBasis ? chargeBasis.value : null,
     dailyChargeMode: dailyChargeMode ? dailyChargeMode.value : null,
+    dailyRate: document.getElementById('dailyRate').value.trim(),
     hourlyChargeMode: hourlyChargeMode ? hourlyChargeMode.value : null,
     hourlyRate: document.getElementById('singleHourlyRate').value.trim(),
     hourlyRates: Array.from(document.querySelectorAll('#hourlyRateGrid input')).map((input) => input.value.trim())
@@ -153,6 +157,7 @@ function validateChargeConfigDraft(draft) {
     return {
       chargeBasis: null,
       dailyChargeMode: null,
+      dailyRate: '',
       hourlyChargeMode: null,
       hourlyRate: '',
       hourlyRates: createDefaultHourlyRates()
@@ -167,9 +172,14 @@ function validateChargeConfigDraft(draft) {
     if (!draft.dailyChargeMode) {
       return { error: 'Select either Per 24 hours or Per Calendar Day.' };
     }
+    const dailyRateValue = draft.dailyRate === '' ? null : Number(draft.dailyRate);
+    if (dailyRateValue === null || !Number.isFinite(dailyRateValue) || dailyRateValue < 0) {
+      return { error: 'Enter a valid daily rate.' };
+    }
     return {
       chargeBasis: 'daily',
       dailyChargeMode: draft.dailyChargeMode,
+      dailyRate: dailyRateValue.toFixed(2),
       hourlyChargeMode: null,
       hourlyRate: '',
       hourlyRates: createDefaultHourlyRates()
@@ -188,6 +198,7 @@ function validateChargeConfigDraft(draft) {
     return {
       chargeBasis: 'hourly',
       dailyChargeMode: null,
+      dailyRate: '',
       hourlyChargeMode: 'single_rate',
       hourlyRate: value.toFixed(2),
       hourlyRates: createDefaultHourlyRates()
@@ -209,6 +220,7 @@ function validateChargeConfigDraft(draft) {
   return {
     chargeBasis: 'hourly',
     dailyChargeMode: null,
+    dailyRate: '',
     hourlyChargeMode: 'per_hour_of_day',
     hourlyRate: '',
     hourlyRates: hourlyRates.map((value) => Number(value).toFixed(2))
@@ -223,6 +235,7 @@ function syncChargeConfigAvailability() {
     currentChargeConfig = {
       chargeBasis: null,
       dailyChargeMode: null,
+      dailyRate: '',
       hourlyChargeMode: null,
       hourlyRate: '',
       hourlyRates: createDefaultHourlyRates()
@@ -361,6 +374,7 @@ async function loadSharedResource() {
   currentChargeConfig = {
     chargeBasis: resource.charge_basis || null,
     dailyChargeMode: resource.daily_charge_mode || null,
+    dailyRate: resource.daily_rate === null || resource.daily_rate === undefined ? '' : String(resource.daily_rate),
     hourlyChargeMode: resource.hourly_charge_mode || null,
     hourlyRate: resource.hourly_rate === null || resource.hourly_rate === undefined ? '' : String(resource.hourly_rate),
     hourlyRates: ensureHourlyRatesLength(resource.hourly_rates || [])
@@ -510,6 +524,7 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
         onlinePayment,
         chargeBasis: validatedChargeConfig.chargeBasis,
         dailyChargeMode: validatedChargeConfig.dailyChargeMode,
+        dailyRate: validatedChargeConfig.dailyRate,
         hourlyChargeMode: validatedChargeConfig.hourlyChargeMode,
         hourlyRate: validatedChargeConfig.hourlyRate,
         hourlyRates: validatedChargeConfig.hourlyRates

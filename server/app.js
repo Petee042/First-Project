@@ -174,6 +174,7 @@ function readListingsStore() {
     const chargeConfig = normaliseSharedResourceChargeConfig(resource);
     resource.charge_basis = chargeConfig.charge_basis;
     resource.daily_charge_mode = chargeConfig.daily_charge_mode;
+    resource.daily_rate = chargeConfig.daily_rate;
     resource.hourly_charge_mode = chargeConfig.hourly_charge_mode;
     resource.hourly_rate = chargeConfig.hourly_rate;
     resource.hourly_rates_json = JSON.stringify(chargeConfig.hourly_rates);
@@ -401,6 +402,7 @@ async function initializeUserStore() {
       online_payment BOOLEAN NOT NULL DEFAULT FALSE,
       charge_basis TEXT,
       daily_charge_mode TEXT,
+      daily_rate NUMERIC(10,2),
       hourly_charge_mode TEXT,
       hourly_rate NUMERIC(10,2),
       hourly_rates_json TEXT NOT NULL DEFAULT '[]',
@@ -447,6 +449,11 @@ async function initializeUserStore() {
   await pool.query(`
     ALTER TABLE shared_resources
     ADD COLUMN IF NOT EXISTS daily_charge_mode TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS daily_rate NUMERIC(10,2)
   `);
 
   await pool.query(`
@@ -661,6 +668,7 @@ function normaliseSharedResourceChargeConfig(input) {
   return {
     charge_basis: chargeBasis,
     daily_charge_mode: dailyChargeMode,
+    daily_rate: normaliseMoneyAmount(input && (input.dailyRate !== undefined ? input.dailyRate : input.daily_rate)),
     hourly_charge_mode: hourlyChargeMode,
     hourly_rate: normaliseMoneyAmount(input && (input.hourlyRate !== undefined ? input.hourlyRate : input.hourly_rate)),
     hourly_rates: normaliseHourlyRatesArray(input && (input.hourlyRates !== undefined ? input.hourlyRates : input.hourly_rates_json))
@@ -672,6 +680,7 @@ function validateSharedResourceChargeConfig(paymentOptions, chargeConfig) {
     return {
       charge_basis: null,
       daily_charge_mode: null,
+      daily_rate: null,
       hourly_charge_mode: null,
       hourly_rate: null,
       hourly_rates: []
@@ -686,9 +695,13 @@ function validateSharedResourceChargeConfig(paymentOptions, chargeConfig) {
     if (!chargeConfig.daily_charge_mode) {
       return { error: 'Select either Per 24 hours or Per Calendar Day.' };
     }
+    if (chargeConfig.daily_rate === null) {
+      return { error: 'Enter a valid daily rate.' };
+    }
     return {
       charge_basis: 'daily',
       daily_charge_mode: chargeConfig.daily_charge_mode,
+      daily_rate: chargeConfig.daily_rate,
       hourly_charge_mode: null,
       hourly_rate: null,
       hourly_rates: []
@@ -706,6 +719,7 @@ function validateSharedResourceChargeConfig(paymentOptions, chargeConfig) {
     return {
       charge_basis: 'hourly',
       daily_charge_mode: null,
+      daily_rate: null,
       hourly_charge_mode: 'single_rate',
       hourly_rate: chargeConfig.hourly_rate,
       hourly_rates: []
@@ -719,6 +733,7 @@ function validateSharedResourceChargeConfig(paymentOptions, chargeConfig) {
   return {
     charge_basis: 'hourly',
     daily_charge_mode: null,
+    daily_rate: null,
     hourly_charge_mode: 'per_hour_of_day',
     hourly_rate: null,
     hourly_rates: chargeConfig.hourly_rates
@@ -1334,7 +1349,7 @@ async function getSharedResourcesForUser(userId) {
     `
             SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
-              charge_basis, daily_charge_mode, hourly_charge_mode, hourly_rate, hourly_rates_json,
+              charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
       FROM shared_resources
       WHERE user_id = $1
@@ -1373,7 +1388,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
     `
             SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
-              charge_basis, daily_charge_mode, hourly_charge_mode, hourly_rate, hourly_rates_json,
+              charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
       FROM shared_resources
       WHERE id = $1 AND user_id = $2
@@ -1401,7 +1416,7 @@ async function createSharedResourceForUser(userId, input) {
   const hasChargeConfigInput = Boolean(
     input
       && (input.chargeBasis || input.dailyChargeMode || input.hourlyChargeMode
-        || input.hourlyRate !== undefined || input.hourlyRates !== undefined)
+        || input.dailyRate !== undefined || input.hourlyRate !== undefined || input.hourlyRates !== undefined)
   );
   const chargeConfig = hasChargeConfigInput
     ? validateSharedResourceChargeConfig(paymentOptions, rawChargeConfig)
@@ -1457,6 +1472,7 @@ async function createSharedResourceForUser(userId, input) {
       online_payment: paymentOptions.online_payment,
       charge_basis: chargeConfig.charge_basis,
       daily_charge_mode: chargeConfig.daily_charge_mode,
+      daily_rate: chargeConfig.daily_rate,
       hourly_charge_mode: chargeConfig.hourly_charge_mode,
       hourly_rate: chargeConfig.hourly_rate,
       hourly_rates_json: JSON.stringify(chargeConfig.hourly_rates),
@@ -1483,14 +1499,15 @@ async function createSharedResourceForUser(userId, input) {
         online_payment,
         charge_basis,
         daily_charge_mode,
+        daily_rate,
         hourly_charge_mode,
         hourly_rate,
         hourly_rates_json
       )
-      VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
                 free_of_charge, cash_on_site, bank_transfer, online_payment,
-                charge_basis, daily_charge_mode, hourly_charge_mode, hourly_rate, hourly_rates_json,
+                charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
                 created_at, updated_at
     `,
     [
@@ -1504,6 +1521,7 @@ async function createSharedResourceForUser(userId, input) {
       paymentOptions.online_payment,
       chargeConfig.charge_basis,
       chargeConfig.daily_charge_mode,
+      chargeConfig.daily_rate,
       chargeConfig.hourly_charge_mode,
       chargeConfig.hourly_rate,
       JSON.stringify(chargeConfig.hourly_rates)
@@ -1569,6 +1587,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
     store.shared_resources[idx].online_payment = paymentOptions.online_payment;
     store.shared_resources[idx].charge_basis = chargeConfig.charge_basis;
     store.shared_resources[idx].daily_charge_mode = chargeConfig.daily_charge_mode;
+    store.shared_resources[idx].daily_rate = chargeConfig.daily_rate;
     store.shared_resources[idx].hourly_charge_mode = chargeConfig.hourly_charge_mode;
     store.shared_resources[idx].hourly_rate = chargeConfig.hourly_rate;
     store.shared_resources[idx].hourly_rates_json = JSON.stringify(chargeConfig.hourly_rates);
@@ -1591,14 +1610,15 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
           online_payment = $9,
             charge_basis = $10,
             daily_charge_mode = $11,
-            hourly_charge_mode = $12,
-            hourly_rate = $13,
-            hourly_rates_json = $14,
+            daily_rate = $12,
+            hourly_charge_mode = $13,
+            hourly_rate = $14,
+            hourly_rates_json = $15,
           updated_at = CURRENT_TIMESTAMP
-          WHERE id = $15 AND user_id = $16
+          WHERE id = $16 AND user_id = $17
       RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
-              charge_basis, daily_charge_mode, hourly_charge_mode, hourly_rate, hourly_rates_json,
+              charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
     `,
     [
@@ -1613,6 +1633,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
       paymentOptions.online_payment,
       chargeConfig.charge_basis,
       chargeConfig.daily_charge_mode,
+      chargeConfig.daily_rate,
       chargeConfig.hourly_charge_mode,
       chargeConfig.hourly_rate,
       JSON.stringify(chargeConfig.hourly_rates),
@@ -3798,6 +3819,7 @@ app.post('/api/shared-resources', requireAuth, async (req, res) => {
       onlinePayment: req.body.onlinePayment,
       chargeBasis: req.body.chargeBasis,
       dailyChargeMode: req.body.dailyChargeMode,
+      dailyRate: req.body.dailyRate,
       hourlyChargeMode: req.body.hourlyChargeMode,
       hourlyRate: req.body.hourlyRate,
       hourlyRates: req.body.hourlyRates
@@ -3851,6 +3873,7 @@ app.put('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
       onlinePayment: req.body.onlinePayment,
       chargeBasis: req.body.chargeBasis,
       dailyChargeMode: req.body.dailyChargeMode,
+      dailyRate: req.body.dailyRate,
       hourlyChargeMode: req.body.hourlyChargeMode,
       hourlyRate: req.body.hourlyRate,
       hourlyRates: req.body.hourlyRates
