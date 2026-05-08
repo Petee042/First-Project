@@ -19,6 +19,37 @@ function getResourceIdFromUrl() {
   return null;
 }
 
+function syncMirroredField(sourceId, targetId) {
+  const source = document.getElementById(sourceId);
+  const target = document.getElementById(targetId);
+  if (!source || !target) {
+    return;
+  }
+
+  const isManualOverride = target.dataset.manualOverride === 'true';
+  if (!isManualOverride) {
+    target.value = source.value;
+  }
+
+  source.addEventListener('input', () => {
+    if (target.dataset.manualOverride === 'true') {
+      return;
+    }
+    target.value = source.value;
+  });
+
+  target.addEventListener('input', () => {
+    target.dataset.manualOverride = target.value !== source.value ? 'true' : 'false';
+  });
+}
+
+function initialiseBookingRequestForm() {
+  syncMirroredField('guestCheckinDate', 'requestedBookingStartDate');
+  syncMirroredField('guestCheckinTime', 'requestedBookingStartTime');
+  syncMirroredField('guestCheckoutDate', 'requestedBookingEndDate');
+  syncMirroredField('guestCheckoutTime', 'requestedBookingEndTime');
+}
+
 async function loadPublicResource() {
   const resourceId = getResourceIdFromUrl();
   if (!resourceId) {
@@ -40,6 +71,7 @@ async function loadPublicResource() {
 
 (async () => {
   try {
+    initialiseBookingRequestForm();
     await loadPublicResource();
   } catch (err) {
     setBookingMessage(err.message || 'Unable to load booking page.', true);

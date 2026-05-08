@@ -1273,3 +1273,9 @@ textarea:focus {
   color: #4f5d7a;
   font-size: 0.92rem;
 }
+
+.public-booking-divider-row {
+  margin-top: 0.4rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid #e2e8f4;
+}

@@ -19,7 +19,41 @@
 
       <section class="listing-form-section">
         <h3>Booking Request</h3>
-        <p class="public-booking-placeholder">This booking request page is linked to the shared resource ID in the URL.</p>
+        <form id="publicBookingRequestForm" novalidate>
+          <div class="calendar-source-row">
+            <label for="guestCheckinDate">Your Checkin Date</label>
+            <input id="guestCheckinDate" type="date" />
+          </div>
+          <div class="calendar-source-row">
+            <label for="guestCheckinTime">Your Estimated Checkin Time</label>
+            <input id="guestCheckinTime" type="time" />
+          </div>
+          <div class="calendar-source-row">
+            <label for="guestCheckoutDate">Your Checkout Date</label>
+            <input id="guestCheckoutDate" type="date" />
+          </div>
+          <div class="calendar-source-row">
+            <label for="guestCheckoutTime">Your Estimated Checkout Time</label>
+            <input id="guestCheckoutTime" type="time" />
+          </div>
+
+          <div class="calendar-source-row public-booking-divider-row">
+            <label for="requestedBookingStartDate">Your Requested Booking Start Date</label>
+            <input id="requestedBookingStartDate" type="date" />
+          </div>
+          <div class="calendar-source-row">
+            <label for="requestedBookingStartTime">Your Requested Booking Start Time</label>
+            <input id="requestedBookingStartTime" type="time" />
+          </div>
+          <div class="calendar-source-row">
+            <label for="requestedBookingEndDate">Your Requested Booking End Date</label>
+            <input id="requestedBookingEndDate" type="date" />
+          </div>
+          <div class="calendar-source-row">
+            <label for="requestedBookingEndTime">Your Requested Booking End Time</label>
+            <input id="requestedBookingEndTime" type="time" />
+          </div>
+        </form>
       </section>
     </div>
   </main>
