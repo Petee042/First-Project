@@ -79,14 +79,39 @@ function renderChargeConfigSummary() {
 
 function syncChargeDialogVisibility() {
   const chargeBasis = document.querySelector('input[name="chargeBasis"]:checked');
+  const basisValue = chargeBasis ? chargeBasis.value : null;
   const dailyWrap = document.getElementById('dailyChargeOptions');
   const hourlyWrap = document.getElementById('hourlyChargeOptions');
   const singleWrap = document.getElementById('singleHourlyRateWrap');
   const hourlyGrid = document.getElementById('hourlyRateGrid');
+  const dailyModeInputs = Array.from(document.querySelectorAll('input[name="dailyChargeMode"]'));
+  const hourlyModeInputs = Array.from(document.querySelectorAll('input[name="hourlyChargeMode"]'));
+  const dailyRateInput = document.getElementById('dailyRate');
+  const singleHourlyRate = document.getElementById('singleHourlyRate');
+  const hourlyGridInputs = Array.from(document.querySelectorAll('#hourlyRateGrid input'));
   const hourlyChargeMode = document.querySelector('input[name="hourlyChargeMode"]:checked');
 
-  dailyWrap.classList.toggle('hidden', !chargeBasis || chargeBasis.value !== 'daily');
-  hourlyWrap.classList.toggle('hidden', !chargeBasis || chargeBasis.value !== 'hourly');
+  const dailyDisabled = basisValue === 'hourly';
+  const hourlyDisabled = basisValue === 'daily';
+
+  dailyWrap.classList.remove('hidden');
+  hourlyWrap.classList.remove('hidden');
+  dailyWrap.classList.toggle('resource-dialog-fieldset-disabled', dailyDisabled);
+  hourlyWrap.classList.toggle('resource-dialog-fieldset-disabled', hourlyDisabled);
+
+  dailyModeInputs.forEach((input) => {
+    input.disabled = dailyDisabled;
+  });
+  dailyRateInput.disabled = dailyDisabled;
+
+  hourlyModeInputs.forEach((input) => {
+    input.disabled = hourlyDisabled;
+  });
+  singleHourlyRate.disabled = hourlyDisabled || !hourlyChargeMode || hourlyChargeMode.value !== 'single_rate';
+  hourlyGridInputs.forEach((input) => {
+    input.disabled = hourlyDisabled || !hourlyChargeMode || hourlyChargeMode.value !== 'per_hour_of_day';
+  });
+
   singleWrap.classList.toggle('hidden', !hourlyChargeMode || hourlyChargeMode.value !== 'single_rate');
   hourlyGrid.classList.toggle('hidden', !hourlyChargeMode || hourlyChargeMode.value !== 'per_hour_of_day');
 }

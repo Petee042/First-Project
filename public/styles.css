@@ -1174,6 +1174,11 @@ textarea:focus {
   gap: 0.65rem;
 }
 
+.resource-dialog-fieldset-disabled {
+  opacity: 0.52;
+  background: #f4f6fb;
+}
+
 .resource-dialog-fieldset legend {
   padding: 0 0.35rem;
   font-size: 0.92rem;
