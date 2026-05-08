@@ -595,6 +595,10 @@ textarea:focus {
   border-bottom: 1px solid #e0e0e0;
 }
 
+.schedule-main-row td {
+  border-top: 1px solid #cfd6e6;
+}
+
 .schedule-sub-row {
   background: #f9fafb;
 }
