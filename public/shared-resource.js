@@ -4,6 +4,13 @@ const params = new URLSearchParams(window.location.search);
 const resourceId = Number(params.get('id'));
 let currentProperties = [];
 let currentListings = [];
+let currentChargeConfig = {
+  chargeBasis: null,
+  dailyChargeMode: null,
+  hourlyChargeMode: null,
+  hourlyRate: '',
+  hourlyRates: Array.from({ length: 24 }, () => '')
+};
 
 function setSharedResourceMessage(text, isError) {
   const el = document.getElementById('sharedResourceMessage');
@@ -18,6 +25,214 @@ function getEditorHtml() {
 function applyEditorCommand(command) {
   document.execCommand(command, false, null);
   document.getElementById('fullDescriptionEditor').focus();
+}
+
+function getChargeDialog() {
+  return document.getElementById('chargeConfigDialog');
+}
+
+function createDefaultHourlyRates() {
+  return Array.from({ length: 24 }, () => '');
+}
+
+function ensureHourlyRatesLength(values) {
+  const next = Array.isArray(values) ? values.slice(0, 24) : [];
+  while (next.length < 24) {
+    next.push('');
+  }
+  return next.map((value) => (value === null || value === undefined ? '' : String(value)));
+}
+
+function renderChargeConfigSummary() {
+  const summary = document.getElementById('chargeConfigSummary');
+  if (document.getElementById('paymentFreeOfCharge').checked) {
+    summary.textContent = 'No charge configuration needed while Free Of Charge is selected.';
+    return;
+  }
+
+  if (currentChargeConfig.chargeBasis === 'daily') {
+    if (currentChargeConfig.dailyChargeMode === 'per_24_hours') {
+      summary.textContent = 'Daily charge basis: Per 24 hours.';
+      return;
+    }
+    if (currentChargeConfig.dailyChargeMode === 'per_calendar_day') {
+      summary.textContent = 'Daily charge basis: Per Calendar Day.';
+      return;
+    }
+  }
+
+  if (currentChargeConfig.chargeBasis === 'hourly') {
+    if (currentChargeConfig.hourlyChargeMode === 'single_rate' && currentChargeConfig.hourlyRate !== '') {
+      summary.textContent = 'Hourly charge basis: simple rate of ' + currentChargeConfig.hourlyRate + ' per hour.';
+      return;
+    }
+    if (currentChargeConfig.hourlyChargeMode === 'per_hour_of_day') {
+      summary.textContent = 'Hourly charge basis: separate rate configured for each hour of the day.';
+      return;
+    }
+  }
+
+  summary.textContent = 'Charge configuration not set.';
+}
+
+function syncChargeDialogVisibility() {
+  const chargeBasis = document.querySelector('input[name="chargeBasis"]:checked');
+  const dailyWrap = document.getElementById('dailyChargeOptions');
+  const hourlyWrap = document.getElementById('hourlyChargeOptions');
+  const singleWrap = document.getElementById('singleHourlyRateWrap');
+  const hourlyGrid = document.getElementById('hourlyRateGrid');
+  const hourlyChargeMode = document.querySelector('input[name="hourlyChargeMode"]:checked');
+
+  dailyWrap.classList.toggle('hidden', !chargeBasis || chargeBasis.value !== 'daily');
+  hourlyWrap.classList.toggle('hidden', !chargeBasis || chargeBasis.value !== 'hourly');
+  singleWrap.classList.toggle('hidden', !hourlyChargeMode || hourlyChargeMode.value !== 'single_rate');
+  hourlyGrid.classList.toggle('hidden', !hourlyChargeMode || hourlyChargeMode.value !== 'per_hour_of_day');
+}
+
+function renderHourlyRateGrid() {
+  const container = document.getElementById('hourlyRateGrid');
+  container.innerHTML = '';
+
+  ensureHourlyRatesLength(currentChargeConfig.hourlyRates).forEach((value, index) => {
+    const row = document.createElement('div');
+    row.className = 'resource-hourly-row';
+
+    const label = document.createElement('label');
+    label.setAttribute('for', 'hourlyRate_' + index);
+    label.textContent = String(index).padStart(2, '0') + ':00';
+
+    const input = document.createElement('input');
+    input.id = 'hourlyRate_' + index;
+    input.type = 'number';
+    input.min = '0';
+    input.step = '0.01';
+    input.inputMode = 'decimal';
+    input.value = value;
+    input.addEventListener('input', () => {
+      currentChargeConfig.hourlyRates[index] = input.value;
+    });
+
+    row.appendChild(label);
+    row.appendChild(input);
+    container.appendChild(row);
+  });
+}
+
+function populateChargeDialogFromState() {
+  const dailyRadio = document.getElementById('chargeBasisDaily');
+  const hourlyRadio = document.getElementById('chargeBasisHourly');
+  dailyRadio.checked = currentChargeConfig.chargeBasis === 'daily';
+  hourlyRadio.checked = currentChargeConfig.chargeBasis === 'hourly';
+
+  document.getElementById('dailyChargePer24Hours').checked = currentChargeConfig.dailyChargeMode === 'per_24_hours';
+  document.getElementById('dailyChargePerCalendarDay').checked = currentChargeConfig.dailyChargeMode === 'per_calendar_day';
+  document.getElementById('hourlyChargeSingleRate').checked = currentChargeConfig.hourlyChargeMode === 'single_rate';
+  document.getElementById('hourlyChargePerHourOfDay').checked = currentChargeConfig.hourlyChargeMode === 'per_hour_of_day';
+  document.getElementById('singleHourlyRate').value = currentChargeConfig.hourlyRate;
+  currentChargeConfig.hourlyRates = ensureHourlyRatesLength(currentChargeConfig.hourlyRates);
+  renderHourlyRateGrid();
+  syncChargeDialogVisibility();
+}
+
+function readChargeDialogState() {
+  const chargeBasis = document.querySelector('input[name="chargeBasis"]:checked');
+  const dailyChargeMode = document.querySelector('input[name="dailyChargeMode"]:checked');
+  const hourlyChargeMode = document.querySelector('input[name="hourlyChargeMode"]:checked');
+
+  return {
+    chargeBasis: chargeBasis ? chargeBasis.value : null,
+    dailyChargeMode: dailyChargeMode ? dailyChargeMode.value : null,
+    hourlyChargeMode: hourlyChargeMode ? hourlyChargeMode.value : null,
+    hourlyRate: document.getElementById('singleHourlyRate').value.trim(),
+    hourlyRates: Array.from(document.querySelectorAll('#hourlyRateGrid input')).map((input) => input.value.trim())
+  };
+}
+
+function validateChargeConfigDraft(draft) {
+  if (document.getElementById('paymentFreeOfCharge').checked) {
+    return {
+      chargeBasis: null,
+      dailyChargeMode: null,
+      hourlyChargeMode: null,
+      hourlyRate: '',
+      hourlyRates: createDefaultHourlyRates()
+    };
+  }
+
+  if (!draft.chargeBasis) {
+    return { error: 'Select a charge basis.' };
+  }
+
+  if (draft.chargeBasis === 'daily') {
+    if (!draft.dailyChargeMode) {
+      return { error: 'Select either Per 24 hours or Per Calendar Day.' };
+    }
+    return {
+      chargeBasis: 'daily',
+      dailyChargeMode: draft.dailyChargeMode,
+      hourlyChargeMode: null,
+      hourlyRate: '',
+      hourlyRates: createDefaultHourlyRates()
+    };
+  }
+
+  if (!draft.hourlyChargeMode) {
+    return { error: 'Select how hourly charging should work.' };
+  }
+
+  if (draft.hourlyChargeMode === 'single_rate') {
+    const value = draft.hourlyRate === '' ? null : Number(draft.hourlyRate);
+    if (value === null || !Number.isFinite(value) || value < 0) {
+      return { error: 'Enter a valid hourly rate.' };
+    }
+    return {
+      chargeBasis: 'hourly',
+      dailyChargeMode: null,
+      hourlyChargeMode: 'single_rate',
+      hourlyRate: value.toFixed(2),
+      hourlyRates: createDefaultHourlyRates()
+    };
+  }
+
+  const hourlyRates = ensureHourlyRatesLength(draft.hourlyRates);
+  const invalid = hourlyRates.some((value) => {
+    if (value === '') {
+      return true;
+    }
+    const numeric = Number(value);
+    return !Number.isFinite(numeric) || numeric < 0;
+  });
+  if (invalid) {
+    return { error: 'Enter a valid hourly rate for each of the 24 hours.' };
+  }
+
+  return {
+    chargeBasis: 'hourly',
+    dailyChargeMode: null,
+    hourlyChargeMode: 'per_hour_of_day',
+    hourlyRate: '',
+    hourlyRates: hourlyRates.map((value) => Number(value).toFixed(2))
+  };
+}
+
+function syncChargeConfigAvailability() {
+  const disabled = document.getElementById('paymentFreeOfCharge').checked;
+  const button = document.getElementById('openChargeConfigBtn');
+  button.disabled = disabled;
+  if (disabled) {
+    currentChargeConfig = {
+      chargeBasis: null,
+      dailyChargeMode: null,
+      hourlyChargeMode: null,
+      hourlyRate: '',
+      hourlyRates: createDefaultHourlyRates()
+    };
+    const dialog = getChargeDialog();
+    if (dialog.open) {
+      dialog.close();
+    }
+  }
+  renderChargeConfigSummary();
 }
 
 function syncPaymentOptionState() {
@@ -36,6 +251,8 @@ function syncPaymentOptionState() {
       row.classList.toggle('disabled', freeSelected);
     }
   });
+
+  syncChargeConfigAvailability();
 }
 
 function renderPropertyOptions(selectedPropertyId) {
@@ -141,7 +358,15 @@ async function loadSharedResource() {
   document.getElementById('paymentCashOnSite').checked = resource.cash_on_site === true;
   document.getElementById('paymentBankTransfer').checked = resource.bank_transfer === true;
   document.getElementById('paymentOnlinePayment').checked = resource.online_payment === true;
+  currentChargeConfig = {
+    chargeBasis: resource.charge_basis || null,
+    dailyChargeMode: resource.daily_charge_mode || null,
+    hourlyChargeMode: resource.hourly_charge_mode || null,
+    hourlyRate: resource.hourly_rate === null || resource.hourly_rate === undefined ? '' : String(resource.hourly_rate),
+    hourlyRates: ensureHourlyRatesLength(resource.hourly_rates || [])
+  };
   syncPaymentOptionState();
+  renderChargeConfigSummary();
 }
 
 (async () => {
@@ -189,6 +414,39 @@ document.getElementById('paymentFreeOfCharge').addEventListener('change', () => 
   syncPaymentOptionState();
 });
 
+document.getElementById('openChargeConfigBtn').addEventListener('click', () => {
+  populateChargeDialogFromState();
+  getChargeDialog().showModal();
+});
+
+document.getElementById('closeChargeConfigBtn').addEventListener('click', () => {
+  getChargeDialog().close();
+});
+
+document.querySelectorAll('input[name="chargeBasis"]').forEach((input) => {
+  input.addEventListener('change', () => {
+    syncChargeDialogVisibility();
+  });
+});
+
+document.querySelectorAll('input[name="hourlyChargeMode"]').forEach((input) => {
+  input.addEventListener('change', () => {
+    syncChargeDialogVisibility();
+  });
+});
+
+document.getElementById('saveChargeConfigBtn').addEventListener('click', () => {
+  const validated = validateChargeConfigDraft(readChargeDialogState());
+  if (validated.error) {
+    setSharedResourceMessage(validated.error, true);
+    return;
+  }
+  currentChargeConfig = validated;
+  renderChargeConfigSummary();
+  getChargeDialog().close();
+  setSharedResourceMessage('', false);
+});
+
 document.querySelectorAll('.editor-btn').forEach((button) => {
   button.addEventListener('click', () => {
     const command = button.getAttribute('data-command');
@@ -219,6 +477,7 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
   const cashOnSite = document.getElementById('paymentCashOnSite').checked;
   const bankTransfer = document.getElementById('paymentBankTransfer').checked;
   const onlinePayment = document.getElementById('paymentOnlinePayment').checked;
+  const validatedChargeConfig = validateChargeConfigDraft(currentChargeConfig);
 
   if (!shortDescription) {
     setSharedResourceMessage('Short description is required.', true);
@@ -227,6 +486,10 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
 
   if (!Number.isInteger(maxUnits) || maxUnits <= 0) {
     setSharedResourceMessage('Maximum units must be a whole number greater than zero.', true);
+    return;
+  }
+  if (validatedChargeConfig.error) {
+    setSharedResourceMessage(validatedChargeConfig.error, true);
     return;
   }
 
@@ -244,7 +507,12 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
         freeOfCharge,
         cashOnSite,
         bankTransfer,
-        onlinePayment
+        onlinePayment,
+        chargeBasis: validatedChargeConfig.chargeBasis,
+        dailyChargeMode: validatedChargeConfig.dailyChargeMode,
+        hourlyChargeMode: validatedChargeConfig.hourlyChargeMode,
+        hourlyRate: validatedChargeConfig.hourlyRate,
+        hourlyRates: validatedChargeConfig.hourlyRates
       })
     });
     const data = await res.json();

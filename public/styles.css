@@ -1113,6 +1113,122 @@ textarea:focus {
   flex: 0 1 auto;
 }
 
+.resource-charge-row {
+  align-items: flex-start;
+}
+
+.resource-charge-config {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+
+.resource-charge-summary {
+  font-size: 0.9rem;
+  color: #31415f;
+  line-height: 1.45;
+}
+
+.resource-dialog {
+  width: min(760px, calc(100vw - 2rem));
+  border: 0;
+  border-radius: 14px;
+  padding: 0;
+  box-shadow: 0 24px 60px rgba(17, 24, 39, 0.24);
+}
+
+.resource-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.42);
+}
+
+.resource-dialog form {
+  padding: 1.2rem 1.2rem 1rem;
+}
+
+.resource-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.resource-dialog-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.resource-dialog-body {
+  display: grid;
+  gap: 1rem;
+}
+
+.resource-dialog-fieldset {
+  border: 1px solid #dbe1ef;
+  border-radius: 10px;
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.resource-dialog-fieldset legend {
+  padding: 0 0.35rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #32415f;
+}
+
+.resource-radio-option {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: auto;
+  font-weight: 400;
+}
+
+.resource-radio-option input[type="radio"] {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.resource-rate-input-wrap {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.resource-rate-input-wrap label {
+  width: auto;
+  font-size: 0.88rem;
+}
+
+.resource-hourly-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.55rem 0.8rem;
+}
+
+.resource-hourly-row {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.resource-hourly-row label {
+  width: auto;
+  font-size: 0.84rem;
+  color: #4b556e;
+}
+
+.resource-dialog-actions {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .resource-payment-option.disabled {
   opacity: 0.55;
 }

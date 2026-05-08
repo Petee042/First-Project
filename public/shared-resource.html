@@ -83,6 +83,14 @@
             </div>
           </div>
 
+          <div class="calendar-source-row resource-charge-row">
+            <label>Charge Logic</label>
+            <div class="resource-charge-config">
+              <p id="chargeConfigSummary" class="resource-charge-summary">Charge configuration not set.</p>
+              <button type="button" id="openChargeConfigBtn" class="btn secondary">Configure Charges</button>
+            </div>
+          </div>
+
           <div class="feed-actions">
             <button type="submit" class="btn primary calendar-btn">Save Shared Resource</button>
             <button type="button" id="deleteSharedResourceBtn" class="btn secondary">Delete Shared Resource</button>
@@ -91,6 +99,63 @@
       </section>
     </div>
   </main>
+
+  <dialog id="chargeConfigDialog" class="resource-dialog">
+    <form id="chargeConfigDialogForm" method="dialog" novalidate>
+      <div class="resource-dialog-header">
+        <h3>Charge Logic Configuration</h3>
+        <button type="button" id="closeChargeConfigBtn" class="btn secondary">Close</button>
+      </div>
+
+      <div class="resource-dialog-body">
+        <fieldset class="resource-dialog-fieldset">
+          <legend>Charge Basis</legend>
+          <label class="resource-radio-option" for="chargeBasisDaily">
+            <input id="chargeBasisDaily" type="radio" name="chargeBasis" value="daily" />
+            <span>Daily</span>
+          </label>
+          <label class="resource-radio-option" for="chargeBasisHourly">
+            <input id="chargeBasisHourly" type="radio" name="chargeBasis" value="hourly" />
+            <span>Hourly</span>
+          </label>
+        </fieldset>
+
+        <fieldset id="dailyChargeOptions" class="resource-dialog-fieldset hidden">
+          <legend>Daily Charging</legend>
+          <label class="resource-radio-option" for="dailyChargePer24Hours">
+            <input id="dailyChargePer24Hours" type="radio" name="dailyChargeMode" value="per_24_hours" />
+            <span>Per 24 hours</span>
+          </label>
+          <label class="resource-radio-option" for="dailyChargePerCalendarDay">
+            <input id="dailyChargePerCalendarDay" type="radio" name="dailyChargeMode" value="per_calendar_day" />
+            <span>Per Calendar Day</span>
+          </label>
+        </fieldset>
+
+        <fieldset id="hourlyChargeOptions" class="resource-dialog-fieldset hidden">
+          <legend>Hourly Charging</legend>
+          <label class="resource-radio-option" for="hourlyChargeSingleRate">
+            <input id="hourlyChargeSingleRate" type="radio" name="hourlyChargeMode" value="single_rate" />
+            <span>Simple numeric rate per hour</span>
+          </label>
+          <div id="singleHourlyRateWrap" class="resource-rate-input-wrap hidden">
+            <label for="singleHourlyRate">Hourly rate</label>
+            <input id="singleHourlyRate" type="number" min="0" step="0.01" inputmode="decimal" />
+          </div>
+
+          <label class="resource-radio-option" for="hourlyChargePerHourOfDay">
+            <input id="hourlyChargePerHourOfDay" type="radio" name="hourlyChargeMode" value="per_hour_of_day" />
+            <span>Separate hourly rate for each of 24 hours</span>
+          </label>
+          <div id="hourlyRateGrid" class="resource-hourly-grid hidden" aria-label="Hourly rates by hour"></div>
+        </fieldset>
+      </div>
+
+      <div class="resource-dialog-actions">
+        <button type="button" id="saveChargeConfigBtn" class="btn primary calendar-btn">Save Charge Logic</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="shared-resource.js"></script>
 </body>

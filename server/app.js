@@ -171,6 +171,12 @@ function readListingsStore() {
   parsed.shared_resources.forEach((resource) => {
     resource.property_id = normaliseOptionalPositiveInteger(resource.property_id);
     resource.listing_id = normaliseOptionalPositiveInteger(resource.listing_id);
+    const chargeConfig = normaliseSharedResourceChargeConfig(resource);
+    resource.charge_basis = chargeConfig.charge_basis;
+    resource.daily_charge_mode = chargeConfig.daily_charge_mode;
+    resource.hourly_charge_mode = chargeConfig.hourly_charge_mode;
+    resource.hourly_rate = chargeConfig.hourly_rate;
+    resource.hourly_rates_json = JSON.stringify(chargeConfig.hourly_rates);
   });
   return parsed;
 }
@@ -393,6 +399,11 @@ async function initializeUserStore() {
       cash_on_site BOOLEAN NOT NULL DEFAULT FALSE,
       bank_transfer BOOLEAN NOT NULL DEFAULT FALSE,
       online_payment BOOLEAN NOT NULL DEFAULT FALSE,
+      charge_basis TEXT,
+      daily_charge_mode TEXT,
+      hourly_charge_mode TEXT,
+      hourly_rate NUMERIC(10,2),
+      hourly_rates_json TEXT NOT NULL DEFAULT '[]',
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -426,6 +437,31 @@ async function initializeUserStore() {
   await pool.query(`
     ALTER TABLE shared_resources
     ADD COLUMN IF NOT EXISTS online_payment BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS charge_basis TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS daily_charge_mode TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS hourly_charge_mode TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC(10,2)
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS hourly_rates_json TEXT NOT NULL DEFAULT '[]'
   `);
 
   await migrateUsersFromFile();
@@ -579,6 +615,113 @@ function normaliseSharedResourcePaymentOptions(input) {
     cash_on_site: input && (input.cashOnSite === true || input.cash_on_site === true),
     bank_transfer: input && (input.bankTransfer === true || input.bank_transfer === true),
     online_payment: input && (input.onlinePayment === true || input.online_payment === true)
+  };
+}
+
+function normaliseMoneyAmount(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+  return Math.round(numeric * 100) / 100;
+}
+
+function normaliseHourlyRatesArray(value) {
+  const source = Array.isArray(value)
+    ? value
+    : (() => {
+        if (typeof value !== 'string' || !value.trim()) {
+          return [];
+        }
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })();
+
+  return source.slice(0, 24).map((item) => normaliseMoneyAmount(item));
+}
+
+function normaliseSharedResourceChargeConfig(input) {
+  const chargeBasis = input && input.chargeBasis === 'hourly'
+    ? 'hourly'
+    : (input && (input.chargeBasis === 'daily' || input.charge_basis === 'daily') ? 'daily' : (input && input.charge_basis === 'hourly' ? 'hourly' : null));
+  const dailyChargeMode = input && (input.dailyChargeMode === 'per_calendar_day' || input.daily_charge_mode === 'per_calendar_day')
+    ? 'per_calendar_day'
+    : ((input && (input.dailyChargeMode === 'per_24_hours' || input.daily_charge_mode === 'per_24_hours')) ? 'per_24_hours' : null);
+  const hourlyChargeMode = input && (input.hourlyChargeMode === 'per_hour_of_day' || input.hourly_charge_mode === 'per_hour_of_day')
+    ? 'per_hour_of_day'
+    : ((input && (input.hourlyChargeMode === 'single_rate' || input.hourly_charge_mode === 'single_rate')) ? 'single_rate' : null);
+
+  return {
+    charge_basis: chargeBasis,
+    daily_charge_mode: dailyChargeMode,
+    hourly_charge_mode: hourlyChargeMode,
+    hourly_rate: normaliseMoneyAmount(input && (input.hourlyRate !== undefined ? input.hourlyRate : input.hourly_rate)),
+    hourly_rates: normaliseHourlyRatesArray(input && (input.hourlyRates !== undefined ? input.hourlyRates : input.hourly_rates_json))
+  };
+}
+
+function validateSharedResourceChargeConfig(paymentOptions, chargeConfig) {
+  if (paymentOptions.free_of_charge) {
+    return {
+      charge_basis: null,
+      daily_charge_mode: null,
+      hourly_charge_mode: null,
+      hourly_rate: null,
+      hourly_rates: []
+    };
+  }
+
+  if (!chargeConfig.charge_basis) {
+    return { error: 'Charge basis is required when the resource is not free of charge.' };
+  }
+
+  if (chargeConfig.charge_basis === 'daily') {
+    if (!chargeConfig.daily_charge_mode) {
+      return { error: 'Select either Per 24 hours or Per Calendar Day.' };
+    }
+    return {
+      charge_basis: 'daily',
+      daily_charge_mode: chargeConfig.daily_charge_mode,
+      hourly_charge_mode: null,
+      hourly_rate: null,
+      hourly_rates: []
+    };
+  }
+
+  if (!chargeConfig.hourly_charge_mode) {
+    return { error: 'Select either a simple hourly rate or separate hourly rates.' };
+  }
+
+  if (chargeConfig.hourly_charge_mode === 'single_rate') {
+    if (chargeConfig.hourly_rate === null) {
+      return { error: 'Enter a valid hourly rate.' };
+    }
+    return {
+      charge_basis: 'hourly',
+      daily_charge_mode: null,
+      hourly_charge_mode: 'single_rate',
+      hourly_rate: chargeConfig.hourly_rate,
+      hourly_rates: []
+    };
+  }
+
+  if (chargeConfig.hourly_rates.length !== 24 || chargeConfig.hourly_rates.some((rate) => rate === null)) {
+    return { error: 'Enter a valid rate for each of the 24 hours in the day.' };
+  }
+
+  return {
+    charge_basis: 'hourly',
+    daily_charge_mode: null,
+    hourly_charge_mode: 'per_hour_of_day',
+    hourly_rate: null,
+    hourly_rates: chargeConfig.hourly_rates
   };
 }
 
@@ -1180,15 +1323,19 @@ async function getSharedResourcesForUser(userId) {
         ...resource,
         property_id: normaliseOptionalPositiveInteger(resource.property_id),
         listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
-        ...normaliseSharedResourcePaymentOptions(resource)
+        ...normaliseSharedResourcePaymentOptions(resource),
+        ...normaliseSharedResourceChargeConfig(resource),
+        hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(resource).hourly_rates)
       }))
       .sort((a, b) => String(a.short_description || '').localeCompare(String(b.short_description || '')));
   }
 
   const result = await pool.query(
     `
-      SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
-             free_of_charge, cash_on_site, bank_transfer, online_payment, created_at, updated_at
+            SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
+              free_of_charge, cash_on_site, bank_transfer, online_payment,
+              charge_basis, daily_charge_mode, hourly_charge_mode, hourly_rate, hourly_rates_json,
+              created_at, updated_at
       FROM shared_resources
       WHERE user_id = $1
       ORDER BY short_description ASC, id ASC
@@ -1197,7 +1344,9 @@ async function getSharedResourcesForUser(userId) {
   );
   return result.rows.map((row) => ({
     ...row,
-    ...normaliseSharedResourcePaymentOptions(row)
+    ...normaliseSharedResourcePaymentOptions(row),
+    ...normaliseSharedResourceChargeConfig(row),
+    hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(row).hourly_rates)
   }));
 }
 
@@ -1214,14 +1363,18 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
       ...resource,
       property_id: normaliseOptionalPositiveInteger(resource.property_id),
       listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
-      ...normaliseSharedResourcePaymentOptions(resource)
+      ...normaliseSharedResourcePaymentOptions(resource),
+      ...normaliseSharedResourceChargeConfig(resource),
+      hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(resource).hourly_rates)
     };
   }
 
   const result = await pool.query(
     `
-      SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
-             free_of_charge, cash_on_site, bank_transfer, online_payment, created_at, updated_at
+            SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
+              free_of_charge, cash_on_site, bank_transfer, online_payment,
+              charge_basis, daily_charge_mode, hourly_charge_mode, hourly_rate, hourly_rates_json,
+              created_at, updated_at
       FROM shared_resources
       WHERE id = $1 AND user_id = $2
       LIMIT 1
@@ -1233,7 +1386,9 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
   }
   return {
     ...result.rows[0],
-    ...normaliseSharedResourcePaymentOptions(result.rows[0])
+    ...normaliseSharedResourcePaymentOptions(result.rows[0]),
+    ...normaliseSharedResourceChargeConfig(result.rows[0]),
+    hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(result.rows[0]).hourly_rates)
   };
 }
 
@@ -1242,8 +1397,26 @@ async function createSharedResourceForUser(userId, input) {
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
   const paymentOptions = normaliseSharedResourcePaymentOptions(input);
+  const rawChargeConfig = normaliseSharedResourceChargeConfig(input);
+  const hasChargeConfigInput = Boolean(
+    input
+      && (input.chargeBasis || input.dailyChargeMode || input.hourlyChargeMode
+        || input.hourlyRate !== undefined || input.hourlyRates !== undefined)
+  );
+  const chargeConfig = hasChargeConfigInput
+    ? validateSharedResourceChargeConfig(paymentOptions, rawChargeConfig)
+    : {
+        charge_basis: null,
+        daily_charge_mode: null,
+        hourly_charge_mode: null,
+        hourly_rate: null,
+        hourly_rates: []
+      };
   if (!shortDescription) {
     return { error: 'Short description is required.' };
+  }
+  if (chargeConfig.error) {
+    return { error: chargeConfig.error };
   }
 
   let selectedListing = null;
@@ -1282,6 +1455,11 @@ async function createSharedResourceForUser(userId, input) {
       cash_on_site: paymentOptions.cash_on_site,
       bank_transfer: paymentOptions.bank_transfer,
       online_payment: paymentOptions.online_payment,
+      charge_basis: chargeConfig.charge_basis,
+      daily_charge_mode: chargeConfig.daily_charge_mode,
+      hourly_charge_mode: chargeConfig.hourly_charge_mode,
+      hourly_rate: chargeConfig.hourly_rate,
+      hourly_rates_json: JSON.stringify(chargeConfig.hourly_rates),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -1302,11 +1480,18 @@ async function createSharedResourceForUser(userId, input) {
         free_of_charge,
         cash_on_site,
         bank_transfer,
-        online_payment
+        online_payment,
+        charge_basis,
+        daily_charge_mode,
+        hourly_charge_mode,
+        hourly_rate,
+        hourly_rates_json
       )
-      VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
-                free_of_charge, cash_on_site, bank_transfer, online_payment, created_at, updated_at
+                free_of_charge, cash_on_site, bank_transfer, online_payment,
+                charge_basis, daily_charge_mode, hourly_charge_mode, hourly_rate, hourly_rates_json,
+                created_at, updated_at
     `,
     [
       userId,
@@ -1316,7 +1501,12 @@ async function createSharedResourceForUser(userId, input) {
       paymentOptions.free_of_charge,
       paymentOptions.cash_on_site,
       paymentOptions.bank_transfer,
-      paymentOptions.online_payment
+      paymentOptions.online_payment,
+      chargeConfig.charge_basis,
+      chargeConfig.daily_charge_mode,
+      chargeConfig.hourly_charge_mode,
+      chargeConfig.hourly_rate,
+      JSON.stringify(chargeConfig.hourly_rates)
     ]
   );
   return { resource: result.rows[0] };
@@ -1329,12 +1519,16 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
   const paymentOptions = normaliseSharedResourcePaymentOptions(input);
+  const chargeConfig = validateSharedResourceChargeConfig(paymentOptions, normaliseSharedResourceChargeConfig(input));
 
   if (!shortDescription) {
     return { error: 'Short description is required.' };
   }
   if (!maxUnits) {
     return { error: 'Maximum units must be a whole number greater than zero.' };
+  }
+  if (chargeConfig.error) {
+    return { error: chargeConfig.error };
   }
 
   let selectedListing = null;
@@ -1373,6 +1567,11 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
     store.shared_resources[idx].cash_on_site = paymentOptions.cash_on_site;
     store.shared_resources[idx].bank_transfer = paymentOptions.bank_transfer;
     store.shared_resources[idx].online_payment = paymentOptions.online_payment;
+    store.shared_resources[idx].charge_basis = chargeConfig.charge_basis;
+    store.shared_resources[idx].daily_charge_mode = chargeConfig.daily_charge_mode;
+    store.shared_resources[idx].hourly_charge_mode = chargeConfig.hourly_charge_mode;
+    store.shared_resources[idx].hourly_rate = chargeConfig.hourly_rate;
+    store.shared_resources[idx].hourly_rates_json = JSON.stringify(chargeConfig.hourly_rates);
     store.shared_resources[idx].updated_at = new Date().toISOString();
     writeListingsStore(store);
     return { resource: store.shared_resources[idx] };
@@ -1390,10 +1589,17 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
           cash_on_site = $7,
           bank_transfer = $8,
           online_payment = $9,
+            charge_basis = $10,
+            daily_charge_mode = $11,
+            hourly_charge_mode = $12,
+            hourly_rate = $13,
+            hourly_rates_json = $14,
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = $10 AND user_id = $11
+          WHERE id = $15 AND user_id = $16
       RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
-                free_of_charge, cash_on_site, bank_transfer, online_payment, created_at, updated_at
+              free_of_charge, cash_on_site, bank_transfer, online_payment,
+              charge_basis, daily_charge_mode, hourly_charge_mode, hourly_rate, hourly_rates_json,
+              created_at, updated_at
     `,
     [
       shortDescription,
@@ -1405,6 +1611,11 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
       paymentOptions.cash_on_site,
       paymentOptions.bank_transfer,
       paymentOptions.online_payment,
+      chargeConfig.charge_basis,
+      chargeConfig.daily_charge_mode,
+      chargeConfig.hourly_charge_mode,
+      chargeConfig.hourly_rate,
+      JSON.stringify(chargeConfig.hourly_rates),
       resourceId,
       userId
     ]
@@ -3584,7 +3795,12 @@ app.post('/api/shared-resources', requireAuth, async (req, res) => {
       freeOfCharge: req.body.freeOfCharge,
       cashOnSite: req.body.cashOnSite,
       bankTransfer: req.body.bankTransfer,
-      onlinePayment: req.body.onlinePayment
+      onlinePayment: req.body.onlinePayment,
+      chargeBasis: req.body.chargeBasis,
+      dailyChargeMode: req.body.dailyChargeMode,
+      hourlyChargeMode: req.body.hourlyChargeMode,
+      hourlyRate: req.body.hourlyRate,
+      hourlyRates: req.body.hourlyRates
     });
     if (error) {
       return res.status(400).json({ error });
@@ -3632,7 +3848,12 @@ app.put('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
       freeOfCharge: req.body.freeOfCharge,
       cashOnSite: req.body.cashOnSite,
       bankTransfer: req.body.bankTransfer,
-      onlinePayment: req.body.onlinePayment
+      onlinePayment: req.body.onlinePayment,
+      chargeBasis: req.body.chargeBasis,
+      dailyChargeMode: req.body.dailyChargeMode,
+      hourlyChargeMode: req.body.hourlyChargeMode,
+      hourlyRate: req.body.hourlyRate,
+      hourlyRates: req.body.hourlyRates
     });
     if (error === 'Shared resource not found.') {
       return res.status(404).json({ error });
