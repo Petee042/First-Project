@@ -20,6 +20,24 @@ function applyEditorCommand(command) {
   document.getElementById('fullDescriptionEditor').focus();
 }
 
+function syncPaymentOptionState() {
+  const freeCheckbox = document.getElementById('paymentFreeOfCharge');
+  const otherIds = ['paymentCashOnSite', 'paymentBankTransfer', 'paymentOnlinePayment'];
+  const freeSelected = freeCheckbox.checked;
+
+  otherIds.forEach((id) => {
+    const checkbox = document.getElementById(id);
+    const row = checkbox.closest('.resource-payment-option');
+    checkbox.disabled = freeSelected;
+    if (freeSelected) {
+      checkbox.checked = false;
+    }
+    if (row) {
+      row.classList.toggle('disabled', freeSelected);
+    }
+  });
+}
+
 function renderPropertyOptions(selectedPropertyId) {
   const select = document.getElementById('sharedResourcePropertyId');
   select.innerHTML = '';
@@ -119,6 +137,11 @@ async function loadSharedResource() {
   document.getElementById('maxUnits').value = Number(resource.max_units) > 0 ? Number(resource.max_units) : 1;
   renderPropertyOptions(Number(resource.property_id) || null);
   renderListingOptions(Number(resource.listing_id) || null);
+  document.getElementById('paymentFreeOfCharge').checked = resource.free_of_charge === true;
+  document.getElementById('paymentCashOnSite').checked = resource.cash_on_site === true;
+  document.getElementById('paymentBankTransfer').checked = resource.bank_transfer === true;
+  document.getElementById('paymentOnlinePayment').checked = resource.online_payment === true;
+  syncPaymentOptionState();
 }
 
 (async () => {
@@ -162,11 +185,23 @@ document.getElementById('sharedResourceListingId').addEventListener('change', ()
   renderListingOptions(listingId);
 });
 
+document.getElementById('paymentFreeOfCharge').addEventListener('change', () => {
+  syncPaymentOptionState();
+});
+
 document.querySelectorAll('.editor-btn').forEach((button) => {
   button.addEventListener('click', () => {
     const command = button.getAttribute('data-command');
     if (command) {
       applyEditorCommand(command);
+    }
+  });
+});
+
+['paymentCashOnSite', 'paymentBankTransfer', 'paymentOnlinePayment'].forEach((id) => {
+  document.getElementById(id).addEventListener('change', () => {
+    if (document.getElementById('paymentFreeOfCharge').checked) {
+      syncPaymentOptionState();
     }
   });
 });
@@ -180,6 +215,10 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
   const fullDescriptionHtml = getEditorHtml();
   const propertyId = document.getElementById('sharedResourcePropertyId').value || null;
   const listingId = document.getElementById('sharedResourceListingId').value || null;
+  const freeOfCharge = document.getElementById('paymentFreeOfCharge').checked;
+  const cashOnSite = document.getElementById('paymentCashOnSite').checked;
+  const bankTransfer = document.getElementById('paymentBankTransfer').checked;
+  const onlinePayment = document.getElementById('paymentOnlinePayment').checked;
 
   if (!shortDescription) {
     setSharedResourceMessage('Short description is required.', true);
@@ -196,7 +235,17 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
     const res = await fetch('/api/shared-resources/' + resourceId, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shortDescription, fullDescriptionHtml, maxUnits, propertyId, listingId })
+      body: JSON.stringify({
+        shortDescription,
+        fullDescriptionHtml,
+        maxUnits,
+        propertyId,
+        listingId,
+        freeOfCharge,
+        cashOnSite,
+        bankTransfer,
+        onlinePayment
+      })
     });
     const data = await res.json();
 

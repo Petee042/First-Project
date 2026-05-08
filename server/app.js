@@ -389,6 +389,10 @@ async function initializeUserStore() {
       max_units INTEGER NOT NULL DEFAULT 1,
       property_id BIGINT REFERENCES properties(id) ON DELETE SET NULL,
       listing_id BIGINT REFERENCES listings(id) ON DELETE SET NULL,
+      free_of_charge BOOLEAN NOT NULL DEFAULT FALSE,
+      cash_on_site BOOLEAN NOT NULL DEFAULT FALSE,
+      bank_transfer BOOLEAN NOT NULL DEFAULT FALSE,
+      online_payment BOOLEAN NOT NULL DEFAULT FALSE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -402,6 +406,26 @@ async function initializeUserStore() {
   await pool.query(`
     ALTER TABLE shared_resources
     ADD COLUMN IF NOT EXISTS listing_id BIGINT REFERENCES listings(id) ON DELETE SET NULL
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS free_of_charge BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS cash_on_site BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS bank_transfer BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS online_payment BOOLEAN NOT NULL DEFAULT FALSE
   `);
 
   await migrateUsersFromFile();
@@ -537,6 +561,25 @@ function normaliseOptionalPositiveInteger(value) {
     return null;
   }
   return parsed;
+}
+
+function normaliseSharedResourcePaymentOptions(input) {
+  const freeOfCharge = input && (input.freeOfCharge === true || input.free_of_charge === true);
+  if (freeOfCharge) {
+    return {
+      free_of_charge: true,
+      cash_on_site: false,
+      bank_transfer: false,
+      online_payment: false
+    };
+  }
+
+  return {
+    free_of_charge: false,
+    cash_on_site: input && (input.cashOnSite === true || input.cash_on_site === true),
+    bank_transfer: input && (input.bankTransfer === true || input.bank_transfer === true),
+    online_payment: input && (input.onlinePayment === true || input.online_payment === true)
+  };
 }
 
 function sanitiseRichTextHtml(value) {
@@ -1136,21 +1179,26 @@ async function getSharedResourcesForUser(userId) {
       .map((resource) => ({
         ...resource,
         property_id: normaliseOptionalPositiveInteger(resource.property_id),
-        listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
+        listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
+        ...normaliseSharedResourcePaymentOptions(resource)
       }))
       .sort((a, b) => String(a.short_description || '').localeCompare(String(b.short_description || '')));
   }
 
   const result = await pool.query(
     `
-      SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id, created_at, updated_at
+      SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
+             free_of_charge, cash_on_site, bank_transfer, online_payment, created_at, updated_at
       FROM shared_resources
       WHERE user_id = $1
       ORDER BY short_description ASC, id ASC
     `,
     [userId]
   );
-  return result.rows;
+  return result.rows.map((row) => ({
+    ...row,
+    ...normaliseSharedResourcePaymentOptions(row)
+  }));
 }
 
 async function getSharedResourceByIdForUser(resourceId, userId) {
@@ -1165,26 +1213,35 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
     return {
       ...resource,
       property_id: normaliseOptionalPositiveInteger(resource.property_id),
-      listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
+      listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
+      ...normaliseSharedResourcePaymentOptions(resource)
     };
   }
 
   const result = await pool.query(
     `
-      SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id, created_at, updated_at
+      SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
+             free_of_charge, cash_on_site, bank_transfer, online_payment, created_at, updated_at
       FROM shared_resources
       WHERE id = $1 AND user_id = $2
       LIMIT 1
     `,
     [resourceId, userId]
   );
-  return result.rows[0] || null;
+  if (!result.rows[0]) {
+    return null;
+  }
+  return {
+    ...result.rows[0],
+    ...normaliseSharedResourcePaymentOptions(result.rows[0])
+  };
 }
 
 async function createSharedResourceForUser(userId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
+  const paymentOptions = normaliseSharedResourcePaymentOptions(input);
   if (!shortDescription) {
     return { error: 'Short description is required.' };
   }
@@ -1221,6 +1278,10 @@ async function createSharedResourceForUser(userId, input) {
       max_units: 1,
       property_id: propertyId,
       listing_id: listingId,
+      free_of_charge: paymentOptions.free_of_charge,
+      cash_on_site: paymentOptions.cash_on_site,
+      bank_transfer: paymentOptions.bank_transfer,
+      online_payment: paymentOptions.online_payment,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -1231,11 +1292,32 @@ async function createSharedResourceForUser(userId, input) {
 
   const result = await pool.query(
     `
-      INSERT INTO shared_resources (user_id, short_description, full_description_html, max_units, property_id, listing_id)
-      VALUES ($1, $2, '', 1, $3, $4)
-      RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id, created_at, updated_at
+      INSERT INTO shared_resources (
+        user_id,
+        short_description,
+        full_description_html,
+        max_units,
+        property_id,
+        listing_id,
+        free_of_charge,
+        cash_on_site,
+        bank_transfer,
+        online_payment
+      )
+      VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8)
+      RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
+                free_of_charge, cash_on_site, bank_transfer, online_payment, created_at, updated_at
     `,
-    [userId, shortDescription, propertyId, listingId]
+    [
+      userId,
+      shortDescription,
+      propertyId,
+      listingId,
+      paymentOptions.free_of_charge,
+      paymentOptions.cash_on_site,
+      paymentOptions.bank_transfer,
+      paymentOptions.online_payment
+    ]
   );
   return { resource: result.rows[0] };
 }
@@ -1246,6 +1328,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
   const maxUnits = normaliseSharedResourceMaxUnits(input.maxUnits);
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
+  const paymentOptions = normaliseSharedResourcePaymentOptions(input);
 
   if (!shortDescription) {
     return { error: 'Short description is required.' };
@@ -1286,6 +1369,10 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
     store.shared_resources[idx].max_units = maxUnits;
     store.shared_resources[idx].property_id = propertyId;
     store.shared_resources[idx].listing_id = listingId;
+    store.shared_resources[idx].free_of_charge = paymentOptions.free_of_charge;
+    store.shared_resources[idx].cash_on_site = paymentOptions.cash_on_site;
+    store.shared_resources[idx].bank_transfer = paymentOptions.bank_transfer;
+    store.shared_resources[idx].online_payment = paymentOptions.online_payment;
     store.shared_resources[idx].updated_at = new Date().toISOString();
     writeListingsStore(store);
     return { resource: store.shared_resources[idx] };
@@ -1299,11 +1386,28 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
           max_units = $3,
           property_id = $4,
           listing_id = $5,
+          free_of_charge = $6,
+          cash_on_site = $7,
+          bank_transfer = $8,
+          online_payment = $9,
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = $6 AND user_id = $7
-      RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id, created_at, updated_at
+      WHERE id = $10 AND user_id = $11
+      RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
+                free_of_charge, cash_on_site, bank_transfer, online_payment, created_at, updated_at
     `,
-    [shortDescription, fullDescriptionHtml, maxUnits, propertyId, listingId, resourceId, userId]
+    [
+      shortDescription,
+      fullDescriptionHtml,
+      maxUnits,
+      propertyId,
+      listingId,
+      paymentOptions.free_of_charge,
+      paymentOptions.cash_on_site,
+      paymentOptions.bank_transfer,
+      paymentOptions.online_payment,
+      resourceId,
+      userId
+    ]
   );
 
   if (!result.rows[0]) {
@@ -3476,7 +3580,11 @@ app.post('/api/shared-resources', requireAuth, async (req, res) => {
     const { resource, error } = await createSharedResourceForUser(req.session.userId, {
       shortDescription: req.body.shortDescription,
       propertyId: req.body.propertyId,
-      listingId: req.body.listingId
+      listingId: req.body.listingId,
+      freeOfCharge: req.body.freeOfCharge,
+      cashOnSite: req.body.cashOnSite,
+      bankTransfer: req.body.bankTransfer,
+      onlinePayment: req.body.onlinePayment
     });
     if (error) {
       return res.status(400).json({ error });
@@ -3520,7 +3628,11 @@ app.put('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
       fullDescriptionHtml: req.body.fullDescriptionHtml,
       maxUnits: req.body.maxUnits,
       propertyId: req.body.propertyId,
-      listingId: req.body.listingId
+      listingId: req.body.listingId,
+      freeOfCharge: req.body.freeOfCharge,
+      cashOnSite: req.body.cashOnSite,
+      bankTransfer: req.body.bankTransfer,
+      onlinePayment: req.body.onlinePayment
     });
     if (error === 'Shared resource not found.') {
       return res.status(404).json({ error });
