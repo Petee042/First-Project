@@ -168,6 +168,10 @@ function readListingsStore() {
       listing.usual_cleaner_id = null;
     }
   });
+  parsed.shared_resources.forEach((resource) => {
+    resource.property_id = normaliseOptionalPositiveInteger(resource.property_id);
+    resource.listing_id = normaliseOptionalPositiveInteger(resource.listing_id);
+  });
   return parsed;
 }
 
@@ -383,9 +387,21 @@ async function initializeUserStore() {
       short_description TEXT NOT NULL,
       full_description_html TEXT NOT NULL DEFAULT '',
       max_units INTEGER NOT NULL DEFAULT 1,
+      property_id BIGINT REFERENCES properties(id) ON DELETE SET NULL,
+      listing_id BIGINT REFERENCES listings(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS property_id BIGINT REFERENCES properties(id) ON DELETE SET NULL
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS listing_id BIGINT REFERENCES listings(id) ON DELETE SET NULL
   `);
 
   await migrateUsersFromFile();
@@ -505,6 +521,17 @@ function normaliseSharedResourceShortDescription(value) {
 }
 
 function normaliseSharedResourceMaxUnits(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function normaliseOptionalPositiveInteger(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     return null;
@@ -1106,12 +1133,17 @@ async function getSharedResourcesForUser(userId) {
     const store = readListingsStore();
     return (store.shared_resources || [])
       .filter((resource) => Number(resource.user_id) === Number(userId))
+      .map((resource) => ({
+        ...resource,
+        property_id: normaliseOptionalPositiveInteger(resource.property_id),
+        listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
+      }))
       .sort((a, b) => String(a.short_description || '').localeCompare(String(b.short_description || '')));
   }
 
   const result = await pool.query(
     `
-      SELECT id, user_id, short_description, full_description_html, max_units, created_at, updated_at
+      SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id, created_at, updated_at
       FROM shared_resources
       WHERE user_id = $1
       ORDER BY short_description ASC, id ASC
@@ -1124,14 +1156,22 @@ async function getSharedResourcesForUser(userId) {
 async function getSharedResourceByIdForUser(resourceId, userId) {
   if (!usePostgres) {
     const store = readListingsStore();
-    return (store.shared_resources || []).find(
+    const resource = (store.shared_resources || []).find(
       (resource) => Number(resource.id) === Number(resourceId) && Number(resource.user_id) === Number(userId)
     ) || null;
+    if (!resource) {
+      return null;
+    }
+    return {
+      ...resource,
+      property_id: normaliseOptionalPositiveInteger(resource.property_id),
+      listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
+    };
   }
 
   const result = await pool.query(
     `
-      SELECT id, user_id, short_description, full_description_html, max_units, created_at, updated_at
+      SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id, created_at, updated_at
       FROM shared_resources
       WHERE id = $1 AND user_id = $2
       LIMIT 1
@@ -1143,8 +1183,29 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
 
 async function createSharedResourceForUser(userId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
+  let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
+  const listingId = normaliseOptionalPositiveInteger(input.listingId);
   if (!shortDescription) {
     return { error: 'Short description is required.' };
+  }
+
+  let selectedListing = null;
+  if (listingId) {
+    selectedListing = await getListingByIdForUser(listingId, userId);
+    if (!selectedListing) {
+      return { error: 'Listing not found.' };
+    }
+    if (propertyId && Number(selectedListing.property_id) !== Number(propertyId)) {
+      return { error: 'Selected listing does not belong to the selected property.' };
+    }
+    propertyId = Number(selectedListing.property_id) || null;
+  }
+
+  if (propertyId) {
+    const property = await getPropertyByIdForUser(propertyId, userId);
+    if (!property) {
+      return { error: 'Property not found.' };
+    }
   }
 
   if (!usePostgres) {
@@ -1158,6 +1219,8 @@ async function createSharedResourceForUser(userId, input) {
       short_description: shortDescription,
       full_description_html: '',
       max_units: 1,
+      property_id: propertyId,
+      listing_id: listingId,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -1168,11 +1231,11 @@ async function createSharedResourceForUser(userId, input) {
 
   const result = await pool.query(
     `
-      INSERT INTO shared_resources (user_id, short_description, full_description_html, max_units)
-      VALUES ($1, $2, '', 1)
-      RETURNING id, user_id, short_description, full_description_html, max_units, created_at, updated_at
+      INSERT INTO shared_resources (user_id, short_description, full_description_html, max_units, property_id, listing_id)
+      VALUES ($1, $2, '', 1, $3, $4)
+      RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id, created_at, updated_at
     `,
-    [userId, shortDescription]
+    [userId, shortDescription, propertyId, listingId]
   );
   return { resource: result.rows[0] };
 }
@@ -1181,12 +1244,33 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
   const fullDescriptionHtml = sanitiseRichTextHtml(input.fullDescriptionHtml);
   const maxUnits = normaliseSharedResourceMaxUnits(input.maxUnits);
+  let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
+  const listingId = normaliseOptionalPositiveInteger(input.listingId);
 
   if (!shortDescription) {
     return { error: 'Short description is required.' };
   }
   if (!maxUnits) {
     return { error: 'Maximum units must be a whole number greater than zero.' };
+  }
+
+  let selectedListing = null;
+  if (listingId) {
+    selectedListing = await getListingByIdForUser(listingId, userId);
+    if (!selectedListing) {
+      return { error: 'Listing not found.' };
+    }
+    if (propertyId && Number(selectedListing.property_id) !== Number(propertyId)) {
+      return { error: 'Selected listing does not belong to the selected property.' };
+    }
+    propertyId = Number(selectedListing.property_id) || null;
+  }
+
+  if (propertyId) {
+    const property = await getPropertyByIdForUser(propertyId, userId);
+    if (!property) {
+      return { error: 'Property not found.' };
+    }
   }
 
   if (!usePostgres) {
@@ -1200,6 +1284,8 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
     store.shared_resources[idx].short_description = shortDescription;
     store.shared_resources[idx].full_description_html = fullDescriptionHtml;
     store.shared_resources[idx].max_units = maxUnits;
+    store.shared_resources[idx].property_id = propertyId;
+    store.shared_resources[idx].listing_id = listingId;
     store.shared_resources[idx].updated_at = new Date().toISOString();
     writeListingsStore(store);
     return { resource: store.shared_resources[idx] };
@@ -1211,11 +1297,13 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
       SET short_description = $1,
           full_description_html = $2,
           max_units = $3,
+          property_id = $4,
+          listing_id = $5,
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4 AND user_id = $5
-      RETURNING id, user_id, short_description, full_description_html, max_units, created_at, updated_at
+      WHERE id = $6 AND user_id = $7
+      RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id, created_at, updated_at
     `,
-    [shortDescription, fullDescriptionHtml, maxUnits, resourceId, userId]
+    [shortDescription, fullDescriptionHtml, maxUnits, propertyId, listingId, resourceId, userId]
   );
 
   if (!result.rows[0]) {
@@ -3386,7 +3474,9 @@ app.get('/api/shared-resources', requireAuth, async (req, res) => {
 app.post('/api/shared-resources', requireAuth, async (req, res) => {
   try {
     const { resource, error } = await createSharedResourceForUser(req.session.userId, {
-      shortDescription: req.body.shortDescription
+      shortDescription: req.body.shortDescription,
+      propertyId: req.body.propertyId,
+      listingId: req.body.listingId
     });
     if (error) {
       return res.status(400).json({ error });
@@ -3428,7 +3518,9 @@ app.put('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
     const { resource, error } = await updateSharedResourceForUser(resourceId, req.session.userId, {
       shortDescription: req.body.shortDescription,
       fullDescriptionHtml: req.body.fullDescriptionHtml,
-      maxUnits: req.body.maxUnits
+      maxUnits: req.body.maxUnits,
+      propertyId: req.body.propertyId,
+      listingId: req.body.listingId
     });
     if (error === 'Shared resource not found.') {
       return res.status(404).json({ error });

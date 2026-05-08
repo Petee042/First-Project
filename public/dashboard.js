@@ -213,6 +213,8 @@ function renderCleaners(cleaners) {
 
 function renderSharedResources(resources) {
   currentSharedResources = resources || [];
+  const propertyNameById = new Map((currentProperties || []).map((property) => [Number(property.id), property.name || '']));
+  const listingNameById = new Map((currentListings || []).map((listing) => [Number(listing.id), listing.name || '']));
 
   const tbody = document.getElementById('sharedResourcesTableBody');
   if (!tbody) {
@@ -223,7 +225,7 @@ function renderSharedResources(resources) {
   if (!currentSharedResources.length) {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = 2;
+    cell.colSpan = 4;
     cell.textContent = 'No shared resources yet.';
     row.appendChild(cell);
     tbody.appendChild(row);
@@ -236,6 +238,14 @@ function renderSharedResources(resources) {
     const shortCell = document.createElement('td');
     shortCell.textContent = resource.short_description || '';
 
+    const propertyCell = document.createElement('td');
+    const propertyId = Number(resource.property_id || 0);
+    propertyCell.textContent = propertyId > 0 ? (propertyNameById.get(propertyId) || 'Unknown property') : 'All Properties';
+
+    const listingCell = document.createElement('td');
+    const listingId = Number(resource.listing_id || 0);
+    listingCell.textContent = listingId > 0 ? (listingNameById.get(listingId) || 'Unknown listing') : 'All Listings';
+
     const actionCell = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
@@ -247,6 +257,8 @@ function renderSharedResources(resources) {
     actionCell.appendChild(editBtn);
 
     row.appendChild(shortCell);
+    row.appendChild(propertyCell);
+    row.appendChild(listingCell);
     row.appendChild(actionCell);
     tbody.appendChild(row);
   });

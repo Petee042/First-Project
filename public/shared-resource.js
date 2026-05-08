@@ -2,6 +2,8 @@
 
 const params = new URLSearchParams(window.location.search);
 const resourceId = Number(params.get('id'));
+let currentProperties = [];
+let currentListings = [];
 
 function setSharedResourceMessage(text, isError) {
   const el = document.getElementById('sharedResourceMessage');
@@ -16,6 +18,82 @@ function getEditorHtml() {
 function applyEditorCommand(command) {
   document.execCommand(command, false, null);
   document.getElementById('fullDescriptionEditor').focus();
+}
+
+function renderPropertyOptions(selectedPropertyId) {
+  const select = document.getElementById('sharedResourcePropertyId');
+  select.innerHTML = '';
+
+  const allOption = document.createElement('option');
+  allOption.value = '';
+  allOption.textContent = 'All Properties';
+  select.appendChild(allOption);
+
+  currentProperties.forEach((property) => {
+    const option = document.createElement('option');
+    option.value = String(property.id);
+    option.textContent = property.name || 'Property';
+    select.appendChild(option);
+  });
+
+  select.value = selectedPropertyId ? String(selectedPropertyId) : '';
+}
+
+function renderListingOptions(selectedListingId) {
+  const propertyId = Number(document.getElementById('sharedResourcePropertyId').value || 0);
+  const select = document.getElementById('sharedResourceListingId');
+  select.innerHTML = '';
+
+  const allOption = document.createElement('option');
+  allOption.value = '';
+  allOption.textContent = 'All Listings';
+  select.appendChild(allOption);
+
+  const filteredListings = (currentListings || []).filter((listing) => {
+    if (!propertyId) {
+      return true;
+    }
+    return Number(listing.property_id) === propertyId;
+  });
+
+  filteredListings.forEach((listing) => {
+    const option = document.createElement('option');
+    option.value = String(listing.id);
+    option.textContent = listing.name || 'Listing';
+    select.appendChild(option);
+  });
+
+  const selectedValue = selectedListingId ? String(selectedListingId) : '';
+  const hasSelected = Array.from(select.options).some((opt) => opt.value === selectedValue);
+  select.value = hasSelected ? selectedValue : '';
+}
+
+async function loadPropertiesAndListings() {
+  const [propertiesRes, listingsRes] = await Promise.all([
+    fetch('/api/properties'),
+    fetch('/api/listings')
+  ]);
+
+  if (propertiesRes.status === 401 || listingsRes.status === 401) {
+    window.location.href = '/';
+    return false;
+  }
+
+  const propertiesData = await propertiesRes.json();
+  const listingsData = await listingsRes.json();
+
+  if (!propertiesRes.ok) {
+    throw new Error(propertiesData.error || 'Failed to load properties.');
+  }
+  if (!listingsRes.ok) {
+    throw new Error(listingsData.error || 'Failed to load listings.');
+  }
+
+  currentProperties = propertiesData.properties || [];
+  currentListings = listingsData.listings || [];
+  renderPropertyOptions(null);
+  renderListingOptions(null);
+  return true;
 }
 
 async function loadSharedResource() {
@@ -39,6 +117,8 @@ async function loadSharedResource() {
   document.getElementById('shortDescription').value = resource.short_description || '';
   document.getElementById('fullDescriptionEditor').innerHTML = resource.full_description_html || '';
   document.getElementById('maxUnits').value = Number(resource.max_units) > 0 ? Number(resource.max_units) : 1;
+  renderPropertyOptions(Number(resource.property_id) || null);
+  renderListingOptions(Number(resource.listing_id) || null);
 }
 
 (async () => {
@@ -54,11 +134,33 @@ async function loadSharedResource() {
       return;
     }
 
+    const loaded = await loadPropertiesAndListings();
+    if (!loaded) {
+      return;
+    }
+
     await loadSharedResource();
   } catch (err) {
     setSharedResourceMessage(err.message || 'Failed to load shared resource page.', true);
   }
 })();
+
+document.getElementById('sharedResourcePropertyId').addEventListener('change', () => {
+  renderListingOptions(null);
+});
+
+document.getElementById('sharedResourceListingId').addEventListener('change', () => {
+  const listingId = Number(document.getElementById('sharedResourceListingId').value || 0);
+  if (!listingId) {
+    return;
+  }
+  const listing = currentListings.find((item) => Number(item.id) === listingId);
+  if (!listing) {
+    return;
+  }
+  document.getElementById('sharedResourcePropertyId').value = String(listing.property_id || '');
+  renderListingOptions(listingId);
+});
 
 document.querySelectorAll('.editor-btn').forEach((button) => {
   button.addEventListener('click', () => {
@@ -76,6 +178,8 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
   const shortDescription = document.getElementById('shortDescription').value.trim();
   const maxUnits = Number(document.getElementById('maxUnits').value);
   const fullDescriptionHtml = getEditorHtml();
+  const propertyId = document.getElementById('sharedResourcePropertyId').value || null;
+  const listingId = document.getElementById('sharedResourceListingId').value || null;
 
   if (!shortDescription) {
     setSharedResourceMessage('Short description is required.', true);
@@ -92,7 +196,7 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
     const res = await fetch('/api/shared-resources/' + resourceId, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shortDescription, fullDescriptionHtml, maxUnits })
+      body: JSON.stringify({ shortDescription, fullDescriptionHtml, maxUnits, propertyId, listingId })
     });
     const data = await res.json();
 

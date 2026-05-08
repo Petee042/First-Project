@@ -47,6 +47,20 @@
             <input id="maxUnits" type="number" min="1" step="1" required />
           </div>
 
+          <div class="calendar-source-row">
+            <label for="sharedResourcePropertyId">Property</label>
+            <select id="sharedResourcePropertyId">
+              <option value="">All Properties</option>
+            </select>
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="sharedResourceListingId">Listing</label>
+            <select id="sharedResourceListingId">
+              <option value="">All Listings</option>
+            </select>
+          </div>
+
           <div class="feed-actions">
             <button type="submit" class="btn primary calendar-btn">Save Shared Resource</button>
             <button type="button" id="deleteSharedResourceBtn" class="btn secondary">Delete Shared Resource</button>
