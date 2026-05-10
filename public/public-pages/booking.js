@@ -106,8 +106,6 @@ async function loadPublicResource() {
   const spacesRow = document.getElementById('bookingSpacesRequiredRow');
   const spacesInput = document.getElementById('spacesRequired');
   const isParking = String(resource.resource_type || '').toLowerCase() === 'parking';
-  
-  console.log('Resource type:', resource.resource_type, 'Is Parking:', isParking);
 
   if (isParking) {
     const maxUnits = Number(resource.max_units);
