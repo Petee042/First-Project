@@ -1307,3 +1307,16 @@ textarea:focus {
   font-size: 0.82rem;
   color: #5a6785;
 }
+
+.public-booking-actions {
+  margin-top: 1rem;
+}
+
+.public-resource-reservations-wrap {
+  margin-top: 1rem;
+}
+
+.public-resource-reservations-empty {
+  text-align: center;
+  color: #5a6785;
+}
