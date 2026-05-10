@@ -1475,7 +1475,20 @@ async function getSharedResourceByIdPublic(resourceId) {
     `,
     [resourceId]
   );
-  return result.rows[0] || null;
+  if (!result.rows[0]) {
+    return null;
+  }
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    short_description: row.short_description,
+    full_description_html: row.full_description_html,
+    max_units: row.max_units,
+    max_days_advance_booking: row.max_days_advance_booking,
+    resource_type: normaliseSharedResourceType(row.resource_type),
+    property_id: row.property_id,
+    listing_id: row.listing_id
+  };
 }
 
 async function createSharedResourceForUser(userId, input) {
