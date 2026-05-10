@@ -106,15 +106,19 @@ async function loadPublicResource() {
   const spacesRow = document.getElementById('bookingSpacesRequiredRow');
   const spacesInput = document.getElementById('spacesRequired');
   const isParking = String(resource.resource_type || '').toLowerCase() === 'parking';
+  
+  console.log('Resource type:', resource.resource_type, 'Is Parking:', isParking);
 
   if (isParking) {
     const maxUnits = Number(resource.max_units);
     const maxValue = Number.isInteger(maxUnits) && maxUnits > 0 ? maxUnits : 1;
     spacesRow.classList.remove('hidden');
+    spacesRow.style.display = '';
     spacesInput.disabled = false;
     configureSpacesRequiredInput(maxValue);
   } else {
     spacesRow.classList.add('hidden');
+    spacesRow.style.display = 'none';
     spacesInput.disabled = true;
     spacesInput.removeAttribute('max');
     spacesInput.value = '1';
