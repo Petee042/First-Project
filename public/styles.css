@@ -1292,3 +1292,18 @@ textarea:focus {
 .public-booking-spaces-row {
   margin-top: 0.8rem;
 }
+
+.public-booking-spaces-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.public-booking-spaces-wrap input {
+  width: 100%;
+}
+
+.public-booking-spaces-hint {
+  margin-top: 0.35rem;
+  font-size: 0.82rem;
+  color: #5a6785;
+}

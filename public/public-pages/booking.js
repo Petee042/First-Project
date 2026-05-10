@@ -50,6 +50,39 @@ function initialiseBookingRequestForm() {
   syncMirroredField('guestCheckoutTime', 'requestedBookingEndTime');
 }
 
+function configureSpacesRequiredInput(maxValue) {
+  const input = document.getElementById('spacesRequired');
+  const hint = document.getElementById('spacesRequiredHint');
+
+  input.min = '1';
+  input.step = '1';
+  input.max = String(maxValue);
+
+  const parsed = Number(input.value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > maxValue) {
+    input.value = '1';
+  }
+
+  input.addEventListener('input', () => {
+    if (input.value === '') {
+      return;
+    }
+    const numeric = Number(input.value);
+    if (!Number.isFinite(numeric)) {
+      input.value = '1';
+      return;
+    }
+    const clamped = Math.min(maxValue, Math.max(1, Math.floor(numeric)));
+    if (clamped !== numeric) {
+      input.value = String(clamped);
+    }
+  });
+
+  if (hint) {
+    hint.textContent = 'Allowed range: 1 to ' + maxValue + ' spaces.';
+  }
+}
+
 async function loadPublicResource() {
   const resourceId = getResourceIdFromUrl();
   if (!resourceId) {
@@ -77,13 +110,16 @@ async function loadPublicResource() {
     const maxValue = Number.isInteger(maxUnits) && maxUnits > 0 ? maxUnits : 1;
     spacesRow.classList.remove('hidden');
     spacesInput.disabled = false;
-    spacesInput.max = String(maxValue);
-    spacesInput.value = '1';
+    configureSpacesRequiredInput(maxValue);
   } else {
     spacesRow.classList.add('hidden');
     spacesInput.disabled = true;
     spacesInput.removeAttribute('max');
     spacesInput.value = '1';
+    const hint = document.getElementById('spacesRequiredHint');
+    if (hint) {
+      hint.textContent = '';
+    }
   }
 }
 

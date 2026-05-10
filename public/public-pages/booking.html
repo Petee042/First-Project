@@ -72,7 +72,10 @@
 
           <div id="bookingSpacesRequiredRow" class="calendar-source-row public-booking-spaces-row hidden">
             <label for="spacesRequired">Spaces Required</label>
-            <input id="spacesRequired" type="number" min="1" value="1" />
+            <div class="public-booking-spaces-wrap">
+              <input id="spacesRequired" type="number" min="1" step="1" value="1" />
+              <p id="spacesRequiredHint" class="public-booking-spaces-hint"></p>
+            </div>
           </div>
         </form>
       </section>
