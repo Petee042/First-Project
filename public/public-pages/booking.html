@@ -20,38 +20,54 @@
       <section class="listing-form-section">
         <h3>Booking Request</h3>
         <form id="publicBookingRequestForm" novalidate>
-          <div class="calendar-source-row">
-            <label for="guestCheckinDate">Your Checkin Date</label>
-            <input id="guestCheckinDate" type="date" />
-          </div>
-          <div class="calendar-source-row">
-            <label for="guestCheckinTime">Your Estimated Checkin Time</label>
-            <input id="guestCheckinTime" type="time" />
-          </div>
-          <div class="calendar-source-row">
-            <label for="guestCheckoutDate">Your Checkout Date</label>
-            <input id="guestCheckoutDate" type="date" />
-          </div>
-          <div class="calendar-source-row">
-            <label for="guestCheckoutTime">Your Estimated Checkout Time</label>
-            <input id="guestCheckoutTime" type="time" />
-          </div>
-
-          <div class="calendar-source-row public-booking-divider-row">
-            <label for="requestedBookingStartDate">Your Requested Booking Start Date</label>
-            <input id="requestedBookingStartDate" type="date" />
-          </div>
-          <div class="calendar-source-row">
-            <label for="requestedBookingStartTime">Your Requested Booking Start Time</label>
-            <input id="requestedBookingStartTime" type="time" />
-          </div>
-          <div class="calendar-source-row">
-            <label for="requestedBookingEndDate">Your Requested Booking End Date</label>
-            <input id="requestedBookingEndDate" type="date" />
-          </div>
-          <div class="calendar-source-row">
-            <label for="requestedBookingEndTime">Your Requested Booking End Time</label>
-            <input id="requestedBookingEndTime" type="time" />
+          <div class="table-wrap">
+            <table class="calendar-table public-booking-table" aria-label="Booking request dates and estimated times">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Date</th>
+                  <th>Estimated Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Checkin</th>
+                  <td>
+                    <input id="guestCheckinDate" type="date" />
+                  </td>
+                  <td>
+                    <input id="guestCheckinTime" type="time" />
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Checkout</th>
+                  <td>
+                    <input id="guestCheckoutDate" type="date" />
+                  </td>
+                  <td>
+                    <input id="guestCheckoutTime" type="time" />
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Requested Start</th>
+                  <td>
+                    <input id="requestedBookingStartDate" type="date" />
+                  </td>
+                  <td>
+                    <input id="requestedBookingStartTime" type="time" />
+                  </td>
+                </tr>
+                <tr>
+                  <th scope="row">Requested End</th>
+                  <td>
+                    <input id="requestedBookingEndDate" type="date" />
+                  </td>
+                  <td>
+                    <input id="requestedBookingEndTime" type="time" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </form>
       </section>

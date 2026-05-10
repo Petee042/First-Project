@@ -1279,3 +1279,12 @@ textarea:focus {
   padding-top: 0.7rem;
   border-top: 1px solid #e2e8f4;
 }
+
+.public-booking-table th[scope="row"] {
+  width: 170px;
+  color: #2f3d5a;
+}
+
+.public-booking-table td input {
+  width: 100%;
+}
