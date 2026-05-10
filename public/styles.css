@@ -1288,3 +1288,7 @@ textarea:focus {
 .public-booking-table td input {
   width: 100%;
 }
+
+.public-booking-spaces-row {
+  margin-top: 0.8rem;
+}

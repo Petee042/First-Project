@@ -67,6 +67,24 @@ async function loadPublicResource() {
   const resource = data.resource;
   document.getElementById('publicBookingResourceName').textContent = resource.short_description || 'Shared Resource';
   document.getElementById('publicBookingDescription').innerHTML = resource.full_description_html || '<p>No description provided.</p>';
+
+  const spacesRow = document.getElementById('bookingSpacesRequiredRow');
+  const spacesInput = document.getElementById('spacesRequired');
+  const isParking = String(resource.resource_type || '').toLowerCase() === 'parking';
+
+  if (isParking) {
+    const maxUnits = Number(resource.max_units);
+    const maxValue = Number.isInteger(maxUnits) && maxUnits > 0 ? maxUnits : 1;
+    spacesRow.classList.remove('hidden');
+    spacesInput.disabled = false;
+    spacesInput.max = String(maxValue);
+    spacesInput.value = '1';
+  } else {
+    spacesRow.classList.add('hidden');
+    spacesInput.disabled = true;
+    spacesInput.removeAttribute('max');
+    spacesInput.value = '1';
+  }
 }
 
 (async () => {

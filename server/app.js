@@ -171,6 +171,7 @@ function readListingsStore() {
   parsed.shared_resources.forEach((resource) => {
     resource.property_id = normaliseOptionalPositiveInteger(resource.property_id);
     resource.listing_id = normaliseOptionalPositiveInteger(resource.listing_id);
+    resource.resource_type = normaliseSharedResourceType(resource.resource_type || resource.resourceType);
     const chargeConfig = normaliseSharedResourceChargeConfig(resource);
     resource.charge_basis = chargeConfig.charge_basis;
     resource.daily_charge_mode = chargeConfig.daily_charge_mode;
@@ -396,6 +397,7 @@ async function initializeUserStore() {
       max_units INTEGER NOT NULL DEFAULT 1,
       property_id BIGINT REFERENCES properties(id) ON DELETE SET NULL,
       listing_id BIGINT REFERENCES listings(id) ON DELETE SET NULL,
+      resource_type TEXT NOT NULL DEFAULT 'undefined',
       free_of_charge BOOLEAN NOT NULL DEFAULT FALSE,
       cash_on_site BOOLEAN NOT NULL DEFAULT FALSE,
       bank_transfer BOOLEAN NOT NULL DEFAULT FALSE,
@@ -419,6 +421,11 @@ async function initializeUserStore() {
   await pool.query(`
     ALTER TABLE shared_resources
     ADD COLUMN IF NOT EXISTS listing_id BIGINT REFERENCES listings(id) ON DELETE SET NULL
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS resource_type TEXT NOT NULL DEFAULT 'undefined'
   `);
 
   await pool.query(`
@@ -604,6 +611,14 @@ function normaliseOptionalPositiveInteger(value) {
     return null;
   }
   return parsed;
+}
+
+function normaliseSharedResourceType(value) {
+  const type = String(value || '').trim().toLowerCase();
+  if (type === 'parking') {
+    return 'parking';
+  }
+  return 'undefined';
 }
 
 function normaliseSharedResourcePaymentOptions(input) {
@@ -1338,6 +1353,7 @@ async function getSharedResourcesForUser(userId) {
         ...resource,
         property_id: normaliseOptionalPositiveInteger(resource.property_id),
         listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
+        resource_type: normaliseSharedResourceType(resource.resource_type || resource.resourceType),
         ...normaliseSharedResourcePaymentOptions(resource),
         ...normaliseSharedResourceChargeConfig(resource),
         hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(resource).hourly_rates)
@@ -1347,7 +1363,7 @@ async function getSharedResourcesForUser(userId) {
 
   const result = await pool.query(
     `
-            SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
+            SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
               charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
@@ -1359,6 +1375,7 @@ async function getSharedResourcesForUser(userId) {
   );
   return result.rows.map((row) => ({
     ...row,
+    resource_type: normaliseSharedResourceType(row.resource_type),
     ...normaliseSharedResourcePaymentOptions(row),
     ...normaliseSharedResourceChargeConfig(row),
     hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(row).hourly_rates)
@@ -1378,6 +1395,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
       ...resource,
       property_id: normaliseOptionalPositiveInteger(resource.property_id),
       listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
+      resource_type: normaliseSharedResourceType(resource.resource_type || resource.resourceType),
       ...normaliseSharedResourcePaymentOptions(resource),
       ...normaliseSharedResourceChargeConfig(resource),
       hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(resource).hourly_rates)
@@ -1386,7 +1404,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
 
   const result = await pool.query(
     `
-            SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
+            SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
               charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
@@ -1401,6 +1419,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
   }
   return {
     ...result.rows[0],
+    resource_type: normaliseSharedResourceType(result.rows[0].resource_type),
     ...normaliseSharedResourcePaymentOptions(result.rows[0]),
     ...normaliseSharedResourceChargeConfig(result.rows[0]),
     hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(result.rows[0]).hourly_rates)
@@ -1421,6 +1440,7 @@ async function getSharedResourceByIdPublic(resourceId) {
       short_description: String(resource.short_description || ''),
       full_description_html: String(resource.full_description_html || ''),
       max_units: Number(resource.max_units || 0) || null,
+      resource_type: normaliseSharedResourceType(resource.resource_type || resource.resourceType),
       property_id: normaliseOptionalPositiveInteger(resource.property_id),
       listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
     };
@@ -1428,7 +1448,7 @@ async function getSharedResourceByIdPublic(resourceId) {
 
   const result = await pool.query(
     `
-      SELECT id, short_description, full_description_html, max_units, property_id, listing_id
+      SELECT id, short_description, full_description_html, max_units, resource_type, property_id, listing_id
       FROM shared_resources
       WHERE id = $1
       LIMIT 1
@@ -1442,6 +1462,7 @@ async function createSharedResourceForUser(userId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
+  const resourceType = normaliseSharedResourceType(input.resourceType);
   const paymentOptions = normaliseSharedResourcePaymentOptions(input);
   const rawChargeConfig = normaliseSharedResourceChargeConfig(input);
   const hasChargeConfigInput = Boolean(
@@ -1454,6 +1475,7 @@ async function createSharedResourceForUser(userId, input) {
     : {
         charge_basis: null,
         daily_charge_mode: null,
+        daily_rate: null,
         hourly_charge_mode: null,
         hourly_rate: null,
         hourly_rates: []
@@ -1497,6 +1519,7 @@ async function createSharedResourceForUser(userId, input) {
       max_units: 1,
       property_id: propertyId,
       listing_id: listingId,
+      resource_type: resourceType,
       free_of_charge: paymentOptions.free_of_charge,
       cash_on_site: paymentOptions.cash_on_site,
       bank_transfer: paymentOptions.bank_transfer,
@@ -1524,6 +1547,7 @@ async function createSharedResourceForUser(userId, input) {
         max_units,
         property_id,
         listing_id,
+        resource_type,
         free_of_charge,
         cash_on_site,
         bank_transfer,
@@ -1535,8 +1559,8 @@ async function createSharedResourceForUser(userId, input) {
         hourly_rate,
         hourly_rates_json
       )
-      VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-      RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
+      VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id, resource_type,
                 free_of_charge, cash_on_site, bank_transfer, online_payment,
                 charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
                 created_at, updated_at
@@ -1546,6 +1570,7 @@ async function createSharedResourceForUser(userId, input) {
       shortDescription,
       propertyId,
       listingId,
+      resourceType,
       paymentOptions.free_of_charge,
       paymentOptions.cash_on_site,
       paymentOptions.bank_transfer,
@@ -1567,6 +1592,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
   const maxUnits = normaliseSharedResourceMaxUnits(input.maxUnits);
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
+  const resourceType = normaliseSharedResourceType(input.resourceType);
   const paymentOptions = normaliseSharedResourcePaymentOptions(input);
   const chargeConfig = validateSharedResourceChargeConfig(paymentOptions, normaliseSharedResourceChargeConfig(input));
 
@@ -1612,6 +1638,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
     store.shared_resources[idx].max_units = maxUnits;
     store.shared_resources[idx].property_id = propertyId;
     store.shared_resources[idx].listing_id = listingId;
+    store.shared_resources[idx].resource_type = resourceType;
     store.shared_resources[idx].free_of_charge = paymentOptions.free_of_charge;
     store.shared_resources[idx].cash_on_site = paymentOptions.cash_on_site;
     store.shared_resources[idx].bank_transfer = paymentOptions.bank_transfer;
@@ -1635,19 +1662,20 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
           max_units = $3,
           property_id = $4,
           listing_id = $5,
-          free_of_charge = $6,
-          cash_on_site = $7,
-          bank_transfer = $8,
-          online_payment = $9,
-            charge_basis = $10,
-            daily_charge_mode = $11,
-            daily_rate = $12,
-            hourly_charge_mode = $13,
-            hourly_rate = $14,
-            hourly_rates_json = $15,
+            resource_type = $6,
+            free_of_charge = $7,
+            cash_on_site = $8,
+            bank_transfer = $9,
+            online_payment = $10,
+            charge_basis = $11,
+            daily_charge_mode = $12,
+            daily_rate = $13,
+            hourly_charge_mode = $14,
+            hourly_rate = $15,
+            hourly_rates_json = $16,
           updated_at = CURRENT_TIMESTAMP
-          WHERE id = $16 AND user_id = $17
-      RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id,
+          WHERE id = $17 AND user_id = $18
+          RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
               charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
@@ -1658,6 +1686,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
       maxUnits,
       propertyId,
       listingId,
+      resourceType,
       paymentOptions.free_of_charge,
       paymentOptions.cash_on_site,
       paymentOptions.bank_transfer,
@@ -3844,6 +3873,7 @@ app.post('/api/shared-resources', requireAuth, async (req, res) => {
       shortDescription: req.body.shortDescription,
       propertyId: req.body.propertyId,
       listingId: req.body.listingId,
+      resourceType: req.body.resourceType,
       freeOfCharge: req.body.freeOfCharge,
       cashOnSite: req.body.cashOnSite,
       bankTransfer: req.body.bankTransfer,
@@ -3917,6 +3947,7 @@ app.put('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
       maxUnits: req.body.maxUnits,
       propertyId: req.body.propertyId,
       listingId: req.body.listingId,
+      resourceType: req.body.resourceType,
       freeOfCharge: req.body.freeOfCharge,
       cashOnSite: req.body.cashOnSite,
       bankTransfer: req.body.bankTransfer,

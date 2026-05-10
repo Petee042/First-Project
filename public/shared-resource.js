@@ -403,6 +403,7 @@ async function loadSharedResource() {
   const resource = data.resource;
   document.getElementById('sharedResourceTitle').textContent = 'Shared Resource: ' + (resource.short_description || '');
   document.getElementById('shortDescription').value = resource.short_description || '';
+  document.getElementById('resourceType').value = resource.resource_type === 'parking' ? 'parking' : 'undefined';
   document.getElementById('fullDescriptionEditor').innerHTML = resource.full_description_html || '';
   document.getElementById('maxUnits').value = Number(resource.max_units) > 0 ? Number(resource.max_units) : 1;
   renderPropertyOptions(Number(resource.property_id) || null);
@@ -546,6 +547,7 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
 
   const button = e.target.querySelector('button[type="submit"]');
   const shortDescription = document.getElementById('shortDescription').value.trim();
+  const resourceType = document.getElementById('resourceType').value === 'parking' ? 'parking' : 'undefined';
   const maxUnits = Number(document.getElementById('maxUnits').value);
   const fullDescriptionHtml = getEditorHtml();
   const propertyId = document.getElementById('sharedResourcePropertyId').value || null;
@@ -577,6 +579,7 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         shortDescription,
+        resourceType,
         fullDescriptionHtml,
         maxUnits,
         propertyId,
