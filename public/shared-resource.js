@@ -406,6 +406,10 @@ async function loadSharedResource() {
   document.getElementById('resourceType').value = resource.resource_type === 'parking' ? 'parking' : 'undefined';
   document.getElementById('fullDescriptionEditor').innerHTML = resource.full_description_html || '';
   document.getElementById('maxUnits').value = Number(resource.max_units) > 0 ? Number(resource.max_units) : 1;
+  const maxDaysAdvanceBooking = Number(resource.max_days_advance_booking);
+  document.getElementById('maxDaysAdvanceBooking').value = Number.isInteger(maxDaysAdvanceBooking) && maxDaysAdvanceBooking >= 1 && maxDaysAdvanceBooking <= 365
+    ? maxDaysAdvanceBooking
+    : 365;
   renderPropertyOptions(Number(resource.property_id) || null);
   renderListingOptions(Number(resource.listing_id) || null);
   document.getElementById('paymentFreeOfCharge').checked = resource.free_of_charge === true;
@@ -549,6 +553,7 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
   const shortDescription = document.getElementById('shortDescription').value.trim();
   const resourceType = document.getElementById('resourceType').value === 'parking' ? 'parking' : 'undefined';
   const maxUnits = Number(document.getElementById('maxUnits').value);
+  const maxDaysAdvanceBooking = Number(document.getElementById('maxDaysAdvanceBooking').value);
   const fullDescriptionHtml = getEditorHtml();
   const propertyId = document.getElementById('sharedResourcePropertyId').value || null;
   const listingId = document.getElementById('sharedResourceListingId').value || null;
@@ -567,6 +572,10 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
     setSharedResourceMessage('Maximum units must be a whole number greater than zero.', true);
     return;
   }
+  if (!Number.isInteger(maxDaysAdvanceBooking) || maxDaysAdvanceBooking < 1 || maxDaysAdvanceBooking > 365) {
+    setSharedResourceMessage('Max days advance booking must be a whole number from 1 to 365.', true);
+    return;
+  }
   if (validatedChargeConfig.error) {
     setSharedResourceMessage(validatedChargeConfig.error, true);
     return;
@@ -582,6 +591,7 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
         resourceType,
         fullDescriptionHtml,
         maxUnits,
+        maxDaysAdvanceBooking,
         propertyId,
         listingId,
         freeOfCharge,

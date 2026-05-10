@@ -63,8 +63,9 @@ function configureSpacesRequiredInput(maxValue) {
     input.value = '1';
   }
 
-  input.addEventListener('input', () => {
-    if (input.value === '') {
+  const normalise = () => {
+    if (input.value.trim() === '') {
+      input.value = '1';
       return;
     }
     const numeric = Number(input.value);
@@ -73,10 +74,11 @@ function configureSpacesRequiredInput(maxValue) {
       return;
     }
     const clamped = Math.min(maxValue, Math.max(1, Math.floor(numeric)));
-    if (clamped !== numeric) {
-      input.value = String(clamped);
-    }
-  });
+    input.value = String(clamped);
+  };
+
+  input.onblur = normalise;
+  input.onchange = normalise;
 
   if (hint) {
     hint.textContent = 'Allowed range: 1 to ' + maxValue + ' spaces.';

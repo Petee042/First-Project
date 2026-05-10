@@ -172,6 +172,7 @@ function readListingsStore() {
     resource.property_id = normaliseOptionalPositiveInteger(resource.property_id);
     resource.listing_id = normaliseOptionalPositiveInteger(resource.listing_id);
     resource.resource_type = normaliseSharedResourceType(resource.resource_type || resource.resourceType);
+    resource.max_days_advance_booking = normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365;
     const chargeConfig = normaliseSharedResourceChargeConfig(resource);
     resource.charge_basis = chargeConfig.charge_basis;
     resource.daily_charge_mode = chargeConfig.daily_charge_mode;
@@ -395,6 +396,7 @@ async function initializeUserStore() {
       short_description TEXT NOT NULL,
       full_description_html TEXT NOT NULL DEFAULT '',
       max_units INTEGER NOT NULL DEFAULT 1,
+      max_days_advance_booking INTEGER NOT NULL DEFAULT 365,
       property_id BIGINT REFERENCES properties(id) ON DELETE SET NULL,
       listing_id BIGINT REFERENCES listings(id) ON DELETE SET NULL,
       resource_type TEXT NOT NULL DEFAULT 'undefined',
@@ -421,6 +423,11 @@ async function initializeUserStore() {
   await pool.query(`
     ALTER TABLE shared_resources
     ADD COLUMN IF NOT EXISTS listing_id BIGINT REFERENCES listings(id) ON DELETE SET NULL
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS max_days_advance_booking INTEGER NOT NULL DEFAULT 365
   `);
 
   await pool.query(`
@@ -597,6 +604,14 @@ function normaliseSharedResourceShortDescription(value) {
 function normaliseSharedResourceMaxUnits(value) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function normaliseSharedResourceMaxAdvanceBookingDays(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 365) {
     return null;
   }
   return parsed;
@@ -1351,6 +1366,7 @@ async function getSharedResourcesForUser(userId) {
       .filter((resource) => Number(resource.user_id) === Number(userId))
       .map((resource) => ({
         ...resource,
+        max_days_advance_booking: normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365,
         property_id: normaliseOptionalPositiveInteger(resource.property_id),
         listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
         resource_type: normaliseSharedResourceType(resource.resource_type || resource.resourceType),
@@ -1363,7 +1379,7 @@ async function getSharedResourcesForUser(userId) {
 
   const result = await pool.query(
     `
-            SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id, resource_type,
+            SELECT id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
               charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
@@ -1375,6 +1391,7 @@ async function getSharedResourcesForUser(userId) {
   );
   return result.rows.map((row) => ({
     ...row,
+    max_days_advance_booking: normaliseSharedResourceMaxAdvanceBookingDays(row.max_days_advance_booking) || 365,
     resource_type: normaliseSharedResourceType(row.resource_type),
     ...normaliseSharedResourcePaymentOptions(row),
     ...normaliseSharedResourceChargeConfig(row),
@@ -1393,6 +1410,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
     }
     return {
       ...resource,
+      max_days_advance_booking: normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365,
       property_id: normaliseOptionalPositiveInteger(resource.property_id),
       listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
       resource_type: normaliseSharedResourceType(resource.resource_type || resource.resourceType),
@@ -1404,7 +1422,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
 
   const result = await pool.query(
     `
-            SELECT id, user_id, short_description, full_description_html, max_units, property_id, listing_id, resource_type,
+            SELECT id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
               charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
@@ -1419,6 +1437,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
   }
   return {
     ...result.rows[0],
+    max_days_advance_booking: normaliseSharedResourceMaxAdvanceBookingDays(result.rows[0].max_days_advance_booking) || 365,
     resource_type: normaliseSharedResourceType(result.rows[0].resource_type),
     ...normaliseSharedResourcePaymentOptions(result.rows[0]),
     ...normaliseSharedResourceChargeConfig(result.rows[0]),
@@ -1440,6 +1459,7 @@ async function getSharedResourceByIdPublic(resourceId) {
       short_description: String(resource.short_description || ''),
       full_description_html: String(resource.full_description_html || ''),
       max_units: Number(resource.max_units || 0) || null,
+      max_days_advance_booking: normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365,
       resource_type: normaliseSharedResourceType(resource.resource_type || resource.resourceType),
       property_id: normaliseOptionalPositiveInteger(resource.property_id),
       listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
@@ -1448,7 +1468,7 @@ async function getSharedResourceByIdPublic(resourceId) {
 
   const result = await pool.query(
     `
-      SELECT id, short_description, full_description_html, max_units, resource_type, property_id, listing_id
+      SELECT id, short_description, full_description_html, max_units, max_days_advance_booking, resource_type, property_id, listing_id
       FROM shared_resources
       WHERE id = $1
       LIMIT 1
@@ -1460,6 +1480,7 @@ async function getSharedResourceByIdPublic(resourceId) {
 
 async function createSharedResourceForUser(userId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
+  const maxDaysAdvanceBooking = normaliseSharedResourceMaxAdvanceBookingDays(input.maxDaysAdvanceBooking) || 365;
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
   const resourceType = normaliseSharedResourceType(input.resourceType);
@@ -1517,6 +1538,7 @@ async function createSharedResourceForUser(userId, input) {
       short_description: shortDescription,
       full_description_html: '',
       max_units: 1,
+      max_days_advance_booking: maxDaysAdvanceBooking,
       property_id: propertyId,
       listing_id: listingId,
       resource_type: resourceType,
@@ -1545,6 +1567,7 @@ async function createSharedResourceForUser(userId, input) {
         short_description,
         full_description_html,
         max_units,
+        max_days_advance_booking,
         property_id,
         listing_id,
         resource_type,
@@ -1559,8 +1582,8 @@ async function createSharedResourceForUser(userId, input) {
         hourly_rate,
         hourly_rates_json
       )
-      VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-      RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id, resource_type,
+      VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+      RETURNING id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
                 free_of_charge, cash_on_site, bank_transfer, online_payment,
                 charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
                 created_at, updated_at
@@ -1568,6 +1591,7 @@ async function createSharedResourceForUser(userId, input) {
     [
       userId,
       shortDescription,
+      maxDaysAdvanceBooking,
       propertyId,
       listingId,
       resourceType,
@@ -1590,6 +1614,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
   const fullDescriptionHtml = sanitiseRichTextHtml(input.fullDescriptionHtml);
   const maxUnits = normaliseSharedResourceMaxUnits(input.maxUnits);
+  const maxDaysAdvanceBooking = normaliseSharedResourceMaxAdvanceBookingDays(input.maxDaysAdvanceBooking);
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
   const resourceType = normaliseSharedResourceType(input.resourceType);
@@ -1601,6 +1626,9 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
   }
   if (!maxUnits) {
     return { error: 'Maximum units must be a whole number greater than zero.' };
+  }
+  if (!maxDaysAdvanceBooking) {
+    return { error: 'Max days advance booking must be a whole number from 1 to 365.' };
   }
   if (chargeConfig.error) {
     return { error: chargeConfig.error };
@@ -1636,6 +1664,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
     store.shared_resources[idx].short_description = shortDescription;
     store.shared_resources[idx].full_description_html = fullDescriptionHtml;
     store.shared_resources[idx].max_units = maxUnits;
+    store.shared_resources[idx].max_days_advance_booking = maxDaysAdvanceBooking;
     store.shared_resources[idx].property_id = propertyId;
     store.shared_resources[idx].listing_id = listingId;
     store.shared_resources[idx].resource_type = resourceType;
@@ -1660,22 +1689,23 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
       SET short_description = $1,
           full_description_html = $2,
           max_units = $3,
-          property_id = $4,
-          listing_id = $5,
-            resource_type = $6,
-            free_of_charge = $7,
-            cash_on_site = $8,
-            bank_transfer = $9,
-            online_payment = $10,
-            charge_basis = $11,
-            daily_charge_mode = $12,
-            daily_rate = $13,
-            hourly_charge_mode = $14,
-            hourly_rate = $15,
-            hourly_rates_json = $16,
+          max_days_advance_booking = $4,
+          property_id = $5,
+          listing_id = $6,
+            resource_type = $7,
+            free_of_charge = $8,
+            cash_on_site = $9,
+            bank_transfer = $10,
+            online_payment = $11,
+            charge_basis = $12,
+            daily_charge_mode = $13,
+            daily_rate = $14,
+            hourly_charge_mode = $15,
+            hourly_rate = $16,
+            hourly_rates_json = $17,
           updated_at = CURRENT_TIMESTAMP
-          WHERE id = $17 AND user_id = $18
-          RETURNING id, user_id, short_description, full_description_html, max_units, property_id, listing_id, resource_type,
+          WHERE id = $18 AND user_id = $19
+          RETURNING id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
               charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
@@ -1684,6 +1714,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
       shortDescription,
       fullDescriptionHtml,
       maxUnits,
+      maxDaysAdvanceBooking,
       propertyId,
       listingId,
       resourceType,
@@ -3871,6 +3902,7 @@ app.post('/api/shared-resources', requireAuth, async (req, res) => {
   try {
     const { resource, error } = await createSharedResourceForUser(req.session.userId, {
       shortDescription: req.body.shortDescription,
+      maxDaysAdvanceBooking: req.body.maxDaysAdvanceBooking,
       propertyId: req.body.propertyId,
       listingId: req.body.listingId,
       resourceType: req.body.resourceType,
@@ -3945,6 +3977,7 @@ app.put('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
       shortDescription: req.body.shortDescription,
       fullDescriptionHtml: req.body.fullDescriptionHtml,
       maxUnits: req.body.maxUnits,
+      maxDaysAdvanceBooking: req.body.maxDaysAdvanceBooking,
       propertyId: req.body.propertyId,
       listingId: req.body.listingId,
       resourceType: req.body.resourceType,
