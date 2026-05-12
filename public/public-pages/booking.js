@@ -151,6 +151,13 @@ function toMoney(value) {
   return Math.round(value * 100) / 100;
 }
 
+function getInclusiveCalendarDayCount(start, end) {
+  const startUtc = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
+  const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  const spanDays = Math.floor((endUtc - startUtc) / 86400000);
+  return spanDays + 1;
+}
+
 function readHourlyRates(resource) {
   const source = resource ? resource.hourly_rates_json : null;
   let parsed = [];
@@ -195,21 +202,18 @@ function calculateReservationRate(resource, start, end) {
       return null;
     }
 
+    // Updated business rule: any part day at start/end is billed as a full day.
+    const inclusiveDays = getInclusiveCalendarDayCount(start, end);
+    if (inclusiveDays <= 0) {
+      return null;
+    }
+
     if (resource.daily_charge_mode === 'per_calendar_day') {
-      const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-      const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-      const dayCount = Math.floor((endDay.getTime() - startDay.getTime()) / 86400000) + 1;
-      if (dayCount <= 0) {
-        return null;
-      }
-      return toMoney(dayCount * dailyRate);
+      return toMoney(inclusiveDays * dailyRate);
     }
 
     if (resource.daily_charge_mode === 'per_24_hours') {
-      const fullBlocks = Math.floor(totalMinutes / 1440);
-      const hasRemainder = totalMinutes % 1440 > 0;
-      const chargedDays = fullBlocks + (hasRemainder ? 1 : 0);
-      return toMoney(chargedDays * dailyRate);
+      return toMoney(inclusiveDays * dailyRate);
     }
 
     return null;
