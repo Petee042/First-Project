@@ -1735,6 +1735,65 @@ function findCapacityConflictPeriod(existingReservations, requestedStartAt, requ
   };
 }
 
+function findAvailablePeriods(existingReservations, requestedStartAt, requestedEndAt, requestedSpaces, maxUnits) {
+  const requestStartMs = new Date(requestedStartAt).getTime();
+  const requestEndMs = new Date(requestedEndAt).getTime();
+  if (!Number.isFinite(requestStartMs) || !Number.isFinite(requestEndMs) || requestEndMs <= requestStartMs) {
+    return [];
+  }
+
+  const intervals = existingReservations
+    .map((row) => ({
+      startMs: new Date(row.requested_start_at).getTime(),
+      endMs: new Date(row.requested_end_at).getTime(),
+      spaces: normaliseSharedResourceMaxUnits(row.spaces_required) || 1
+    }))
+    .filter((row) => Number.isFinite(row.startMs) && Number.isFinite(row.endMs) && row.endMs > row.startMs)
+    .filter((row) => row.startMs < requestEndMs && row.endMs > requestStartMs);
+
+  const boundaries = new Set([requestStartMs, requestEndMs]);
+  intervals.forEach((row) => {
+    boundaries.add(Math.max(requestStartMs, row.startMs));
+    boundaries.add(Math.min(requestEndMs, row.endMs));
+  });
+
+  const points = Array.from(boundaries).sort((a, b) => a - b);
+  const available = [];
+  let availStart = null;
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const segStart = points[index];
+    const segEnd = points[index + 1];
+    if (segEnd <= segStart) {
+      continue;
+    }
+
+    let usedSpaces = requestedSpaces;
+    intervals.forEach((row) => {
+      if (row.startMs < segEnd && row.endMs > segStart) {
+        usedSpaces += row.spaces;
+      }
+    });
+
+    if (usedSpaces <= maxUnits) {
+      if (availStart === null) {
+        availStart = segStart;
+      }
+    } else {
+      if (availStart !== null) {
+        available.push({ start: new Date(availStart).toISOString(), end: new Date(segStart).toISOString() });
+        availStart = null;
+      }
+    }
+  }
+
+  if (availStart !== null) {
+    available.push({ start: new Date(availStart).toISOString(), end: new Date(requestEndMs).toISOString() });
+  }
+
+  return available;
+}
+
 async function createSharedResourceReservation(input) {
   const status = normaliseSharedResourceReservationStatus(input.status) || 'Confirmed';
 
@@ -4467,13 +4526,25 @@ app.post('/api/public/shared-resources/:resourceId/check-availability', async (r
     );
 
     if (conflict) {
-      return res.status(409).json({
-        error: 'Overlapping reservation capacity from '
-          + formatDateTimeForMessage(conflict.start)
-          + ' to '
-          + formatDateTimeForMessage(conflict.end)
-          + '.'
-      });
+      const availablePeriods = findAvailablePeriods(
+        existingReservations,
+        requestedStart.toISOString(),
+        requestedEnd.toISOString(),
+        requestedSpaces,
+        maxUnits
+      );
+
+      let errorMessage;
+      if (availablePeriods.length === 0) {
+        errorMessage = 'No availability within your requested window.';
+      } else {
+        const periodList = availablePeriods
+          .map((p) => formatDateTimeForMessage(p.start) + ' to ' + formatDateTimeForMessage(p.end))
+          .join(', ');
+        errorMessage = 'Not fully available for your requested dates. Available periods within your window: ' + periodList + '.';
+      }
+
+      return res.status(409).json({ error: errorMessage });
     }
 
     return res.json({
