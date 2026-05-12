@@ -27,16 +27,24 @@ function getResourceIdFromUrl() {
   return null;
 }
 
+function isEnabledValue(value) {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function hasPaymentMessage(resource, messageKey) {
+  return String(resource && resource[messageKey] ? resource[messageKey] : '').trim().length > 0;
+}
+
 function getEnabledPaymentOptions(resource) {
   if (!resource) {
     return [];
   }
 
   const options = [
-    { key: 'free_of_charge', label: 'Free Of Charge', enabled: resource.free_of_charge === true },
-    { key: 'cash_on_site', label: 'Cash On Site', enabled: resource.cash_on_site === true },
-    { key: 'bank_transfer', label: 'Bank Transfer', enabled: resource.bank_transfer === true },
-    { key: 'online_payment', label: 'Online Payment', enabled: resource.online_payment === true }
+    { key: 'free_of_charge', label: 'Free Of Charge', enabled: isEnabledValue(resource.free_of_charge) || hasPaymentMessage(resource, 'free_of_charge_message_html') },
+    { key: 'cash_on_site', label: 'Cash On Site', enabled: isEnabledValue(resource.cash_on_site) || hasPaymentMessage(resource, 'cash_on_site_message_html') },
+    { key: 'bank_transfer', label: 'Bank Transfer', enabled: isEnabledValue(resource.bank_transfer) || hasPaymentMessage(resource, 'bank_transfer_message_html') },
+    { key: 'online_payment', label: 'Online Payment', enabled: isEnabledValue(resource.online_payment) || hasPaymentMessage(resource, 'online_payment_message_html') }
   ];
 
   return options.filter((option) => option.enabled);
