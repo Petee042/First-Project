@@ -157,6 +157,20 @@ function toMoney(value) {
   return Math.round(value * 100) / 100;
 }
 
+function parseConfiguredRate(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'string' && value.trim() === '') {
+    return null;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+  return numeric;
+}
+
 function getChargeConfigValue(resource, snakeKey, camelKey) {
   if (!resource) {
     return null;
@@ -218,16 +232,11 @@ function calculateReservationRate(resource, start, end) {
   }
 
   const hourlyChargeMode = String(getChargeConfigValue(resource, 'hourly_charge_mode', 'hourlyChargeMode') || '');
-  const hourlyRate = Number(getChargeConfigValue(resource, 'hourly_rate', 'hourlyRate'));
-  const hasSingleHourlyRate = Number.isFinite(hourlyRate) && hourlyRate >= 0;
-  const hasPositiveSingleHourlyRate = Number.isFinite(hourlyRate) && hourlyRate > 0;
-  const hasPerHourMode = hourlyChargeMode === 'per_hour_of_day';
-  const hasHourlyConfig = hasSingleHourlyRate || hasPerHourMode;
+  const hourlyRate = parseConfiguredRate(getChargeConfigValue(resource, 'hourly_rate', 'hourlyRate'));
+  const hasSingleHourlyRate = hourlyRate !== null;
+  const hasPositiveSingleHourlyRate = hourlyRate !== null && hourlyRate > 0;
 
-  const storedChargeBasis = String(getChargeConfigValue(resource, 'charge_basis', 'chargeBasis') || '');
-  const chargeBasis = storedChargeBasis === 'daily'
-    ? (hasHourlyConfig ? 'hourly' : 'daily')
-    : storedChargeBasis;
+  const chargeBasis = String(getChargeConfigValue(resource, 'charge_basis', 'chargeBasis') || '');
 
   const totalMinutes = Math.ceil((end.getTime() - start.getTime()) / 60000);
   if (totalMinutes <= 0) {
@@ -235,8 +244,8 @@ function calculateReservationRate(resource, start, end) {
   }
 
   if (chargeBasis === 'daily') {
-    const dailyRate = Number(getChargeConfigValue(resource, 'daily_rate', 'dailyRate'));
-    if (!Number.isFinite(dailyRate) || dailyRate < 0) {
+    const dailyRate = parseConfiguredRate(getChargeConfigValue(resource, 'daily_rate', 'dailyRate'));
+    if (dailyRate === null) {
       return null;
     }
 
