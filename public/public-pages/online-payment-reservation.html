@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Online Payment Reservation</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="dashboard">
+    <div class="card-container wide public-booking-card">
+      <h2 id="reservationTitle">Online Payment Reservation</h2>
+      <p id="reservationMessage" class="message"></p>
+
+      <section class="listing-form-section">
+        <h3>Payment Information</h3>
+        <div id="paymentMethodMessage" class="public-reservation-payment-message"></div>
+      </section>
+
+      <section class="listing-form-section">
+        <h3>Reservation Details</h3>
+        <p id="reservationDetails" class="public-booking-placeholder">Loading reservation details...</p>
+      </section>
+
+      <div class="feed-actions">
+        <button type="button" id="backToPaymentBtn" class="btn secondary">Back to Payment Selection</button>
+        <button type="button" id="submitReservationBtn" class="btn primary">Submit Reservation</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="online-payment-reservation.js"></script>
+</body>
+</html>

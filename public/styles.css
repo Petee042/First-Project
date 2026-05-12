@@ -1393,6 +1393,52 @@ textarea:focus {
 }
 
 .public-resource-reservations-wrap {
+
+  .public-booking-payment-selection-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e8ecf5;
+  }
+
+  .public-booking-payment-selection-row label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #444;
+  }
+
+  .public-booking-payment-selection-wrap {
+    display: flex;
+    gap: 0.6rem;
+    align-items: stretch;
+  }
+
+  .public-booking-payment-select {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .public-booking-payment-selection-wrap .btn {
+    width: auto;
+    margin-top: 0;
+    padding: 0.65rem 1.4rem;
+  }
+
+  .public-reservation-payment-message {
+    margin-bottom: 1rem;
+    border: 1px solid #dbe1ef;
+    border-radius: 8px;
+    background: #f8faff;
+    padding: 0.9rem 1rem;
+    line-height: 1.6;
+    color: #2b3550;
+  }
+
+  .public-reservation-payment-message:empty {
+    display: none;
+  }
   margin-top: 1rem;
 }
 

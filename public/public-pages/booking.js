@@ -75,6 +75,97 @@ function renderBookingPaymentOptions(resource) {
   renderBookingPaymentMessage(activeBookingPaymentKey);
 }
 
+function populatePaymentSelectionDropdown(resource) {
+  const select = document.getElementById('bookingPaymentSelect');
+  if (!select) {
+    return;
+  }
+
+  const options = getEnabledPaymentOptions(resource);
+  select.innerHTML = '<option value="">Select a payment option</option>';
+
+  options.forEach((option) => {
+    const optionEl = document.createElement('option');
+    optionEl.value = option.key;
+    optionEl.textContent = option.label;
+    select.appendChild(optionEl);
+  });
+
+  if (options.length > 0) {
+    select.value = options[0].key;
+  }
+}
+
+function getReservationPageUrl(paymentKey) {
+  const resourceId = getResourceIdFromUrl();
+  const pageMap = {
+    free_of_charge: 'free-of-charge-reservation.html',
+    cash_on_site: 'cash-on-site-reservation.html',
+    bank_transfer: 'bank-transfer-reservation.html',
+    online_payment: 'online-payment-reservation.html'
+  };
+  const pageName = pageMap[paymentKey] || 'free-of-charge-reservation.html';
+  return pageName + '?resourceId=' + encodeURIComponent(resourceId) + '&paymentOption=' + encodeURIComponent(paymentKey);
+}
+
+function renderBookingPaymentOptions(resource) {
+  const container = document.getElementById('bookingPaymentOptions');
+  if (!container) {
+    return;
+  }
+
+  const options = getEnabledPaymentOptions(resource);
+  if (!options.length) {
+    container.innerHTML = '<p class="public-booking-placeholder">No payment options are currently available for this resource.</p>';
+    activeBookingPaymentKey = null;
+    renderBookingPaymentMessage(null);
+    return;
+  }
+
+  if (!options.some((option) => option.key === activeBookingPaymentKey)) {
+    activeBookingPaymentKey = options[0].key;
+  }
+
+  container.innerHTML = options.map((option) => {
+    const checked = option.key === activeBookingPaymentKey ? ' checked' : '';
+    return '<label class="public-booking-payment-option">'
+      + '<input type="radio" name="bookingPaymentOption" value="' + option.key + '"' + checked + ' />'
+      + '<span>' + option.label + '</span>'
+      + '</label>';
+  }).join('');
+
+  Array.from(container.querySelectorAll('input[name="bookingPaymentOption"]')).forEach((input) => {
+    input.addEventListener('change', () => {
+      activeBookingPaymentKey = input.value;
+      renderBookingPaymentMessage(activeBookingPaymentKey);
+    });
+  });
+
+  renderBookingPaymentMessage(activeBookingPaymentKey);
+}
+
+function showBookingPaymentSelectionStep() {
+  const requestSection = document.getElementById('bookingRequestSection');
+  const selectionRow = document.getElementById('bookingPaymentSelectionRow');
+  if (!requestSection || !selectionRow) {
+    return;
+  }
+
+  requestSection.classList.add('hidden');
+  selectionRow.classList.remove('hidden');
+}
+
+function showBookingRequestStep() {
+  const requestSection = document.getElementById('bookingRequestSection');
+  const selectionRow = document.getElementById('bookingPaymentSelectionRow');
+  if (!requestSection || !selectionRow) {
+    return;
+  }
+
+  selectionRow.classList.add('hidden');
+  requestSection.classList.remove('hidden');
+}
+
 function showBookingPaymentStep() {
   const requestSection = document.getElementById('bookingRequestSection');
   const paymentSection = document.getElementById('bookingPaymentSection');
@@ -87,15 +178,6 @@ function showBookingPaymentStep() {
 }
 
 function showBookingRequestStep() {
-  const requestSection = document.getElementById('bookingRequestSection');
-  const paymentSection = document.getElementById('bookingPaymentSection');
-  if (!requestSection || !paymentSection) {
-    return;
-  }
-
-  paymentSection.classList.add('hidden');
-  requestSection.classList.remove('hidden');
-}
 
 function getResourceIdFromUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -151,6 +233,19 @@ function initialiseBookingRequestForm() {
   if (backBtn) {
     backBtn.addEventListener('click', () => {
       showBookingRequestStep();
+    });
+  }
+
+  const reserveBtn = document.getElementById('reserveBtn');
+  if (reserveBtn) {
+    reserveBtn.addEventListener('click', () => {
+      const select = document.getElementById('bookingPaymentSelect');
+      if (!select || !select.value) {
+        setBookingMessage('Please select a payment option.', true);
+        return;
+      }
+      const url = getReservationPageUrl(select.value);
+      window.location.href = url;
     });
   }
 }
@@ -251,8 +346,8 @@ function setupCheckAvailability(resourceId) {
       }
 
       setBookingMessage(data.message || 'Availability Confirmed', false);
-      renderBookingPaymentOptions(currentResource);
-      showBookingPaymentStep();
+      populatePaymentSelectionDropdown(currentResource);
+      showBookingPaymentSelectionStep();
     } catch {
       setBookingMessage('Network error checking availability.', true);
     } finally {
