@@ -289,27 +289,15 @@ function updateReservationRateDisplay() {
     return;
   }
 
-  // Use requested start/end as the primary reservation window for pricing.
-  // Fall back to checkin/checkout only if requested values are incomplete.
-  let start = parseLocalDateTime(
+  // Pricing must always follow the explicit reservation window.
+  const start = parseLocalDateTime(
     document.getElementById('requestedBookingStartDate').value,
     document.getElementById('requestedBookingStartTime').value
   );
-  let end = parseLocalDateTime(
+  const end = parseLocalDateTime(
     document.getElementById('requestedBookingEndDate').value,
     document.getElementById('requestedBookingEndTime').value
   );
-
-  if (!start || !end) {
-    start = parseLocalDateTime(
-      document.getElementById('guestCheckinDate').value,
-      document.getElementById('guestCheckinTime').value
-    );
-    end = parseLocalDateTime(
-      document.getElementById('guestCheckoutDate').value,
-      document.getElementById('guestCheckoutTime').value
-    );
-  }
 
   const total = calculateReservationRate(currentResource, start, end);
   if (total === null) {
