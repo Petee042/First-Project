@@ -1374,6 +1374,18 @@ textarea:focus {
   color: #2f3d5a;
 }
 
+.public-booking-rate-debug {
+  margin-top: 0.45rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px dashed #b8c5e3;
+  border-radius: 6px;
+  background: #f7f9ff;
+  color: #35426a;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+
 .public-booking-actions {
   margin-top: 1rem;
 }

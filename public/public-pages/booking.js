@@ -170,6 +170,14 @@ function getChargeConfigValue(resource, snakeKey, camelKey) {
   return null;
 }
 
+function setBookingRateDebug(debugText) {
+  const debugEl = document.getElementById('bookingRateDebug');
+  if (!debugEl) {
+    return;
+  }
+  debugEl.textContent = debugText || '';
+}
+
 function getInclusiveCalendarDayCount(start, end) {
   const startUtc = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
   const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
@@ -320,13 +328,58 @@ function updateReservationRateDisplay() {
     document.getElementById('requestedBookingEndTime').value
   );
 
+  const storedChargeBasis = String(getChargeConfigValue(currentResource, 'charge_basis', 'chargeBasis') || '');
+  const storedHourlyMode = String(getChargeConfigValue(currentResource, 'hourly_charge_mode', 'hourlyChargeMode') || '');
+  const storedDailyMode = String(getChargeConfigValue(currentResource, 'daily_charge_mode', 'dailyChargeMode') || '');
+  const storedDailyRate = getChargeConfigValue(currentResource, 'daily_rate', 'dailyRate');
+  const storedHourlyRate = getChargeConfigValue(currentResource, 'hourly_rate', 'hourlyRate');
+  const hourlyRates = readHourlyRates(currentResource);
+  const totalMinutes = start && end ? Math.ceil((end.getTime() - start.getTime()) / 60000) : null;
+  const totalHoursRoundedUp = Number.isFinite(totalMinutes) && totalMinutes > 0
+    ? Math.floor(totalMinutes / 60) + (totalMinutes % 60 > 0 ? 1 : 0)
+    : null;
+
   const total = calculateReservationRate(currentResource, start, end);
   if (total === null) {
     line.textContent = 'The rate for the reservation will be: --';
+    setBookingRateDebug(
+      [
+        'DEBUG booking rate',
+        'requestedStart=' + (start ? start.toISOString() : 'invalid'),
+        'requestedEnd=' + (end ? end.toISOString() : 'invalid'),
+        'totalMinutes=' + (totalMinutes === null ? 'n/a' : String(totalMinutes)),
+        'totalHoursRoundedUp=' + (totalHoursRoundedUp === null ? 'n/a' : String(totalHoursRoundedUp)),
+        'charge_basis=' + (storedChargeBasis || '(empty)'),
+        'daily_charge_mode=' + (storedDailyMode || '(empty)'),
+        'daily_rate=' + (storedDailyRate === null || storedDailyRate === undefined ? '(null)' : String(storedDailyRate)),
+        'hourly_charge_mode=' + (storedHourlyMode || '(empty)'),
+        'hourly_rate=' + (storedHourlyRate === null || storedHourlyRate === undefined ? '(null)' : String(storedHourlyRate)),
+        'hourly_rates_count=' + (hourlyRates ? String(hourlyRates.length) : 'invalid'),
+        'hourly_rates_positive_count=' + (hourlyRates ? String(hourlyRates.filter((rate) => rate > 0).length) : 'invalid'),
+        'calculated_total=--'
+      ].join('\n')
+    );
     return;
   }
 
   line.textContent = 'The rate for the reservation will be: ' + total.toFixed(2);
+  setBookingRateDebug(
+    [
+      'DEBUG booking rate',
+      'requestedStart=' + (start ? start.toISOString() : 'invalid'),
+      'requestedEnd=' + (end ? end.toISOString() : 'invalid'),
+      'totalMinutes=' + (totalMinutes === null ? 'n/a' : String(totalMinutes)),
+      'totalHoursRoundedUp=' + (totalHoursRoundedUp === null ? 'n/a' : String(totalHoursRoundedUp)),
+      'charge_basis=' + (storedChargeBasis || '(empty)'),
+      'daily_charge_mode=' + (storedDailyMode || '(empty)'),
+      'daily_rate=' + (storedDailyRate === null || storedDailyRate === undefined ? '(null)' : String(storedDailyRate)),
+      'hourly_charge_mode=' + (storedHourlyMode || '(empty)'),
+      'hourly_rate=' + (storedHourlyRate === null || storedHourlyRate === undefined ? '(null)' : String(storedHourlyRate)),
+      'hourly_rates_count=' + (hourlyRates ? String(hourlyRates.length) : 'invalid'),
+      'hourly_rates_positive_count=' + (hourlyRates ? String(hourlyRates.filter((rate) => rate > 0).length) : 'invalid'),
+      'calculated_total=' + total.toFixed(2)
+    ].join('\n')
+  );
 }
 
 function getCheckAvailabilityPayload(resource) {
