@@ -4410,7 +4410,7 @@ app.get('/api/public/shared-resources/:resourceId/reservations', async (req, res
   }
 });
 
-// POST /api/public/shared-resources/:resourceId/check-availability — validate and create reservation
+// POST /api/public/shared-resources/:resourceId/check-availability — validate only (no reservation created)
 app.post('/api/public/shared-resources/:resourceId/check-availability', async (req, res) => {
   const resourceId = Number(req.params.resourceId);
   if (!Number.isInteger(resourceId) || resourceId <= 0) {
@@ -4476,24 +4476,8 @@ app.post('/api/public/shared-resources/:resourceId/check-availability', async (r
       });
     }
 
-    const reservation = await createSharedResourceReservation({
-      userId: resource.user_id,
-      sharedResourceId: resourceId,
-      reservationIdentifier: 'SR-' + resourceId + '-' + Date.now(),
-      listingId: matchingListingId,
-      reservationCheckinDate: checkinDate,
-      reservationCheckoutDate: checkoutDate,
-      requestedStartAt: requestedStart.toISOString(),
-      requestedEndAt: requestedEnd.toISOString(),
-      spacesRequired: requestedSpaces,
-      status: getDefaultSharedResourceReservationStatus(resource)
-    });
-
-    const reservations = await getSharedResourceReservationsByResourceId(resourceId);
     return res.json({
-      message: 'Availability Confirmed',
-      reservation,
-      reservations
+      message: 'Availability Confirmed'
     });
   } catch (err) {
     console.error(err);

@@ -197,7 +197,6 @@ function setupCheckAvailability(resourceId) {
       }
 
       setBookingMessage(data.message || 'Availability Confirmed', false);
-      renderSharedReservationsTable(currentResource, data.reservations || []);
     } catch {
       setBookingMessage('Network error checking availability.', true);
     } finally {
