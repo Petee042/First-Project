@@ -534,7 +534,7 @@ async function loadPublicResource() {
     return;
   }
 
-  const res = await fetch('/api/public/shared-resources/' + resourceId);
+  const res = await fetch('/api/public/shared-resources/' + resourceId, { cache: 'no-store' });
   const data = await res.json();
 
   if (!res.ok) {

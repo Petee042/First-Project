@@ -726,9 +726,17 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
   const bankTransfer = document.getElementById('paymentBankTransfer').checked;
   const onlinePayment = document.getElementById('paymentOnlinePayment').checked;
   persistActivePaymentMessage();
-  const chargeDialog = getChargeDialog();
-  const latestChargeDraft = chargeDialog && chargeDialog.open
-    ? readChargeDialogState()
+  const rawDialogDraft = readChargeDialogState();
+  const hasDialogChargeValues = Boolean(
+    rawDialogDraft.chargeBasis
+    || rawDialogDraft.dailyChargeMode
+    || rawDialogDraft.hourlyChargeMode
+    || rawDialogDraft.dailyRate
+    || rawDialogDraft.hourlyRate
+    || (Array.isArray(rawDialogDraft.hourlyRates) && rawDialogDraft.hourlyRates.some((value) => String(value || '').trim() !== ''))
+  );
+  const latestChargeDraft = hasDialogChargeValues
+    ? rawDialogDraft
     : {
         chargeBasis: currentChargeConfig.chargeBasis,
         dailyChargeMode: currentChargeConfig.dailyChargeMode,
