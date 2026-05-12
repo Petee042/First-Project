@@ -23,14 +23,20 @@
           <label for="editStartDate">Reservation start date</label>
           <input id="editStartDate" type="date" required />
 
-          <label for="editStartTime">Reservation start time</label>
-          <input id="editStartTime" type="time" required />
+          <label for="editStartHour">Start time (HH:MM)</label>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem;">
+            <input id="editStartHour" type="number" min="0" max="23" placeholder="HH" inputmode="numeric" required />
+            <input id="editStartMinute" type="number" min="0" max="59" placeholder="MM" inputmode="numeric" required />
+          </div>
 
           <label for="editEndDate">Reservation end date</label>
           <input id="editEndDate" type="date" required />
 
-          <label for="editEndTime">Reservation end time</label>
-          <input id="editEndTime" type="time" required />
+          <label for="editEndHour">End time (HH:MM)</label>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem;">
+            <input id="editEndHour" type="number" min="0" max="23" placeholder="HH" inputmode="numeric" required />
+            <input id="editEndMinute" type="number" min="0" max="59" placeholder="MM" inputmode="numeric" required />
+          </div>
 
           <label for="editFirstName">First name</label>
           <input id="editFirstName" type="text" maxlength="100" required />

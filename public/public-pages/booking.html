@@ -36,7 +36,10 @@
                     <input id="guestCheckinDate" type="date" />
                   </td>
                   <td>
-                    <input id="guestCheckinTime" type="time" />
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem;">
+                      <input id="guestCheckinHour" type="number" min="0" max="23" placeholder="HH" inputmode="numeric" />
+                      <input id="guestCheckinMinute" type="number" min="0" max="59" placeholder="MM" inputmode="numeric" />
+                    </div>
                   </td>
                 </tr>
                 <tr>
@@ -45,7 +48,10 @@
                     <input id="guestCheckoutDate" type="date" />
                   </td>
                   <td>
-                    <input id="guestCheckoutTime" type="time" />
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem;">
+                      <input id="guestCheckoutHour" type="number" min="0" max="23" placeholder="HH" inputmode="numeric" />
+                      <input id="guestCheckoutMinute" type="number" min="0" max="59" placeholder="MM" inputmode="numeric" />
+                    </div>
                   </td>
                 </tr>
                 <tr>
@@ -54,7 +60,10 @@
                     <input id="requestedBookingStartDate" type="date" />
                   </td>
                   <td>
-                    <input id="requestedBookingStartTime" type="time" />
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem;">
+                      <input id="requestedBookingStartHour" type="number" min="0" max="23" placeholder="HH" inputmode="numeric" />
+                      <input id="requestedBookingStartMinute" type="number" min="0" max="59" placeholder="MM" inputmode="numeric" />
+                    </div>
                   </td>
                 </tr>
                 <tr>
@@ -63,7 +72,10 @@
                     <input id="requestedBookingEndDate" type="date" />
                   </td>
                   <td>
-                    <input id="requestedBookingEndTime" type="time" />
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem;">
+                      <input id="requestedBookingEndHour" type="number" min="0" max="23" placeholder="HH" inputmode="numeric" />
+                      <input id="requestedBookingEndMinute" type="number" min="0" max="59" placeholder="MM" inputmode="numeric" />
+                    </div>
                   </td>
                 </tr>
               </tbody>

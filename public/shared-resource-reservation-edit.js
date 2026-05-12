@@ -29,17 +29,17 @@ function toInputDate(value) {
   return year + '-' + month + '-' + day;
 }
 
-function toInputTime(value) {
+function toInputHourMinute(value) {
   if (!value) {
-    return '';
+    return { hour: '', minute: '' };
   }
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) {
-    return '';
+    return { hour: '', minute: '' };
   }
   const hour = String(d.getHours()).padStart(2, '0');
   const minute = String(d.getMinutes()).padStart(2, '0');
-  return hour + ':' + minute;
+  return { hour, minute };
 }
 
 function getInputValue(id) {
@@ -51,9 +51,13 @@ function populateReservationForm(reservation) {
   document.getElementById('editCheckinDate').value = String(reservation.reservation_checkin_date || '');
   document.getElementById('editCheckoutDate').value = String(reservation.reservation_checkout_date || '');
   document.getElementById('editStartDate').value = toInputDate(reservation.requested_start_at);
-  document.getElementById('editStartTime').value = toInputTime(reservation.requested_start_at);
+  const startTime = toInputHourMinute(reservation.requested_start_at);
+  document.getElementById('editStartHour').value = startTime.hour;
+  document.getElementById('editStartMinute').value = startTime.minute;
   document.getElementById('editEndDate').value = toInputDate(reservation.requested_end_at);
-  document.getElementById('editEndTime').value = toInputTime(reservation.requested_end_at);
+  const endTime = toInputHourMinute(reservation.requested_end_at);
+  document.getElementById('editEndHour').value = endTime.hour;
+  document.getElementById('editEndMinute').value = endTime.minute;
   document.getElementById('editFirstName').value = String(reservation.first_name || '');
   document.getElementById('editFamilyName').value = String(reservation.family_name || '');
   document.getElementById('editEmailAddress').value = String(reservation.email_address || '');
@@ -71,9 +75,11 @@ function buildRequestPayload() {
   const checkinDate = getInputValue('editCheckinDate');
   const checkoutDate = getInputValue('editCheckoutDate');
   const startDate = getInputValue('editStartDate');
-  const startTime = getInputValue('editStartTime');
+  const startHour = getInputValue('editStartHour');
+  const startMinute = getInputValue('editStartMinute');
   const endDate = getInputValue('editEndDate');
-  const endTime = getInputValue('editEndTime');
+  const endHour = getInputValue('editEndHour');
+  const endMinute = getInputValue('editEndMinute');
   const firstName = getInputValue('editFirstName');
   const familyName = getInputValue('editFamilyName');
   const emailAddress = getInputValue('editEmailAddress');
@@ -82,9 +88,12 @@ function buildRequestPayload() {
   const spacesRequired = getInputValue('editSpacesRequired');
   const status = getInputValue('editStatus');
 
-  if (!checkinDate || !checkoutDate || !startDate || !startTime || !endDate || !endTime || !firstName || !familyName || !emailAddress || !telephone || !spacesRequired || !status) {
+  if (!checkinDate || !checkoutDate || !startDate || !startHour || !startMinute || !endDate || !endHour || !endMinute || !firstName || !familyName || !emailAddress || !telephone || !spacesRequired || !status) {
     return { error: 'Please complete all required fields.' };
   }
+
+  const startTime = String(startHour).padStart(2, '0') + ':' + String(startMinute).padStart(2, '0');
+  const endTime = String(endHour).padStart(2, '0') + ':' + String(endMinute).padStart(2, '0');
 
   return {
     payload: {

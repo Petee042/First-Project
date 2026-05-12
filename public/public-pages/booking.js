@@ -154,6 +154,20 @@ function parseLocalDateTime(dateValue, timeValue) {
   return parsed;
 }
 
+function getTimeStringFromInputs(hourInputId, minuteInputId) {
+  const hourEl = document.getElementById(hourInputId);
+  const minuteEl = document.getElementById(minuteInputId);
+  if (!hourEl || !minuteEl) {
+    return '';
+  }
+  const hour = String(hourEl.value || '').trim();
+  const minute = String(minuteEl.value || '').trim();
+  if (!/^\d{1,2}$/.test(hour) || !/^\d{1,2}$/.test(minute)) {
+    return '';
+  }
+  return String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0');
+}
+
 function toMoney(value) {
   return Math.round(value * 100) / 100;
 }
@@ -330,14 +344,13 @@ function updateReservationRateDisplay() {
   }
 
   // Pricing must always follow the explicit reservation window.
-  const start = parseLocalDateTime(
-    document.getElementById('requestedBookingStartDate').value,
-    document.getElementById('requestedBookingStartTime').value
-  );
-  const end = parseLocalDateTime(
-    document.getElementById('requestedBookingEndDate').value,
-    document.getElementById('requestedBookingEndTime').value
-  );
+  const requestedStartDate = document.getElementById('requestedBookingStartDate').value;
+  const requestedStartTime = getTimeStringFromInputs('requestedBookingStartHour', 'requestedBookingStartMinute');
+  const requestedEndDate = document.getElementById('requestedBookingEndDate').value;
+  const requestedEndTime = getTimeStringFromInputs('requestedBookingEndHour', 'requestedBookingEndMinute');
+  
+  const start = parseLocalDateTime(requestedStartDate, requestedStartTime);
+  const end = parseLocalDateTime(requestedEndDate, requestedEndTime);
 
   const storedChargeBasis = String(getChargeConfigValue(currentResource, 'charge_basis', 'chargeBasis') || '');
   const storedHourlyMode = String(getChargeConfigValue(currentResource, 'hourly_charge_mode', 'hourlyChargeMode') || '');
@@ -410,9 +423,9 @@ function getCheckAvailabilityPayload(resource) {
   const checkinDate = document.getElementById('guestCheckinDate').value;
   const checkoutDate = document.getElementById('guestCheckoutDate').value;
   const requestedStartDate = document.getElementById('requestedBookingStartDate').value;
-  const requestedStartTime = document.getElementById('requestedBookingStartTime').value;
+  const requestedStartTime = getTimeStringFromInputs('requestedBookingStartHour', 'requestedBookingStartMinute');
   const requestedEndDate = document.getElementById('requestedBookingEndDate').value;
-  const requestedEndTime = document.getElementById('requestedBookingEndTime').value;
+  const requestedEndTime = getTimeStringFromInputs('requestedBookingEndHour', 'requestedBookingEndMinute');
 
   if (!checkinDate || !checkoutDate || !requestedStartDate || !requestedStartTime || !requestedEndDate || !requestedEndTime) {
     return { error: 'Please complete checkin/checkout and requested start/end date-times.' };
@@ -447,9 +460,9 @@ function getReservationPageUrl(paymentKey) {
   const pageName = pageMap[paymentKey] || 'free-of-charge-reservation.html';
 
   const startDate = document.getElementById('requestedBookingStartDate') ? document.getElementById('requestedBookingStartDate').value : '';
-  const startTime = document.getElementById('requestedBookingStartTime') ? document.getElementById('requestedBookingStartTime').value : '';
+  const startTime = getTimeStringFromInputs('requestedBookingStartHour', 'requestedBookingStartMinute');
   const endDate = document.getElementById('requestedBookingEndDate') ? document.getElementById('requestedBookingEndDate').value : '';
-  const endTime = document.getElementById('requestedBookingEndTime') ? document.getElementById('requestedBookingEndTime').value : '';
+  const endTime = getTimeStringFromInputs('requestedBookingEndHour', 'requestedBookingEndMinute');
   const checkinDate = document.getElementById('guestCheckinDate') ? document.getElementById('guestCheckinDate').value : '';
   const checkoutDate = document.getElementById('guestCheckoutDate') ? document.getElementById('guestCheckoutDate').value : '';
   const spacesRequired = document.getElementById('spacesRequired') ? document.getElementById('spacesRequired').value : '';
@@ -470,9 +483,11 @@ function getReservationPageUrl(paymentKey) {
 
 function initialiseBookingRequestForm() {
   syncMirroredField('guestCheckinDate', 'requestedBookingStartDate');
-  syncMirroredField('guestCheckinTime', 'requestedBookingStartTime');
+  syncMirroredField('guestCheckinHour', 'requestedBookingStartHour');
+  syncMirroredField('guestCheckinMinute', 'requestedBookingStartMinute');
   syncMirroredField('guestCheckoutDate', 'requestedBookingEndDate');
-  syncMirroredField('guestCheckoutTime', 'requestedBookingEndTime');
+  syncMirroredField('guestCheckoutHour', 'requestedBookingEndHour');
+  syncMirroredField('guestCheckoutMinute', 'requestedBookingEndMinute');
 
   const form = document.getElementById('publicBookingRequestForm');
   if (form) {
@@ -483,13 +498,17 @@ function initialiseBookingRequestForm() {
 
   [
     'guestCheckinDate',
-    'guestCheckinTime',
+    'guestCheckinHour',
+    'guestCheckinMinute',
     'guestCheckoutDate',
-    'guestCheckoutTime',
+    'guestCheckoutHour',
+    'guestCheckoutMinute',
     'requestedBookingStartDate',
-    'requestedBookingStartTime',
+    'requestedBookingStartHour',
+    'requestedBookingStartMinute',
     'requestedBookingEndDate',
-    'requestedBookingEndTime'
+    'requestedBookingEndHour',
+    'requestedBookingEndMinute'
   ].forEach((id) => {
     const input = document.getElementById(id);
     if (!input) {
