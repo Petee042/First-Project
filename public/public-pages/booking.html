@@ -17,7 +17,7 @@
         <div id="publicBookingDescription" class="public-booking-description"></div>
       </section>
 
-      <section class="listing-form-section">
+      <section id="bookingRequestSection" class="listing-form-section">
         <h3>Booking Request</h3>
         <form id="publicBookingRequestForm" novalidate>
           <div class="table-wrap">
@@ -82,6 +82,15 @@
             <button type="button" id="checkAvailabilityBtn" class="btn primary">Check Availability</button>
           </div>
         </form>
+      </section>
+
+      <section id="bookingPaymentSection" class="listing-form-section hidden">
+        <h3>Payment Option</h3>
+        <div id="bookingPaymentOptions" class="public-booking-payment-options"></div>
+        <div id="bookingPaymentMessage" class="public-booking-payment-message"></div>
+        <div class="feed-actions public-booking-actions">
+          <button type="button" id="backToBookingDetailsBtn" class="btn secondary">Back</button>
+        </div>
       </section>
     </div>
   </main>

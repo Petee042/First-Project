@@ -177,6 +177,10 @@ function readListingsStore() {
     resource.resource_type = normaliseSharedResourceType(resource.resource_type || resource.resourceType);
     resource.max_days_advance_booking = normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365;
     const chargeConfig = normaliseSharedResourceChargeConfig(resource);
+    resource.free_of_charge_message_html = sanitiseRichTextHtml(resource.free_of_charge_message_html);
+    resource.cash_on_site_message_html = sanitiseRichTextHtml(resource.cash_on_site_message_html);
+    resource.bank_transfer_message_html = sanitiseRichTextHtml(resource.bank_transfer_message_html);
+    resource.online_payment_message_html = sanitiseRichTextHtml(resource.online_payment_message_html);
     resource.charge_basis = chargeConfig.charge_basis;
     resource.daily_charge_mode = chargeConfig.daily_charge_mode;
     resource.daily_rate = chargeConfig.daily_rate;
@@ -407,6 +411,10 @@ async function initializeUserStore() {
       cash_on_site BOOLEAN NOT NULL DEFAULT FALSE,
       bank_transfer BOOLEAN NOT NULL DEFAULT FALSE,
       online_payment BOOLEAN NOT NULL DEFAULT FALSE,
+      free_of_charge_message_html TEXT NOT NULL DEFAULT '',
+      cash_on_site_message_html TEXT NOT NULL DEFAULT '',
+      bank_transfer_message_html TEXT NOT NULL DEFAULT '',
+      online_payment_message_html TEXT NOT NULL DEFAULT '',
       charge_basis TEXT,
       daily_charge_mode TEXT,
       daily_rate NUMERIC(10,2),
@@ -456,6 +464,26 @@ async function initializeUserStore() {
   await pool.query(`
     ALTER TABLE shared_resources
     ADD COLUMN IF NOT EXISTS online_payment BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS free_of_charge_message_html TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS cash_on_site_message_html TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS bank_transfer_message_html TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resources
+    ADD COLUMN IF NOT EXISTS online_payment_message_html TEXT NOT NULL DEFAULT ''
   `);
 
   await pool.query(`
@@ -737,6 +765,23 @@ function normaliseSharedResourcePaymentOptions(input) {
     cash_on_site: input && (input.cashOnSite === true || input.cash_on_site === true),
     bank_transfer: input && (input.bankTransfer === true || input.bank_transfer === true),
     online_payment: input && (input.onlinePayment === true || input.online_payment === true)
+  };
+}
+
+function normaliseSharedResourcePaymentMessages(input) {
+  return {
+    free_of_charge_message_html: sanitiseRichTextHtml(input && (input.freeOfChargeMessageHtml !== undefined
+      ? input.freeOfChargeMessageHtml
+      : input.free_of_charge_message_html)),
+    cash_on_site_message_html: sanitiseRichTextHtml(input && (input.cashOnSiteMessageHtml !== undefined
+      ? input.cashOnSiteMessageHtml
+      : input.cash_on_site_message_html)),
+    bank_transfer_message_html: sanitiseRichTextHtml(input && (input.bankTransferMessageHtml !== undefined
+      ? input.bankTransferMessageHtml
+      : input.bank_transfer_message_html)),
+    online_payment_message_html: sanitiseRichTextHtml(input && (input.onlinePaymentMessageHtml !== undefined
+      ? input.onlinePaymentMessageHtml
+      : input.online_payment_message_html))
   };
 }
 
@@ -1500,6 +1545,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
       listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
       resource_type: normaliseSharedResourceType(resource.resource_type || resource.resourceType),
       ...normaliseSharedResourcePaymentOptions(resource),
+      ...normaliseSharedResourcePaymentMessages(resource),
       ...normaliseSharedResourceChargeConfig(resource),
       hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(resource).hourly_rates)
     };
@@ -1509,6 +1555,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
     `
             SELECT id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
+              free_of_charge_message_html, cash_on_site_message_html, bank_transfer_message_html, online_payment_message_html,
               charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
       FROM shared_resources
@@ -1525,6 +1572,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
     max_days_advance_booking: normaliseSharedResourceMaxAdvanceBookingDays(result.rows[0].max_days_advance_booking) || 365,
     resource_type: normaliseSharedResourceType(result.rows[0].resource_type),
     ...normaliseSharedResourcePaymentOptions(result.rows[0]),
+    ...normaliseSharedResourcePaymentMessages(result.rows[0]),
     ...normaliseSharedResourceChargeConfig(result.rows[0]),
     hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(result.rows[0]).hourly_rates)
   };
@@ -1551,6 +1599,10 @@ async function getSharedResourceByIdPublic(resourceId) {
       cash_on_site: resource.cash_on_site === true,
       bank_transfer: resource.bank_transfer === true,
       online_payment: resource.online_payment === true,
+      free_of_charge_message_html: sanitiseRichTextHtml(resource.free_of_charge_message_html),
+      cash_on_site_message_html: sanitiseRichTextHtml(resource.cash_on_site_message_html),
+      bank_transfer_message_html: sanitiseRichTextHtml(resource.bank_transfer_message_html),
+      online_payment_message_html: sanitiseRichTextHtml(resource.online_payment_message_html),
       property_id: normaliseOptionalPositiveInteger(resource.property_id),
       listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
     };
@@ -1560,6 +1612,7 @@ async function getSharedResourceByIdPublic(resourceId) {
     `
             SELECT id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
+              free_of_charge_message_html, cash_on_site_message_html, bank_transfer_message_html, online_payment_message_html,
               property_id, listing_id
       FROM shared_resources
       WHERE id = $1
@@ -1583,6 +1636,10 @@ async function getSharedResourceByIdPublic(resourceId) {
     cash_on_site: row.cash_on_site === true,
     bank_transfer: row.bank_transfer === true,
     online_payment: row.online_payment === true,
+    free_of_charge_message_html: sanitiseRichTextHtml(row.free_of_charge_message_html),
+    cash_on_site_message_html: sanitiseRichTextHtml(row.cash_on_site_message_html),
+    bank_transfer_message_html: sanitiseRichTextHtml(row.bank_transfer_message_html),
+    online_payment_message_html: sanitiseRichTextHtml(row.online_payment_message_html),
     property_id: row.property_id,
     listing_id: row.listing_id
   };
@@ -1901,6 +1958,7 @@ async function createSharedResourceForUser(userId, input) {
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
   const resourceType = normaliseSharedResourceType(input.resourceType);
   const paymentOptions = normaliseSharedResourcePaymentOptions(input);
+  const paymentMessages = normaliseSharedResourcePaymentMessages(input);
   const rawChargeConfig = normaliseSharedResourceChargeConfig(input);
   const hasChargeConfigInput = Boolean(
     input
@@ -1962,6 +2020,10 @@ async function createSharedResourceForUser(userId, input) {
       cash_on_site: paymentOptions.cash_on_site,
       bank_transfer: paymentOptions.bank_transfer,
       online_payment: paymentOptions.online_payment,
+      free_of_charge_message_html: paymentMessages.free_of_charge_message_html,
+      cash_on_site_message_html: paymentMessages.cash_on_site_message_html,
+      bank_transfer_message_html: paymentMessages.bank_transfer_message_html,
+      online_payment_message_html: paymentMessages.online_payment_message_html,
       charge_basis: chargeConfig.charge_basis,
       daily_charge_mode: chargeConfig.daily_charge_mode,
       daily_rate: chargeConfig.daily_rate,
@@ -1991,6 +2053,10 @@ async function createSharedResourceForUser(userId, input) {
         cash_on_site,
         bank_transfer,
         online_payment,
+        free_of_charge_message_html,
+        cash_on_site_message_html,
+        bank_transfer_message_html,
+        online_payment_message_html,
         charge_basis,
         daily_charge_mode,
         daily_rate,
@@ -1998,9 +2064,10 @@ async function createSharedResourceForUser(userId, input) {
         hourly_rate,
         hourly_rates_json
       )
-      VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
       RETURNING id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
                 free_of_charge, cash_on_site, bank_transfer, online_payment,
+              free_of_charge_message_html, cash_on_site_message_html, bank_transfer_message_html, online_payment_message_html,
                 charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
                 created_at, updated_at
     `,
@@ -2015,6 +2082,10 @@ async function createSharedResourceForUser(userId, input) {
       paymentOptions.cash_on_site,
       paymentOptions.bank_transfer,
       paymentOptions.online_payment,
+      paymentMessages.free_of_charge_message_html,
+      paymentMessages.cash_on_site_message_html,
+      paymentMessages.bank_transfer_message_html,
+      paymentMessages.online_payment_message_html,
       chargeConfig.charge_basis,
       chargeConfig.daily_charge_mode,
       chargeConfig.daily_rate,
@@ -2035,6 +2106,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
   const resourceType = normaliseSharedResourceType(input.resourceType);
   const paymentOptions = normaliseSharedResourcePaymentOptions(input);
+  const paymentMessages = normaliseSharedResourcePaymentMessages(input);
   const chargeConfig = validateSharedResourceChargeConfig(paymentOptions, normaliseSharedResourceChargeConfig(input));
 
   if (!shortDescription) {
@@ -2088,6 +2160,10 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
     store.shared_resources[idx].cash_on_site = paymentOptions.cash_on_site;
     store.shared_resources[idx].bank_transfer = paymentOptions.bank_transfer;
     store.shared_resources[idx].online_payment = paymentOptions.online_payment;
+    store.shared_resources[idx].free_of_charge_message_html = paymentMessages.free_of_charge_message_html;
+    store.shared_resources[idx].cash_on_site_message_html = paymentMessages.cash_on_site_message_html;
+    store.shared_resources[idx].bank_transfer_message_html = paymentMessages.bank_transfer_message_html;
+    store.shared_resources[idx].online_payment_message_html = paymentMessages.online_payment_message_html;
     store.shared_resources[idx].charge_basis = chargeConfig.charge_basis;
     store.shared_resources[idx].daily_charge_mode = chargeConfig.daily_charge_mode;
     store.shared_resources[idx].daily_rate = chargeConfig.daily_rate;
@@ -2113,16 +2189,21 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
             cash_on_site = $9,
             bank_transfer = $10,
             online_payment = $11,
-            charge_basis = $12,
-            daily_charge_mode = $13,
-            daily_rate = $14,
-            hourly_charge_mode = $15,
-            hourly_rate = $16,
-            hourly_rates_json = $17,
+            free_of_charge_message_html = $12,
+            cash_on_site_message_html = $13,
+            bank_transfer_message_html = $14,
+            online_payment_message_html = $15,
+            charge_basis = $16,
+            daily_charge_mode = $17,
+            daily_rate = $18,
+            hourly_charge_mode = $19,
+            hourly_rate = $20,
+            hourly_rates_json = $21,
           updated_at = CURRENT_TIMESTAMP
-          WHERE id = $18 AND user_id = $19
+          WHERE id = $22 AND user_id = $23
           RETURNING id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
+              free_of_charge_message_html, cash_on_site_message_html, bank_transfer_message_html, online_payment_message_html,
               charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               created_at, updated_at
     `,
@@ -2138,6 +2219,10 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
       paymentOptions.cash_on_site,
       paymentOptions.bank_transfer,
       paymentOptions.online_payment,
+      paymentMessages.free_of_charge_message_html,
+      paymentMessages.cash_on_site_message_html,
+      paymentMessages.bank_transfer_message_html,
+      paymentMessages.online_payment_message_html,
       chargeConfig.charge_basis,
       chargeConfig.daily_charge_mode,
       chargeConfig.daily_rate,
@@ -4393,6 +4478,10 @@ app.post('/api/shared-resources', requireAuth, async (req, res) => {
       cashOnSite: req.body.cashOnSite,
       bankTransfer: req.body.bankTransfer,
       onlinePayment: req.body.onlinePayment,
+      freeOfChargeMessageHtml: req.body.freeOfChargeMessageHtml,
+      cashOnSiteMessageHtml: req.body.cashOnSiteMessageHtml,
+      bankTransferMessageHtml: req.body.bankTransferMessageHtml,
+      onlinePaymentMessageHtml: req.body.onlinePaymentMessageHtml,
       chargeBasis: req.body.chargeBasis,
       dailyChargeMode: req.body.dailyChargeMode,
       dailyRate: req.body.dailyRate,
@@ -4592,6 +4681,10 @@ app.put('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
       cashOnSite: req.body.cashOnSite,
       bankTransfer: req.body.bankTransfer,
       onlinePayment: req.body.onlinePayment,
+      freeOfChargeMessageHtml: req.body.freeOfChargeMessageHtml,
+      cashOnSiteMessageHtml: req.body.cashOnSiteMessageHtml,
+      bankTransferMessageHtml: req.body.bankTransferMessageHtml,
+      onlinePaymentMessageHtml: req.body.onlinePaymentMessageHtml,
       chargeBasis: req.body.chargeBasis,
       dailyChargeMode: req.body.dailyChargeMode,
       dailyRate: req.body.dailyRate,

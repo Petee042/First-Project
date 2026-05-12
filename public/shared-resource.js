@@ -4,6 +4,13 @@ const params = new URLSearchParams(window.location.search);
 const resourceId = Number(params.get('id'));
 let currentProperties = [];
 let currentListings = [];
+let activePaymentMessageKey = 'free_of_charge';
+let currentPaymentMessages = {
+  free_of_charge: '',
+  cash_on_site: '',
+  bank_transfer: '',
+  online_payment: ''
+};
 let currentChargeConfig = {
   chargeBasis: null,
   dailyChargeMode: null,
@@ -38,9 +45,84 @@ function setBookingPageUrl() {
   copyBtn.disabled = !url;
 }
 
-function applyEditorCommand(command) {
+function applyEditorCommand(command, editorId) {
+  const targetEditorId = editorId || 'fullDescriptionEditor';
+  const editor = document.getElementById(targetEditorId);
+  if (!editor) {
+    return;
+  }
+  editor.focus();
   document.execCommand(command, false, null);
-  document.getElementById('fullDescriptionEditor').focus();
+  editor.focus();
+}
+
+function getPaymentMessageEditorHtml() {
+  const editor = document.getElementById('paymentMessageEditor');
+  if (!editor) {
+    return '';
+  }
+  return editor.innerHTML.trim();
+}
+
+function setPaymentMessageEditorHtml(value) {
+  const editor = document.getElementById('paymentMessageEditor');
+  if (!editor) {
+    return;
+  }
+  editor.innerHTML = value || '';
+}
+
+function persistActivePaymentMessage() {
+  currentPaymentMessages[activePaymentMessageKey] = getPaymentMessageEditorHtml();
+}
+
+function getPaymentOptionEnabledMap() {
+  return {
+    free_of_charge: document.getElementById('paymentFreeOfCharge').checked,
+    cash_on_site: document.getElementById('paymentCashOnSite').checked,
+    bank_transfer: document.getElementById('paymentBankTransfer').checked,
+    online_payment: document.getElementById('paymentOnlinePayment').checked
+  };
+}
+
+function activatePaymentMessageTab(nextKey) {
+  if (!nextKey) {
+    return;
+  }
+  persistActivePaymentMessage();
+  activePaymentMessageKey = nextKey;
+  setPaymentMessageEditorHtml(currentPaymentMessages[activePaymentMessageKey] || '');
+
+  const tabs = Array.from(document.querySelectorAll('.resource-payment-tab'));
+  tabs.forEach((tab) => {
+    const isActive = tab.getAttribute('data-payment-tab') === activePaymentMessageKey;
+    tab.classList.toggle('is-active', isActive);
+    tab.setAttribute('aria-selected', isActive ? 'true' : 'false');
+  });
+}
+
+function syncPaymentMessageTabs() {
+  const enabled = getPaymentOptionEnabledMap();
+  const tabs = Array.from(document.querySelectorAll('.resource-payment-tab'));
+  const editor = document.getElementById('paymentMessageEditor');
+
+  tabs.forEach((tab) => {
+    const key = tab.getAttribute('data-payment-tab');
+    const isEnabled = enabled[key] === true;
+    tab.disabled = !isEnabled;
+    tab.classList.toggle('disabled', !isEnabled);
+  });
+
+  if (!enabled[activePaymentMessageKey]) {
+    const fallbackKey = ['free_of_charge', 'cash_on_site', 'bank_transfer', 'online_payment'].find((key) => enabled[key]);
+    activePaymentMessageKey = fallbackKey || 'free_of_charge';
+  }
+
+  if (editor) {
+    editor.setAttribute('aria-disabled', enabled[activePaymentMessageKey] ? 'false' : 'true');
+  }
+
+  activatePaymentMessageTab(activePaymentMessageKey);
 }
 
 function getChargeDialog() {
@@ -305,6 +387,7 @@ function syncPaymentOptionState() {
     }
   });
 
+  syncPaymentMessageTabs();
   syncChargeConfigAvailability();
 }
 
@@ -416,6 +499,13 @@ async function loadSharedResource() {
   document.getElementById('paymentCashOnSite').checked = resource.cash_on_site === true;
   document.getElementById('paymentBankTransfer').checked = resource.bank_transfer === true;
   document.getElementById('paymentOnlinePayment').checked = resource.online_payment === true;
+  currentPaymentMessages = {
+    free_of_charge: resource.free_of_charge_message_html || '',
+    cash_on_site: resource.cash_on_site_message_html || '',
+    bank_transfer: resource.bank_transfer_message_html || '',
+    online_payment: resource.online_payment_message_html || ''
+  };
+  activePaymentMessageKey = 'free_of_charge';
   currentChargeConfig = {
     chargeBasis: resource.charge_basis || null,
     dailyChargeMode: resource.daily_charge_mode || null,
@@ -425,6 +515,7 @@ async function loadSharedResource() {
     hourlyRates: ensureHourlyRatesLength(resource.hourly_rates || [])
   };
   syncPaymentOptionState();
+  setPaymentMessageEditorHtml(currentPaymentMessages[activePaymentMessageKey] || '');
   renderChargeConfigSummary();
 }
 
@@ -595,11 +686,27 @@ document.querySelectorAll('.editor-btn').forEach((button) => {
   });
 });
 
+document.querySelectorAll('.payment-editor-btn').forEach((button) => {
+  button.addEventListener('click', () => {
+    const command = button.getAttribute('data-command');
+    if (command) {
+      applyEditorCommand(command, 'paymentMessageEditor');
+    }
+  });
+});
+
+document.querySelectorAll('.resource-payment-tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    if (tab.disabled) {
+      return;
+    }
+    activatePaymentMessageTab(tab.getAttribute('data-payment-tab'));
+  });
+});
+
 ['paymentCashOnSite', 'paymentBankTransfer', 'paymentOnlinePayment'].forEach((id) => {
   document.getElementById(id).addEventListener('change', () => {
-    if (document.getElementById('paymentFreeOfCharge').checked) {
-      syncPaymentOptionState();
-    }
+    syncPaymentOptionState();
   });
 });
 
@@ -618,6 +725,7 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
   const cashOnSite = document.getElementById('paymentCashOnSite').checked;
   const bankTransfer = document.getElementById('paymentBankTransfer').checked;
   const onlinePayment = document.getElementById('paymentOnlinePayment').checked;
+  persistActivePaymentMessage();
   const validatedChargeConfig = validateChargeConfigDraft(currentChargeConfig);
 
   if (!shortDescription) {
@@ -655,6 +763,10 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
         cashOnSite,
         bankTransfer,
         onlinePayment,
+        freeOfChargeMessageHtml: currentPaymentMessages.free_of_charge || '',
+        cashOnSiteMessageHtml: currentPaymentMessages.cash_on_site || '',
+        bankTransferMessageHtml: currentPaymentMessages.bank_transfer || '',
+        onlinePaymentMessageHtml: currentPaymentMessages.online_payment || '',
         chargeBasis: validatedChargeConfig.chargeBasis,
         dailyChargeMode: validatedChargeConfig.dailyChargeMode,
         dailyRate: validatedChargeConfig.dailyRate,

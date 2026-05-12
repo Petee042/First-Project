@@ -1124,6 +1124,46 @@ textarea:focus {
   flex: 0 1 auto;
 }
 
+.resource-payment-messages-row {
+  align-items: flex-start;
+}
+
+.resource-payment-messages-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.resource-payment-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+}
+
+.resource-payment-tab {
+  width: auto;
+  margin-top: 0;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.84rem;
+}
+
+.resource-payment-tab.is-active {
+  background: #4361ee;
+  color: #fff;
+  border-color: #4361ee;
+}
+
+.resource-payment-tab.disabled {
+  opacity: 0.55;
+}
+
+.payment-editor-btn {
+  width: auto;
+  margin-top: 0;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.84rem;
+}
+
 .resource-charge-row {
   align-items: flex-start;
 }
@@ -1321,6 +1361,35 @@ textarea:focus {
 
 .public-booking-actions {
   margin-top: 1rem;
+}
+
+.public-booking-payment-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.public-booking-payment-option {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.92rem;
+  color: #2d334a;
+}
+
+.public-booking-payment-option input[type="radio"] {
+  width: 16px;
+  height: 16px;
+}
+
+.public-booking-payment-message {
+  margin-top: 0.85rem;
+  border: 1px solid #dbe1ef;
+  border-radius: 8px;
+  background: #f8faff;
+  padding: 0.85rem 0.9rem;
+  line-height: 1.5;
+  color: #2b3550;
 }
 
 .public-resource-reservations-wrap {

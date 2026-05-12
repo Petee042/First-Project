@@ -1,11 +1,100 @@
 'use strict';
 
 let currentResource = null;
+let activeBookingPaymentKey = null;
 
 function setBookingMessage(text, isError) {
   const el = document.getElementById('publicBookingMessage');
   el.textContent = text || '';
   el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
+}
+
+function getEnabledPaymentOptions(resource) {
+  if (!resource) {
+    return [];
+  }
+  const options = [
+    { key: 'free_of_charge', label: 'Free Of Charge', enabled: resource.free_of_charge === true, messageHtml: resource.free_of_charge_message_html || '' },
+    { key: 'cash_on_site', label: 'Cash On Site', enabled: resource.cash_on_site === true, messageHtml: resource.cash_on_site_message_html || '' },
+    { key: 'bank_transfer', label: 'Bank Transfer', enabled: resource.bank_transfer === true, messageHtml: resource.bank_transfer_message_html || '' },
+    { key: 'online_payment', label: 'Online Payment', enabled: resource.online_payment === true, messageHtml: resource.online_payment_message_html || '' }
+  ];
+  return options.filter((option) => option.enabled);
+}
+
+function renderBookingPaymentMessage(optionKey) {
+  const container = document.getElementById('bookingPaymentMessage');
+  if (!container || !currentResource) {
+    return;
+  }
+
+  const options = getEnabledPaymentOptions(currentResource);
+  const selected = options.find((option) => option.key === optionKey) || null;
+  if (!selected) {
+    container.innerHTML = '<p class="public-booking-placeholder">No payment message available.</p>';
+    return;
+  }
+
+  const html = String(selected.messageHtml || '').trim();
+  container.innerHTML = html || '<p class="public-booking-placeholder">No payment message configured for this option.</p>';
+}
+
+function renderBookingPaymentOptions(resource) {
+  const container = document.getElementById('bookingPaymentOptions');
+  if (!container) {
+    return;
+  }
+
+  const options = getEnabledPaymentOptions(resource);
+  if (!options.length) {
+    container.innerHTML = '<p class="public-booking-placeholder">No payment options are currently available for this resource.</p>';
+    activeBookingPaymentKey = null;
+    renderBookingPaymentMessage(null);
+    return;
+  }
+
+  if (!options.some((option) => option.key === activeBookingPaymentKey)) {
+    activeBookingPaymentKey = options[0].key;
+  }
+
+  container.innerHTML = options.map((option) => {
+    const checked = option.key === activeBookingPaymentKey ? ' checked' : '';
+    return '<label class="public-booking-payment-option">'
+      + '<input type="radio" name="bookingPaymentOption" value="' + option.key + '"' + checked + ' />'
+      + '<span>' + option.label + '</span>'
+      + '</label>';
+  }).join('');
+
+  Array.from(container.querySelectorAll('input[name="bookingPaymentOption"]')).forEach((input) => {
+    input.addEventListener('change', () => {
+      activeBookingPaymentKey = input.value;
+      renderBookingPaymentMessage(activeBookingPaymentKey);
+    });
+  });
+
+  renderBookingPaymentMessage(activeBookingPaymentKey);
+}
+
+function showBookingPaymentStep() {
+  const requestSection = document.getElementById('bookingRequestSection');
+  const paymentSection = document.getElementById('bookingPaymentSection');
+  if (!requestSection || !paymentSection) {
+    return;
+  }
+
+  requestSection.classList.add('hidden');
+  paymentSection.classList.remove('hidden');
+}
+
+function showBookingRequestStep() {
+  const requestSection = document.getElementById('bookingRequestSection');
+  const paymentSection = document.getElementById('bookingPaymentSection');
+  if (!requestSection || !paymentSection) {
+    return;
+  }
+
+  paymentSection.classList.add('hidden');
+  requestSection.classList.remove('hidden');
 }
 
 function getResourceIdFromUrl() {
@@ -55,6 +144,13 @@ function initialiseBookingRequestForm() {
   if (form) {
     form.addEventListener('submit', (event) => {
       event.preventDefault();
+    });
+  }
+
+  const backBtn = document.getElementById('backToBookingDetailsBtn');
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      showBookingRequestStep();
     });
   }
 }
@@ -155,6 +251,8 @@ function setupCheckAvailability(resourceId) {
       }
 
       setBookingMessage(data.message || 'Availability Confirmed', false);
+      renderBookingPaymentOptions(currentResource);
+      showBookingPaymentStep();
     } catch {
       setBookingMessage('Network error checking availability.', true);
     } finally {
@@ -179,8 +277,10 @@ async function loadPublicResource() {
 
   const resource = data.resource;
   currentResource = resource;
+  activeBookingPaymentKey = null;
   document.getElementById('publicBookingResourceName').textContent = resource.short_description || 'Shared Resource';
   document.getElementById('publicBookingDescription').innerHTML = resource.full_description_html || '<p>No description provided.</p>';
+  renderBookingPaymentOptions(resource);
 
   const spacesRow = document.getElementById('bookingSpacesRequiredRow');
   const spacesInput = document.getElementById('spacesRequired');

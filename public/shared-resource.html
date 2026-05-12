@@ -104,6 +104,29 @@
             </div>
           </div>
 
+          <div class="calendar-source-row resource-payment-messages-row">
+            <label>Payment Page Messages</label>
+            <div class="resource-payment-messages-wrap">
+              <div class="resource-payment-tabs" role="tablist" aria-label="Payment message tabs">
+                <button type="button" id="paymentTabFreeOfCharge" class="btn secondary resource-payment-tab is-active" data-payment-tab="free_of_charge" role="tab" aria-selected="true">Free Of Charge</button>
+                <button type="button" id="paymentTabCashOnSite" class="btn secondary resource-payment-tab" data-payment-tab="cash_on_site" role="tab" aria-selected="false">Cash On Site</button>
+                <button type="button" id="paymentTabBankTransfer" class="btn secondary resource-payment-tab" data-payment-tab="bank_transfer" role="tab" aria-selected="false">Bank Transfer</button>
+                <button type="button" id="paymentTabOnlinePayment" class="btn secondary resource-payment-tab" data-payment-tab="online_payment" role="tab" aria-selected="false">Online Payment</button>
+              </div>
+
+              <div class="resource-editor-wrap">
+                <div class="resource-editor-toolbar" role="toolbar" aria-label="Payment message formatting toolbar">
+                  <button type="button" class="btn secondary payment-editor-btn" data-command="bold"><strong>B</strong></button>
+                  <button type="button" class="btn secondary payment-editor-btn" data-command="italic"><em>I</em></button>
+                  <button type="button" class="btn secondary payment-editor-btn" data-command="underline"><span class="editor-underline">U</span></button>
+                  <button type="button" class="btn secondary payment-editor-btn" data-command="insertUnorderedList">Bullets</button>
+                  <button type="button" class="btn secondary payment-editor-btn" data-command="insertOrderedList">Numbers</button>
+                </div>
+                <div id="paymentMessageEditor" class="resource-editor" contenteditable="true" spellcheck="true" aria-label="Payment message editor"></div>
+              </div>
+            </div>
+          </div>
+
           <div class="calendar-source-row resource-charge-row">
             <label>Charge Logic</label>
             <div class="resource-charge-config">
