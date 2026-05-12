@@ -28,11 +28,14 @@ function getResourceIdFromUrl() {
 }
 
 function isEnabledValue(value) {
-  return value === true || value === 1 || value === '1' || value === 'true';
-}
-
-function hasPaymentMessage(resource, messageKey) {
-  return String(resource && resource[messageKey] ? resource[messageKey] : '').trim().length > 0;
+  if (value === true || value === 1) {
+    return true;
+  }
+  if (typeof value === 'string') {
+    const normalised = value.trim().toLowerCase();
+    return normalised === 'true' || normalised === '1' || normalised === 't' || normalised === 'yes' || normalised === 'y';
+  }
+  return false;
 }
 
 function getEnabledPaymentOptions(resource) {
@@ -41,10 +44,10 @@ function getEnabledPaymentOptions(resource) {
   }
 
   const options = [
-    { key: 'free_of_charge', label: 'Free Of Charge', enabled: isEnabledValue(resource.free_of_charge) || hasPaymentMessage(resource, 'free_of_charge_message_html') },
-    { key: 'cash_on_site', label: 'Cash On Site', enabled: isEnabledValue(resource.cash_on_site) || hasPaymentMessage(resource, 'cash_on_site_message_html') },
-    { key: 'bank_transfer', label: 'Bank Transfer', enabled: isEnabledValue(resource.bank_transfer) || hasPaymentMessage(resource, 'bank_transfer_message_html') },
-    { key: 'online_payment', label: 'Online Payment', enabled: isEnabledValue(resource.online_payment) || hasPaymentMessage(resource, 'online_payment_message_html') }
+    { key: 'free_of_charge', label: 'Free Of Charge', enabled: isEnabledValue(resource.free_of_charge) },
+    { key: 'cash_on_site', label: 'Cash On Site', enabled: isEnabledValue(resource.cash_on_site) },
+    { key: 'bank_transfer', label: 'Bank Transfer', enabled: isEnabledValue(resource.bank_transfer) },
+    { key: 'online_payment', label: 'Online Payment', enabled: isEnabledValue(resource.online_payment) }
   ];
 
   return options.filter((option) => option.enabled);
@@ -66,9 +69,7 @@ function populatePaymentSelectionDropdown(resource) {
     select.appendChild(optionEl);
   });
 
-  if (options.length > 0) {
-    select.value = options[0].key;
-  }
+  select.value = '';
 }
 
 function syncMirroredField(sourceId, targetId) {
