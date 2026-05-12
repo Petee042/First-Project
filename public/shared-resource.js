@@ -349,6 +349,19 @@ function validateChargeConfigDraft(draft) {
   };
 }
 
+function syncCurrentChargeConfigFromDialog() {
+  const draft = readChargeDialogState();
+  currentChargeConfig = {
+    chargeBasis: draft.chargeBasis,
+    dailyChargeMode: draft.dailyChargeMode,
+    dailyRate: draft.dailyRate,
+    hourlyChargeMode: draft.hourlyChargeMode,
+    hourlyRate: draft.hourlyRate,
+    hourlyRates: ensureHourlyRatesLength(draft.hourlyRates)
+  };
+  renderChargeConfigSummary();
+}
+
 function syncChargeConfigAvailability() {
   const disabled = document.getElementById('paymentFreeOfCharge').checked;
   const button = document.getElementById('openChargeConfigBtn');
@@ -656,13 +669,29 @@ document.getElementById('copyBookingPageUrlBtn').addEventListener('click', async
 document.querySelectorAll('input[name="chargeBasis"]').forEach((input) => {
   input.addEventListener('change', () => {
     syncChargeDialogVisibility();
+    syncCurrentChargeConfigFromDialog();
+  });
+});
+
+document.querySelectorAll('input[name="dailyChargeMode"]').forEach((input) => {
+  input.addEventListener('change', () => {
+    syncCurrentChargeConfigFromDialog();
   });
 });
 
 document.querySelectorAll('input[name="hourlyChargeMode"]').forEach((input) => {
   input.addEventListener('change', () => {
     syncChargeDialogVisibility();
+    syncCurrentChargeConfigFromDialog();
   });
+});
+
+document.getElementById('dailyRate').addEventListener('input', () => {
+  syncCurrentChargeConfigFromDialog();
+});
+
+document.getElementById('singleHourlyRate').addEventListener('input', () => {
+  syncCurrentChargeConfigFromDialog();
 });
 
 document.getElementById('saveChargeConfigBtn').addEventListener('click', () => {
@@ -726,26 +755,7 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
   const bankTransfer = document.getElementById('paymentBankTransfer').checked;
   const onlinePayment = document.getElementById('paymentOnlinePayment').checked;
   persistActivePaymentMessage();
-  const rawDialogDraft = readChargeDialogState();
-  const hasDialogChargeValues = Boolean(
-    rawDialogDraft.chargeBasis
-    || rawDialogDraft.dailyChargeMode
-    || rawDialogDraft.hourlyChargeMode
-    || rawDialogDraft.dailyRate
-    || rawDialogDraft.hourlyRate
-    || (Array.isArray(rawDialogDraft.hourlyRates) && rawDialogDraft.hourlyRates.some((value) => String(value || '').trim() !== ''))
-  );
-  const latestChargeDraft = hasDialogChargeValues
-    ? rawDialogDraft
-    : {
-        chargeBasis: currentChargeConfig.chargeBasis,
-        dailyChargeMode: currentChargeConfig.dailyChargeMode,
-        dailyRate: currentChargeConfig.dailyRate,
-        hourlyChargeMode: currentChargeConfig.hourlyChargeMode,
-        hourlyRate: currentChargeConfig.hourlyRate,
-        hourlyRates: ensureHourlyRatesLength(currentChargeConfig.hourlyRates)
-      };
-  const validatedChargeConfig = validateChargeConfigDraft(latestChargeDraft);
+  const validatedChargeConfig = validateChargeConfigDraft(currentChargeConfig);
 
   if (!shortDescription) {
     setSharedResourceMessage('Short description is required.', true);
