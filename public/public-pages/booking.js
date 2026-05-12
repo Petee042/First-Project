@@ -599,6 +599,12 @@ async function loadPublicResource() {
     initialiseBookingRequestForm();
     setupCheckAvailability(resourceId);
     await loadPublicResource();
+
+    // If user changes charge logic on another tab/page and comes back,
+    // refresh the resource config so pricing uses latest saved settings.
+    window.addEventListener('focus', () => {
+      loadPublicResource().catch(() => {});
+    });
   } catch (err) {
     setBookingMessage(err.message || 'Unable to load booking page.', true);
   }
