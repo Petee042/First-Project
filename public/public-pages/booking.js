@@ -84,16 +84,22 @@ function syncMirroredField(sourceId, targetId) {
     target.value = source.value;
   }
 
-  source.addEventListener('input', () => {
+  const syncFromSource = () => {
     if (target.dataset.manualOverride === 'true') {
       return;
     }
     target.value = source.value;
-  });
+  };
 
-  target.addEventListener('input', () => {
+  source.addEventListener('input', syncFromSource);
+  source.addEventListener('change', syncFromSource);
+
+  const updateManualOverride = () => {
     target.dataset.manualOverride = target.value !== source.value ? 'true' : 'false';
-  });
+  };
+
+  target.addEventListener('input', updateManualOverride);
+  target.addEventListener('change', updateManualOverride);
 }
 
 function configureSpacesRequiredInput(maxValue) {
@@ -203,7 +209,17 @@ function calculateReservationRate(resource, start, end) {
     return null;
   }
 
-  const chargeBasis = String(getChargeConfigValue(resource, 'charge_basis', 'chargeBasis') || '');
+  const hourlyChargeMode = String(getChargeConfigValue(resource, 'hourly_charge_mode', 'hourlyChargeMode') || '');
+  const hourlyRate = Number(getChargeConfigValue(resource, 'hourly_rate', 'hourlyRate'));
+  const hasSingleHourlyRate = Number.isFinite(hourlyRate) && hourlyRate >= 0;
+  const hasPerHourMode = hourlyChargeMode === 'per_hour_of_day';
+  const hasHourlyConfig = hasSingleHourlyRate || hasPerHourMode;
+
+  const storedChargeBasis = String(getChargeConfigValue(resource, 'charge_basis', 'chargeBasis') || '');
+  const chargeBasis = storedChargeBasis === 'daily'
+    ? (hasHourlyConfig ? 'hourly' : 'daily')
+    : storedChargeBasis;
+
   const totalMinutes = Math.ceil((end.getTime() - start.getTime()) / 60000);
   if (totalMinutes <= 0) {
     return null;
@@ -235,10 +251,6 @@ function calculateReservationRate(resource, start, end) {
   }
 
   if (chargeBasis === 'hourly') {
-    const hourlyChargeMode = String(getChargeConfigValue(resource, 'hourly_charge_mode', 'hourlyChargeMode') || '');
-    const hourlyRate = Number(getChargeConfigValue(resource, 'hourly_rate', 'hourlyRate'));
-    const hasSingleHourlyRate = Number.isFinite(hourlyRate) && hourlyRate >= 0;
-
     // If mode metadata is stale/inconsistent but a single hourly rate exists, prefer single-rate charging.
     const useSingleRate = hourlyChargeMode === 'single_rate'
       || (hourlyChargeMode !== 'per_hour_of_day' && hasSingleHourlyRate);
