@@ -726,7 +726,17 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
   const bankTransfer = document.getElementById('paymentBankTransfer').checked;
   const onlinePayment = document.getElementById('paymentOnlinePayment').checked;
   persistActivePaymentMessage();
-  const latestChargeDraft = readChargeDialogState();
+  const chargeDialog = getChargeDialog();
+  const latestChargeDraft = chargeDialog && chargeDialog.open
+    ? readChargeDialogState()
+    : {
+        chargeBasis: currentChargeConfig.chargeBasis,
+        dailyChargeMode: currentChargeConfig.dailyChargeMode,
+        dailyRate: currentChargeConfig.dailyRate,
+        hourlyChargeMode: currentChargeConfig.hourlyChargeMode,
+        hourlyRate: currentChargeConfig.hourlyRate,
+        hourlyRates: ensureHourlyRatesLength(currentChargeConfig.hourlyRates)
+      };
   const validatedChargeConfig = validateChargeConfigDraft(latestChargeDraft);
 
   if (!shortDescription) {
@@ -785,6 +795,31 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
       setSharedResourceMessage(data.error || 'Failed to save shared resource.', true);
       return;
     }
+
+    const savedHourlyRates = (() => {
+      if (Array.isArray(data.resource.hourly_rates_json)) {
+        return data.resource.hourly_rates_json;
+      }
+      if (typeof data.resource.hourly_rates_json === 'string' && data.resource.hourly_rates_json.trim()) {
+        try {
+          const parsed = JSON.parse(data.resource.hourly_rates_json);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      }
+      return [];
+    })();
+
+    currentChargeConfig = {
+      chargeBasis: data.resource.charge_basis || null,
+      dailyChargeMode: data.resource.daily_charge_mode || null,
+      dailyRate: data.resource.daily_rate === null || data.resource.daily_rate === undefined ? '' : String(data.resource.daily_rate),
+      hourlyChargeMode: data.resource.hourly_charge_mode || null,
+      hourlyRate: data.resource.hourly_rate === null || data.resource.hourly_rate === undefined ? '' : String(data.resource.hourly_rate),
+      hourlyRates: ensureHourlyRatesLength(savedHourlyRates)
+    };
+    renderChargeConfigSummary();
 
     document.getElementById('sharedResourceTitle').textContent = 'Shared Resource: ' + (data.resource.short_description || '');
     setSharedResourceMessage('Shared resource saved.', false);
