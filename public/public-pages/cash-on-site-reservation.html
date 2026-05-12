@@ -29,9 +29,26 @@
         </dl>
       </section>
 
+      <section class="listing-form-section">
+        <h3>Guest Details</h3>
+        <div class="public-reservation-guest-grid">
+          <label for="guestFirstName">First name</label>
+          <input id="guestFirstName" type="text" maxlength="100" autocomplete="given-name" required />
+
+          <label for="guestFamilyName">Family name</label>
+          <input id="guestFamilyName" type="text" maxlength="100" autocomplete="family-name" required />
+
+          <label for="guestEmailAddress">Email address</label>
+          <input id="guestEmailAddress" type="email" maxlength="254" autocomplete="email" required />
+
+          <label for="guestTelephone">Telephone</label>
+          <input id="guestTelephone" type="tel" maxlength="60" autocomplete="tel" required />
+        </div>
+      </section>
+
       <div class="feed-actions">
         <button type="button" id="backToPaymentBtn" class="btn secondary">Back to Payment Selection</button>
-        <button type="button" id="submitReservationBtn" class="btn primary">Submit Reservation</button>
+        <button type="button" id="submitReservationBtn" class="btn primary">Confirm Reservation</button>
       </div>
     </div>
   </main>

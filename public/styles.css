@@ -1473,6 +1473,29 @@ textarea:focus {
   margin: 0;
 }
 
+.public-reservation-guest-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 0.6rem 1rem;
+  align-items: center;
+}
+
+.public-reservation-guest-grid label {
+  font-weight: 600;
+  color: #2b3550;
+}
+
+.public-reservation-guest-grid input,
+.public-reservation-guest-grid select {
+  min-width: 0;
+}
+
+@media (max-width: 700px) {
+  .public-reservation-guest-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .public-resource-reservations-wrap {
   margin-top: 1rem;
 }

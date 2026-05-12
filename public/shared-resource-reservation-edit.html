@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Edit Reservation</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="dashboard">
+    <div class="card-container wide">
+      <h2>Edit Reservation</h2>
+      <p id="reservationEditMessage" class="message"></p>
+
+      <section class="listing-form-section">
+        <div class="public-reservation-guest-grid">
+          <label for="editCheckinDate">Checkin date</label>
+          <input id="editCheckinDate" type="date" required />
+
+          <label for="editCheckoutDate">Checkout date</label>
+          <input id="editCheckoutDate" type="date" required />
+
+          <label for="editStartDate">Reservation start date</label>
+          <input id="editStartDate" type="date" required />
+
+          <label for="editStartTime">Reservation start time</label>
+          <input id="editStartTime" type="time" required />
+
+          <label for="editEndDate">Reservation end date</label>
+          <input id="editEndDate" type="date" required />
+
+          <label for="editEndTime">Reservation end time</label>
+          <input id="editEndTime" type="time" required />
+
+          <label for="editFirstName">First name</label>
+          <input id="editFirstName" type="text" maxlength="100" required />
+
+          <label for="editFamilyName">Family name</label>
+          <input id="editFamilyName" type="text" maxlength="100" required />
+
+          <label for="editEmailAddress">Email address</label>
+          <input id="editEmailAddress" type="email" maxlength="254" required />
+
+          <label for="editTelephone">Telephone</label>
+          <input id="editTelephone" type="tel" maxlength="60" required />
+
+          <label for="editReservationAmount">Amount (£)</label>
+          <input id="editReservationAmount" type="number" min="0" step="0.01" inputmode="decimal" />
+
+          <label for="editSpacesRequired">Spaces required</label>
+          <input id="editSpacesRequired" type="number" min="1" step="1" inputmode="numeric" required />
+
+          <label for="editStatus">Status</label>
+          <select id="editStatus" required>
+            <option value="cash">cash</option>
+            <option value="Cash Received">Cash Received</option>
+            <option value="Awaiting Bank Transfer">Awaiting Bank Transfer</option>
+            <option value="Bank Transfer Confirmed">Bank Transfer Confirmed</option>
+            <option value="Awaiting Online Confirmation">Awaiting Online Confirmation</option>
+            <option value="Online Confirmation Received">Online Confirmation Received</option>
+            <option value="Confirmed">Confirmed</option>
+          </select>
+        </div>
+      </section>
+
+      <div class="feed-actions">
+        <button type="button" id="backToResourceBtn" class="btn secondary">Back to Shared Resource</button>
+        <button type="button" id="saveReservationBtn" class="btn primary">Save Reservation</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="shared-resource-reservation-edit.js"></script>
+</body>
+</html>

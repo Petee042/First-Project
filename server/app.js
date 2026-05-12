@@ -528,10 +528,40 @@ async function initializeUserStore() {
       requested_start_at TIMESTAMPTZ NOT NULL,
       requested_end_at TIMESTAMPTZ NOT NULL,
       spaces_required INTEGER NOT NULL DEFAULT 1,
+      first_name TEXT NOT NULL DEFAULT '',
+      family_name TEXT NOT NULL DEFAULT '',
+      email_address TEXT NOT NULL DEFAULT '',
+      telephone TEXT NOT NULL DEFAULT '',
+      reservation_amount NUMERIC(10,2),
       status TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS family_name TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS email_address TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS telephone TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS reservation_amount NUMERIC(10,2)
   `);
 
   await migrateUsersFromFile();
@@ -698,6 +728,33 @@ const SHARED_RESOURCE_RESERVATION_STATUSES = new Set([
 function normaliseSharedResourceReservationStatus(value) {
   const status = String(value || '').trim();
   return SHARED_RESOURCE_RESERVATION_STATUSES.has(status) ? status : null;
+}
+
+function normaliseSharedResourceReservationText(value, maxLen) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return null;
+  }
+  return text.slice(0, maxLen || 200);
+}
+
+function normaliseSharedResourceReservationEmail(value) {
+  const email = String(value || '').trim().toLowerCase();
+  if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
+    return null;
+  }
+  return email.slice(0, 254);
+}
+
+function normaliseSharedResourceReservationAmount(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return Number(parsed.toFixed(2));
 }
 
 function getDefaultSharedResourceReservationStatus(resource) {
@@ -1724,6 +1781,11 @@ async function getSharedResourceReservationsByResourceId(resourceId) {
         requested_start_at: String(row.requested_start_at || ''),
         requested_end_at: String(row.requested_end_at || ''),
         spaces_required: normaliseSharedResourceMaxUnits(row.spaces_required) || 1,
+        first_name: String(row.first_name || ''),
+        family_name: String(row.family_name || ''),
+        email_address: String(row.email_address || ''),
+        telephone: String(row.telephone || ''),
+        reservation_amount: normaliseSharedResourceReservationAmount(row.reservation_amount),
         status: normaliseSharedResourceReservationStatus(row.status) || 'Confirmed',
         created_at: row.created_at,
         updated_at: row.updated_at
@@ -1736,7 +1798,9 @@ async function getSharedResourceReservationsByResourceId(resourceId) {
       SELECT id, user_id, shared_resource_id, reservation_identifier, listing_id,
              reservation_checkin_date::text AS reservation_checkin_date,
              reservation_checkout_date::text AS reservation_checkout_date,
-             requested_start_at, requested_end_at, spaces_required, status, created_at, updated_at
+              requested_start_at, requested_end_at, spaces_required,
+              first_name, family_name, email_address, telephone, reservation_amount,
+              status, created_at, updated_at
       FROM shared_resource_reservations
       WHERE shared_resource_id = $1
       ORDER BY requested_start_at ASC, id ASC
@@ -1889,6 +1953,11 @@ async function createSharedResourceReservation(input) {
       requested_start_at: input.requestedStartAt,
       requested_end_at: input.requestedEndAt,
       spaces_required: normaliseSharedResourceMaxUnits(input.spacesRequired) || 1,
+      first_name: String(input.firstName || ''),
+      family_name: String(input.familyName || ''),
+      email_address: String(input.emailAddress || ''),
+      telephone: String(input.telephone || ''),
+      reservation_amount: normaliseSharedResourceReservationAmount(input.reservationAmount),
       status,
       created_at: now,
       updated_at: now
@@ -1904,13 +1973,17 @@ async function createSharedResourceReservation(input) {
       INSERT INTO shared_resource_reservations (
         user_id, shared_resource_id, reservation_identifier, listing_id,
         reservation_checkin_date, reservation_checkout_date,
-        requested_start_at, requested_end_at, spaces_required, status
+        requested_start_at, requested_end_at, spaces_required,
+        first_name, family_name, email_address, telephone, reservation_amount,
+        status
       )
-      VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::timestamptz, $8::timestamptz, $9, $10)
+      VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::timestamptz, $8::timestamptz, $9, $10, $11, $12, $13, $14)
       RETURNING id, user_id, shared_resource_id, reservation_identifier, listing_id,
                 reservation_checkin_date::text AS reservation_checkin_date,
                 reservation_checkout_date::text AS reservation_checkout_date,
-                requested_start_at, requested_end_at, spaces_required, status, created_at, updated_at
+                requested_start_at, requested_end_at, spaces_required,
+                first_name, family_name, email_address, telephone, reservation_amount,
+                status, created_at, updated_at
     `,
     [
       input.userId,
@@ -1922,6 +1995,11 @@ async function createSharedResourceReservation(input) {
       input.requestedStartAt,
       input.requestedEndAt,
       normaliseSharedResourceMaxUnits(input.spacesRequired) || 1,
+      String(input.firstName || ''),
+      String(input.familyName || ''),
+      String(input.emailAddress || ''),
+      String(input.telephone || ''),
+      normaliseSharedResourceReservationAmount(input.reservationAmount),
       status
     ]
   );
@@ -1966,6 +2044,121 @@ async function updateSharedResourceReservationStatusForUser(reservationId, resou
   if (!result.rows[0]) {
     return { error: 'Reservation not found.' };
   }
+  return { reservation: result.rows[0] };
+}
+
+async function getSharedResourceReservationByIdForUser(reservationId, resourceId, userId) {
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const row = (store.shared_resource_reservations || []).find((entry) =>
+      Number(entry.id) === Number(reservationId)
+      && Number(entry.shared_resource_id) === Number(resourceId)
+      && Number(entry.user_id) === Number(userId)
+    );
+    return row || null;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, user_id, shared_resource_id, reservation_identifier, listing_id,
+             reservation_checkin_date::text AS reservation_checkin_date,
+             reservation_checkout_date::text AS reservation_checkout_date,
+             requested_start_at, requested_end_at, spaces_required,
+             first_name, family_name, email_address, telephone, reservation_amount,
+             status, created_at, updated_at
+      FROM shared_resource_reservations
+      WHERE id = $1 AND shared_resource_id = $2 AND user_id = $3
+      LIMIT 1
+    `,
+    [reservationId, resourceId, userId]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function updateSharedResourceReservationForUser(reservationId, resourceId, userId, input) {
+  const nextStatus = normaliseSharedResourceReservationStatus(input.status);
+  if (!nextStatus) {
+    return { error: 'Invalid reservation status.' };
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const idx = (store.shared_resource_reservations || []).findIndex((row) =>
+      Number(row.id) === Number(reservationId)
+      && Number(row.shared_resource_id) === Number(resourceId)
+      && Number(row.user_id) === Number(userId)
+    );
+    if (idx < 0) {
+      return { error: 'Reservation not found.' };
+    }
+
+    const current = store.shared_resource_reservations[idx];
+    current.reservation_checkin_date = input.reservationCheckinDate;
+    current.reservation_checkout_date = input.reservationCheckoutDate;
+    current.requested_start_at = input.requestedStartAt;
+    current.requested_end_at = input.requestedEndAt;
+    current.listing_id = normaliseOptionalPositiveInteger(input.listingId);
+    current.spaces_required = normaliseSharedResourceMaxUnits(input.spacesRequired) || 1;
+    current.first_name = String(input.firstName || '');
+    current.family_name = String(input.familyName || '');
+    current.email_address = String(input.emailAddress || '');
+    current.telephone = String(input.telephone || '');
+    current.reservation_amount = normaliseSharedResourceReservationAmount(input.reservationAmount);
+    current.status = nextStatus;
+    current.updated_at = new Date().toISOString();
+
+    writeListingsStore(store);
+    return { reservation: current };
+  }
+
+  const result = await pool.query(
+    `
+      UPDATE shared_resource_reservations
+      SET reservation_checkin_date = $1::date,
+          reservation_checkout_date = $2::date,
+          requested_start_at = $3::timestamptz,
+          requested_end_at = $4::timestamptz,
+          listing_id = $5,
+          spaces_required = $6,
+          first_name = $7,
+          family_name = $8,
+          email_address = $9,
+          telephone = $10,
+          reservation_amount = $11,
+          status = $12,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $13 AND shared_resource_id = $14 AND user_id = $15
+      RETURNING id, user_id, shared_resource_id, reservation_identifier, listing_id,
+                reservation_checkin_date::text AS reservation_checkin_date,
+                reservation_checkout_date::text AS reservation_checkout_date,
+                requested_start_at, requested_end_at, spaces_required,
+                first_name, family_name, email_address, telephone, reservation_amount,
+                status, created_at, updated_at
+    `,
+    [
+      input.reservationCheckinDate,
+      input.reservationCheckoutDate,
+      input.requestedStartAt,
+      input.requestedEndAt,
+      normaliseOptionalPositiveInteger(input.listingId),
+      normaliseSharedResourceMaxUnits(input.spacesRequired) || 1,
+      String(input.firstName || ''),
+      String(input.familyName || ''),
+      String(input.emailAddress || ''),
+      String(input.telephone || ''),
+      normaliseSharedResourceReservationAmount(input.reservationAmount),
+      nextStatus,
+      reservationId,
+      resourceId,
+      userId
+    ]
+  );
+
+  if (!result.rows[0]) {
+    return { error: 'Reservation not found.' };
+  }
+
   return { reservation: result.rows[0] };
 }
 
@@ -4683,6 +4876,105 @@ app.post('/api/public/shared-resources/:resourceId/check-availability', async (r
   }
 });
 
+// POST /api/public/shared-resources/:resourceId/reservations — create a public reservation (cash flow)
+app.post('/api/public/shared-resources/:resourceId/reservations', async (req, res) => {
+  const resourceId = Number(req.params.resourceId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0) {
+    return res.status(400).json({ error: 'Invalid shared resource id.' });
+  }
+
+  const requestedStartAtRaw = String(req.body.requestedStartAt || '').trim();
+  const requestedEndAtRaw = String(req.body.requestedEndAt || '').trim();
+  const requestedStartAt = new Date(requestedStartAtRaw);
+  const requestedEndAt = new Date(requestedEndAtRaw);
+
+  if (Number.isNaN(requestedStartAt.getTime()) || Number.isNaN(requestedEndAt.getTime()) || requestedEndAt.getTime() <= requestedStartAt.getTime()) {
+    return res.status(400).json({ error: 'Requested end must be after requested start.' });
+  }
+
+  const checkinDate = normaliseDateKey(req.body.checkinDate) || getDateKeyFromEventDateTime(requestedStartAtRaw);
+  const checkoutDate = normaliseDateKey(req.body.checkoutDate) || getDateKeyFromEventDateTime(requestedEndAtRaw);
+  if (!checkinDate || !checkoutDate) {
+    return res.status(400).json({ error: 'Checkin and checkout dates are required.' });
+  }
+
+  const firstName = normaliseSharedResourceReservationText(req.body.firstName, 100);
+  const familyName = normaliseSharedResourceReservationText(req.body.familyName, 100);
+  const emailAddress = normaliseSharedResourceReservationEmail(req.body.emailAddress);
+  const telephone = normaliseSharedResourceReservationText(req.body.telephone, 60);
+  const reservationAmount = normaliseSharedResourceReservationAmount(req.body.reservationAmount);
+  if (!firstName || !familyName || !emailAddress || !telephone) {
+    return res.status(400).json({ error: 'First name, family name, email address and telephone are required.' });
+  }
+
+  try {
+    const resource = await getSharedResourceByIdPublic(resourceId);
+    if (!resource) {
+      return res.status(404).json({ error: 'Shared resource not found.' });
+    }
+    if (resource.cash_on_site !== true) {
+      return res.status(400).json({ error: 'Cash on site is not enabled for this resource.' });
+    }
+
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const maxDays = normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365;
+    const latestAllowed = new Date(now.getTime());
+    latestAllowed.setDate(latestAllowed.getDate() + maxDays);
+    const checkinTime = new Date(checkinDate + 'T00:00:00');
+    if (checkinTime.getTime() > latestAllowed.getTime()) {
+      return res.status(400).json({ error: 'Requested checkin exceeds max days advance booking.' });
+    }
+
+    const listingIds = await getListingIdsForSharedResource(resource);
+    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
+    if (!matchingListingId) {
+      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
+    }
+
+    const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
+    const maxUnits = normaliseSharedResourceMaxUnits(resource.max_units) || 1;
+    const requestedSpacesRaw = normaliseSharedResourceMaxUnits(req.body.spacesRequired) || 1;
+    const requestedSpaces = resource.resource_type === 'parking'
+      ? Math.min(maxUnits, Math.max(1, requestedSpacesRaw))
+      : 1;
+
+    const conflict = findCapacityConflictPeriod(
+      existingReservations,
+      requestedStartAt.toISOString(),
+      requestedEndAt.toISOString(),
+      requestedSpaces,
+      maxUnits
+    );
+    if (conflict) {
+      return res.status(409).json({ error: 'Not fully available for your requested dates.' });
+    }
+
+    const reservation = await createSharedResourceReservation({
+      userId: resource.user_id,
+      sharedResourceId: resourceId,
+      reservationIdentifier: 'SR-' + resourceId + '-' + Date.now(),
+      listingId: matchingListingId,
+      reservationCheckinDate: checkinDate,
+      reservationCheckoutDate: checkoutDate,
+      requestedStartAt: requestedStartAt.toISOString(),
+      requestedEndAt: requestedEndAt.toISOString(),
+      spacesRequired: requestedSpaces,
+      firstName,
+      familyName,
+      emailAddress,
+      telephone,
+      reservationAmount,
+      status: 'cash'
+    });
+
+    return res.status(201).json({ reservation });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create reservation.' });
+  }
+});
+
 // PUT /api/shared-resources/:resourceId — update shared resource
 app.put('/api/shared-resources/:resourceId', requireAuth, async (req, res) => {
   const resourceId = Number(req.params.resourceId);
@@ -4759,6 +5051,128 @@ app.put('/api/shared-resources/:resourceId/reservations/:reservationId/status', 
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to update reservation status.' });
+  }
+});
+
+// GET /api/shared-resources/:resourceId/reservations/:reservationId — load one reservation for editing
+app.get('/api/shared-resources/:resourceId/reservations/:reservationId', requireAuth, async (req, res) => {
+  const resourceId = Number(req.params.resourceId);
+  const reservationId = Number(req.params.reservationId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0 || !Number.isInteger(reservationId) || reservationId <= 0) {
+    return res.status(400).json({ error: 'Invalid resource or reservation id.' });
+  }
+
+  try {
+    const resource = await getSharedResourceByIdForUser(resourceId, req.session.userId);
+    if (!resource) {
+      return res.status(404).json({ error: 'Shared resource not found.' });
+    }
+
+    const reservation = await getSharedResourceReservationByIdForUser(reservationId, resourceId, req.session.userId);
+    if (!reservation) {
+      return res.status(404).json({ error: 'Reservation not found.' });
+    }
+
+    return res.json({ reservation });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load reservation.' });
+  }
+});
+
+// PUT /api/shared-resources/:resourceId/reservations/:reservationId — edit reservation details
+app.put('/api/shared-resources/:resourceId/reservations/:reservationId', requireAuth, async (req, res) => {
+  const resourceId = Number(req.params.resourceId);
+  const reservationId = Number(req.params.reservationId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0 || !Number.isInteger(reservationId) || reservationId <= 0) {
+    return res.status(400).json({ error: 'Invalid resource or reservation id.' });
+  }
+
+  const requestedStartAtRaw = String(req.body.requestedStartAt || '').trim();
+  const requestedEndAtRaw = String(req.body.requestedEndAt || '').trim();
+  const requestedStartAt = new Date(requestedStartAtRaw);
+  const requestedEndAt = new Date(requestedEndAtRaw);
+  if (Number.isNaN(requestedStartAt.getTime()) || Number.isNaN(requestedEndAt.getTime()) || requestedEndAt.getTime() <= requestedStartAt.getTime()) {
+    return res.status(400).json({ error: 'Requested end must be after requested start.' });
+  }
+
+  const checkinDate = normaliseDateKey(req.body.checkinDate) || getDateKeyFromEventDateTime(requestedStartAtRaw);
+  const checkoutDate = normaliseDateKey(req.body.checkoutDate) || getDateKeyFromEventDateTime(requestedEndAtRaw);
+  if (!checkinDate || !checkoutDate) {
+    return res.status(400).json({ error: 'Checkin and checkout dates are required.' });
+  }
+
+  const firstName = normaliseSharedResourceReservationText(req.body.firstName, 100);
+  const familyName = normaliseSharedResourceReservationText(req.body.familyName, 100);
+  const emailAddress = normaliseSharedResourceReservationEmail(req.body.emailAddress);
+  const telephone = normaliseSharedResourceReservationText(req.body.telephone, 60);
+  const reservationAmount = normaliseSharedResourceReservationAmount(req.body.reservationAmount);
+  const status = normaliseSharedResourceReservationStatus(req.body.status);
+  if (!firstName || !familyName || !emailAddress || !telephone || !status) {
+    return res.status(400).json({ error: 'First name, family name, email address, telephone and status are required.' });
+  }
+
+  try {
+    const resource = await getSharedResourceByIdForUser(resourceId, req.session.userId);
+    if (!resource) {
+      return res.status(404).json({ error: 'Shared resource not found.' });
+    }
+
+    const listingIds = await getListingIdsForSharedResource(resource);
+    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
+    if (!matchingListingId) {
+      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
+    }
+
+    const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
+    const maxUnits = normaliseSharedResourceMaxUnits(resource.max_units) || 1;
+    const requestedSpacesRaw = normaliseSharedResourceMaxUnits(req.body.spacesRequired) || 1;
+    const requestedSpaces = resource.resource_type === 'parking'
+      ? Math.min(maxUnits, Math.max(1, requestedSpacesRaw))
+      : 1;
+
+    const conflict = findCapacityConflictPeriod(
+      existingReservations.filter((row) => Number(row.id) !== reservationId),
+      requestedStartAt.toISOString(),
+      requestedEndAt.toISOString(),
+      requestedSpaces,
+      maxUnits
+    );
+    if (conflict) {
+      return res.status(409).json({ error: 'Not fully available for the updated requested dates.' });
+    }
+
+    const result = await updateSharedResourceReservationForUser(
+      reservationId,
+      resourceId,
+      req.session.userId,
+      {
+        reservationCheckinDate: checkinDate,
+        reservationCheckoutDate: checkoutDate,
+        requestedStartAt: requestedStartAt.toISOString(),
+        requestedEndAt: requestedEndAt.toISOString(),
+        listingId: matchingListingId,
+        spacesRequired: requestedSpaces,
+        firstName,
+        familyName,
+        emailAddress,
+        telephone,
+        reservationAmount,
+        status
+      }
+    );
+
+    if (result.error === 'Reservation not found.') {
+      return res.status(404).json({ error: result.error });
+    }
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    return res.json({ reservation: result.reservation });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to update reservation.' });
   }
 });
 

@@ -548,6 +548,15 @@ function formatAdminDateTime(value) {
   return parsed.toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 }
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function renderAdminReservationsTable(reservations) {
   const body = document.getElementById('adminSharedReservationsBody');
   if (!body) {
@@ -556,21 +565,20 @@ function renderAdminReservationsTable(reservations) {
 
   const rows = Array.isArray(reservations) ? reservations : [];
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="5" class="public-resource-reservations-empty">No reservations yet.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="public-resource-reservations-empty">No reservations yet.</td></tr>';
     return;
   }
 
   body.innerHTML = rows.map((row) => {
     const reservationId = row.reservation_identifier || String(row.id || '');
-    const spaces = Number.isInteger(Number(row.spaces_required)) && Number(row.spaces_required) > 0
-      ? Number(row.spaces_required)
-      : 1;
+    const familyName = String(row.family_name || '');
     return '<tr>'
-      + '<td>' + reservationId + '</td>'
+      + '<td>' + escapeHtml(reservationId) + '</td>'
       + '<td>' + formatAdminDateTime(row.requested_start_at) + '</td>'
       + '<td>' + formatAdminDateTime(row.requested_end_at) + '</td>'
-      + '<td>' + spaces + '</td>'
-      + '<td>' + String(row.status || '') + '</td>'
+      + '<td>' + escapeHtml(familyName) + '</td>'
+      + '<td>' + escapeHtml(String(row.status || '')) + '</td>'
+      + '<td><button type="button" class="btn secondary" data-edit-reservation-id="' + String(row.id || '') + '">Edit Reservation</button></td>'
       + '</tr>';
   }).join('');
 }
@@ -638,6 +646,18 @@ document.getElementById('sharedResourceListingId').addEventListener('change', ()
   }
   document.getElementById('sharedResourcePropertyId').value = String(listing.property_id || '');
   renderListingOptions(listingId);
+});
+
+document.getElementById('adminSharedReservationsBody').addEventListener('click', (event) => {
+  const button = event.target && event.target.closest ? event.target.closest('button[data-edit-reservation-id]') : null;
+  if (!button) {
+    return;
+  }
+  const reservationId = Number(button.getAttribute('data-edit-reservation-id'));
+  if (!Number.isInteger(reservationId) || reservationId <= 0) {
+    return;
+  }
+  window.location.href = 'shared-resource-reservation-edit.html?resourceId=' + encodeURIComponent(resourceId) + '&reservationId=' + encodeURIComponent(reservationId);
 });
 
 document.getElementById('paymentFreeOfCharge').addEventListener('change', () => {

@@ -450,6 +450,9 @@ function getReservationPageUrl(paymentKey) {
   const startTime = document.getElementById('requestedBookingStartTime') ? document.getElementById('requestedBookingStartTime').value : '';
   const endDate = document.getElementById('requestedBookingEndDate') ? document.getElementById('requestedBookingEndDate').value : '';
   const endTime = document.getElementById('requestedBookingEndTime') ? document.getElementById('requestedBookingEndTime').value : '';
+  const checkinDate = document.getElementById('guestCheckinDate') ? document.getElementById('guestCheckinDate').value : '';
+  const checkoutDate = document.getElementById('guestCheckoutDate') ? document.getElementById('guestCheckoutDate').value : '';
+  const spacesRequired = document.getElementById('spacesRequired') ? document.getElementById('spacesRequired').value : '';
   const startDateTime = (startDate && startTime) ? (startDate + 'T' + startTime) : '';
   const endDateTime = (endDate && endTime) ? (endDate + 'T' + endTime) : '';
   const price = currentCalculatedRate !== null ? String(currentCalculatedRate) : '';
@@ -459,6 +462,9 @@ function getReservationPageUrl(paymentKey) {
     + '&paymentOption=' + encodeURIComponent(paymentKey)
     + (startDateTime ? '&startDateTime=' + encodeURIComponent(startDateTime) : '')
     + (endDateTime ? '&endDateTime=' + encodeURIComponent(endDateTime) : '')
+    + (checkinDate ? '&checkinDate=' + encodeURIComponent(checkinDate) : '')
+    + (checkoutDate ? '&checkoutDate=' + encodeURIComponent(checkoutDate) : '')
+    + (spacesRequired ? '&spacesRequired=' + encodeURIComponent(spacesRequired) : '')
     + (price !== '' ? '&price=' + encodeURIComponent(price) : '');
 }
 
