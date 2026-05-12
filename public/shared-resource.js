@@ -704,6 +704,12 @@ document.getElementById('saveChargeConfigBtn').addEventListener('click', () => {
   renderChargeConfigSummary();
   getChargeDialog().close();
   setSharedResourceMessage('', false);
+
+  // Persist charge logic immediately so booking page cannot read stale values.
+  const form = document.getElementById('sharedResourceForm');
+  if (form) {
+    form.requestSubmit();
+  }
 });
 
 document.querySelectorAll('.editor-btn').forEach((button) => {
