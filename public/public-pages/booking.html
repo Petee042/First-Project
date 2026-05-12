@@ -78,18 +78,12 @@
             </div>
           </div>
 
-          <div class="feed-actions public-booking-actions">
-            <button type="button" id="checkAvailabilityBtn" class="btn primary">Check Availability</button>
-          </div>
-
-          <div id="bookingPaymentSelectionRow" class="calendar-source-row public-booking-payment-selection-row hidden">
-            <label for="bookingPaymentSelect">Payment Option</label>
-            <div class="public-booking-payment-selection-wrap">
-              <select id="bookingPaymentSelect" class="public-booking-payment-select">
-                <option value="">Select a payment option</option>
-              </select>
-              <button type="button" id="reserveBtn" class="btn primary">Reserve</button>
-            </div>
+          <div id="bookingActionRow" class="public-booking-action-row">
+            <button type="button" id="checkAvailabilityBtn" class="btn primary public-booking-action-btn">Check Availability</button>
+            <select id="bookingPaymentSelect" class="public-booking-payment-select">
+              <option value="">Select a payment option</option>
+            </select>
+            <button type="button" id="reserveBtn" class="btn primary public-booking-action-btn">Reserve</button>
           </div>
         </form>
       </section>

@@ -1,78 +1,45 @@
 'use strict';
 
 let currentResource = null;
-let activeBookingPaymentKey = null;
+let availabilityConfirmed = false;
 
 function setBookingMessage(text, isError) {
   const el = document.getElementById('publicBookingMessage');
+  if (!el) {
+    return;
+  }
   el.textContent = text || '';
   el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
+}
+
+function getResourceIdFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const direct = Number(params.get('resourceId'));
+  if (Number.isInteger(direct) && direct > 0) {
+    return direct;
+  }
+
+  const fallback = Number(params.get('id'));
+  if (Number.isInteger(fallback) && fallback > 0) {
+    return fallback;
+  }
+
+  return null;
 }
 
 function getEnabledPaymentOptions(resource) {
   if (!resource) {
     return [];
   }
+
   const options = [
-    { key: 'free_of_charge', label: 'Free Of Charge', enabled: resource.free_of_charge === true, messageHtml: resource.free_of_charge_message_html || '' },
-    { key: 'cash_on_site', label: 'Cash On Site', enabled: resource.cash_on_site === true, messageHtml: resource.cash_on_site_message_html || '' },
-    { key: 'bank_transfer', label: 'Bank Transfer', enabled: resource.bank_transfer === true, messageHtml: resource.bank_transfer_message_html || '' },
-    { key: 'online_payment', label: 'Online Payment', enabled: resource.online_payment === true, messageHtml: resource.online_payment_message_html || '' }
+    { key: 'free_of_charge', label: 'Free Of Charge', enabled: resource.free_of_charge === true },
+    { key: 'cash_on_site', label: 'Cash On Site', enabled: resource.cash_on_site === true },
+    { key: 'bank_transfer', label: 'Bank Transfer', enabled: resource.bank_transfer === true },
+    { key: 'online_payment', label: 'Online Payment', enabled: resource.online_payment === true }
   ];
+
   return options.filter((option) => option.enabled);
-}
-
-function renderBookingPaymentMessage(optionKey) {
-  const container = document.getElementById('bookingPaymentMessage');
-  if (!container || !currentResource) {
-    return;
-  }
-
-  const options = getEnabledPaymentOptions(currentResource);
-  const selected = options.find((option) => option.key === optionKey) || null;
-  if (!selected) {
-    container.innerHTML = '<p class="public-booking-placeholder">No payment message available.</p>';
-    return;
-  }
-
-  const html = String(selected.messageHtml || '').trim();
-  container.innerHTML = html || '<p class="public-booking-placeholder">No payment message configured for this option.</p>';
-}
-
-function renderBookingPaymentOptions(resource) {
-  const container = document.getElementById('bookingPaymentOptions');
-  if (!container) {
-    return;
-  }
-
-  const options = getEnabledPaymentOptions(resource);
-  if (!options.length) {
-    container.innerHTML = '<p class="public-booking-placeholder">No payment options are currently available for this resource.</p>';
-    activeBookingPaymentKey = null;
-    renderBookingPaymentMessage(null);
-    return;
-  }
-
-  if (!options.some((option) => option.key === activeBookingPaymentKey)) {
-    activeBookingPaymentKey = options[0].key;
-  }
-
-  container.innerHTML = options.map((option) => {
-    const checked = option.key === activeBookingPaymentKey ? ' checked' : '';
-    return '<label class="public-booking-payment-option">'
-      + '<input type="radio" name="bookingPaymentOption" value="' + option.key + '"' + checked + ' />'
-      + '<span>' + option.label + '</span>'
-      + '</label>';
-  }).join('');
-
-  Array.from(container.querySelectorAll('input[name="bookingPaymentOption"]')).forEach((input) => {
-    input.addEventListener('change', () => {
-      activeBookingPaymentKey = input.value;
-      renderBookingPaymentMessage(activeBookingPaymentKey);
-    });
-  });
-
-  renderBookingPaymentMessage(activeBookingPaymentKey);
 }
 
 function populatePaymentSelectionDropdown(resource) {
@@ -94,102 +61,6 @@ function populatePaymentSelectionDropdown(resource) {
   if (options.length > 0) {
     select.value = options[0].key;
   }
-}
-
-function getReservationPageUrl(paymentKey) {
-  const resourceId = getResourceIdFromUrl();
-  const pageMap = {
-    free_of_charge: 'free-of-charge-reservation.html',
-    cash_on_site: 'cash-on-site-reservation.html',
-    bank_transfer: 'bank-transfer-reservation.html',
-    online_payment: 'online-payment-reservation.html'
-  };
-  const pageName = pageMap[paymentKey] || 'free-of-charge-reservation.html';
-  return pageName + '?resourceId=' + encodeURIComponent(resourceId) + '&paymentOption=' + encodeURIComponent(paymentKey);
-}
-
-function renderBookingPaymentOptions(resource) {
-  const container = document.getElementById('bookingPaymentOptions');
-  if (!container) {
-    return;
-  }
-
-  const options = getEnabledPaymentOptions(resource);
-  if (!options.length) {
-    container.innerHTML = '<p class="public-booking-placeholder">No payment options are currently available for this resource.</p>';
-    activeBookingPaymentKey = null;
-    renderBookingPaymentMessage(null);
-    return;
-  }
-
-  if (!options.some((option) => option.key === activeBookingPaymentKey)) {
-    activeBookingPaymentKey = options[0].key;
-  }
-
-  container.innerHTML = options.map((option) => {
-    const checked = option.key === activeBookingPaymentKey ? ' checked' : '';
-    return '<label class="public-booking-payment-option">'
-      + '<input type="radio" name="bookingPaymentOption" value="' + option.key + '"' + checked + ' />'
-      + '<span>' + option.label + '</span>'
-      + '</label>';
-  }).join('');
-
-  Array.from(container.querySelectorAll('input[name="bookingPaymentOption"]')).forEach((input) => {
-    input.addEventListener('change', () => {
-      activeBookingPaymentKey = input.value;
-      renderBookingPaymentMessage(activeBookingPaymentKey);
-    });
-  });
-
-  renderBookingPaymentMessage(activeBookingPaymentKey);
-}
-
-function showBookingPaymentSelectionStep() {
-  const requestSection = document.getElementById('bookingRequestSection');
-  const selectionRow = document.getElementById('bookingPaymentSelectionRow');
-  if (!requestSection || !selectionRow) {
-    return;
-  }
-
-  requestSection.classList.add('hidden');
-  selectionRow.classList.remove('hidden');
-}
-
-function showBookingRequestStep() {
-  const requestSection = document.getElementById('bookingRequestSection');
-  const selectionRow = document.getElementById('bookingPaymentSelectionRow');
-  if (!requestSection || !selectionRow) {
-    return;
-  }
-
-  selectionRow.classList.add('hidden');
-  requestSection.classList.remove('hidden');
-}
-
-function showBookingPaymentStep() {
-  const requestSection = document.getElementById('bookingRequestSection');
-  const paymentSection = document.getElementById('bookingPaymentSection');
-  if (!requestSection || !paymentSection) {
-    return;
-  }
-
-  requestSection.classList.add('hidden');
-  paymentSection.classList.remove('hidden');
-}
-
-function showBookingRequestStep() {
-
-function getResourceIdFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const direct = Number(params.get('resourceId'));
-  if (Number.isInteger(direct) && direct > 0) {
-    return direct;
-  }
-  const fallback = Number(params.get('id'));
-  if (Number.isInteger(fallback) && fallback > 0) {
-    return fallback;
-  }
-  return null;
 }
 
 function syncMirroredField(sourceId, targetId) {
@@ -216,43 +87,12 @@ function syncMirroredField(sourceId, targetId) {
   });
 }
 
-function initialiseBookingRequestForm() {
-  syncMirroredField('guestCheckinDate', 'requestedBookingStartDate');
-  syncMirroredField('guestCheckinTime', 'requestedBookingStartTime');
-  syncMirroredField('guestCheckoutDate', 'requestedBookingEndDate');
-  syncMirroredField('guestCheckoutTime', 'requestedBookingEndTime');
-
-  const form = document.getElementById('publicBookingRequestForm');
-  if (form) {
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-    });
-  }
-
-  const backBtn = document.getElementById('backToBookingDetailsBtn');
-  if (backBtn) {
-    backBtn.addEventListener('click', () => {
-      showBookingRequestStep();
-    });
-  }
-
-  const reserveBtn = document.getElementById('reserveBtn');
-  if (reserveBtn) {
-    reserveBtn.addEventListener('click', () => {
-      const select = document.getElementById('bookingPaymentSelect');
-      if (!select || !select.value) {
-        setBookingMessage('Please select a payment option.', true);
-        return;
-      }
-      const url = getReservationPageUrl(select.value);
-      window.location.href = url;
-    });
-  }
-}
-
 function configureSpacesRequiredInput(maxValue) {
   const input = document.getElementById('spacesRequired');
   const hint = document.getElementById('spacesRequiredHint');
+  if (!input) {
+    return;
+  }
 
   input.min = '1';
   input.step = '1';
@@ -309,9 +149,54 @@ function getCheckAvailabilityPayload(resource) {
       requestedStartTime,
       requestedEndDate,
       requestedEndTime,
-      spacesRequired: resource && resource.resource_type === 'parking' ? spacesRequired : 1
+      spacesRequired: resource && String(resource.resource_type || '').toLowerCase() === 'parking' ? spacesRequired : 1
     }
   };
+}
+
+function getReservationPageUrl(paymentKey) {
+  const resourceId = getResourceIdFromUrl();
+  const pageMap = {
+    free_of_charge: 'free-of-charge-reservation.html',
+    cash_on_site: 'cash-on-site-reservation.html',
+    bank_transfer: 'bank-transfer-reservation.html',
+    online_payment: 'online-payment-reservation.html'
+  };
+
+  const pageName = pageMap[paymentKey] || 'free-of-charge-reservation.html';
+  return pageName + '?resourceId=' + encodeURIComponent(resourceId) + '&paymentOption=' + encodeURIComponent(paymentKey);
+}
+
+function initialiseBookingRequestForm() {
+  syncMirroredField('guestCheckinDate', 'requestedBookingStartDate');
+  syncMirroredField('guestCheckinTime', 'requestedBookingStartTime');
+  syncMirroredField('guestCheckoutDate', 'requestedBookingEndDate');
+  syncMirroredField('guestCheckoutTime', 'requestedBookingEndTime');
+
+  const form = document.getElementById('publicBookingRequestForm');
+  if (form) {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+    });
+  }
+
+  const reserveBtn = document.getElementById('reserveBtn');
+  if (reserveBtn) {
+    reserveBtn.addEventListener('click', () => {
+      const select = document.getElementById('bookingPaymentSelect');
+      if (!select || !select.value) {
+        setBookingMessage('Please select a payment option.', true);
+        return;
+      }
+
+      if (!availabilityConfirmed) {
+        setBookingMessage('Please check availability before reserving.', true);
+        return;
+      }
+
+      window.location.href = getReservationPageUrl(select.value);
+    });
+  }
 }
 
 function setupCheckAvailability(resourceId) {
@@ -333,21 +218,23 @@ function setupCheckAvailability(resourceId) {
     }
 
     button.disabled = true;
+    availabilityConfirmed = false;
+
     try {
       const res = await fetch('/api/public/shared-resources/' + resourceId + '/check-availability', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(prepared.payload)
       });
+
       const data = await res.json();
       if (!res.ok) {
         setBookingMessage(data.error || 'Availability check failed.', true);
         return;
       }
 
+      availabilityConfirmed = true;
       setBookingMessage(data.message || 'Availability Confirmed', false);
-      populatePaymentSelectionDropdown(currentResource);
-      showBookingPaymentSelectionStep();
     } catch {
       setBookingMessage('Network error checking availability.', true);
     } finally {
@@ -372,10 +259,12 @@ async function loadPublicResource() {
 
   const resource = data.resource;
   currentResource = resource;
-  activeBookingPaymentKey = null;
+  availabilityConfirmed = false;
+
   document.getElementById('publicBookingResourceName').textContent = resource.short_description || 'Shared Resource';
   document.getElementById('publicBookingDescription').innerHTML = resource.full_description_html || '<p>No description provided.</p>';
-  renderBookingPaymentOptions(resource);
+
+  populatePaymentSelectionDropdown(resource);
 
   const spacesRow = document.getElementById('bookingSpacesRequiredRow');
   const spacesInput = document.getElementById('spacesRequired');
