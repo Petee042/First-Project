@@ -3,8 +3,28 @@
 const params = new URLSearchParams(window.location.search);
 const resourceId = Number(params.get('resourceId'));
 const paymentOption = String(params.get('paymentOption') || '');
+const startDateTimeParam = params.get('startDateTime') || '';
+const endDateTimeParam = params.get('endDateTime') || '';
+const priceParam = params.get('price') || '';
 
 let currentResource = null;
+
+function formatReservationDateTime(isoStr) {
+  if (!isoStr) return '-';
+  const d = new Date(isoStr);
+  if (isNaN(d.getTime())) return isoStr;
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function renderReservationDetails() {
+  const startEl = document.getElementById('reservationStart');
+  const endEl = document.getElementById('reservationEnd');
+  const priceEl = document.getElementById('reservationPrice');
+
+  if (startEl) startEl.textContent = formatReservationDateTime(startDateTimeParam);
+  if (endEl) endEl.textContent = formatReservationDateTime(endDateTimeParam);
+  if (priceEl) priceEl.textContent = priceParam !== '' ? '$' + Number(priceParam).toFixed(2) : '-';
+}
 
 function setReservationMessage(text, isError) {
   const el = document.getElementById('reservationMessage');
@@ -67,6 +87,7 @@ async function loadPublicResource() {
 (async () => {
   try {
     await loadPublicResource();
+    renderReservationDetails();
   } catch (err) {
     setReservationMessage(err.message || 'Failed to initialize reservation page.', true);
   }

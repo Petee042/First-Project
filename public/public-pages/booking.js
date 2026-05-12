@@ -2,6 +2,7 @@
 
 let currentResource = null;
 let availabilityConfirmed = false;
+let currentCalculatedRate = null;
 
 function setBookingMessage(text, isError) {
   const el = document.getElementById('publicBookingMessage');
@@ -354,6 +355,7 @@ function updateReservationRateDisplay() {
     : null;
 
   const total = calculateReservationRate(currentResource, start, end);
+  currentCalculatedRate = total;
   if (total === null) {
     line.textContent = 'The rate for the reservation will be: --';
     setBookingRateDebug(
@@ -443,7 +445,21 @@ function getReservationPageUrl(paymentKey) {
   };
 
   const pageName = pageMap[paymentKey] || 'free-of-charge-reservation.html';
-  return pageName + '?resourceId=' + encodeURIComponent(resourceId) + '&paymentOption=' + encodeURIComponent(paymentKey);
+
+  const startDate = document.getElementById('requestedBookingStartDate') ? document.getElementById('requestedBookingStartDate').value : '';
+  const startTime = document.getElementById('requestedBookingStartTime') ? document.getElementById('requestedBookingStartTime').value : '';
+  const endDate = document.getElementById('requestedBookingEndDate') ? document.getElementById('requestedBookingEndDate').value : '';
+  const endTime = document.getElementById('requestedBookingEndTime') ? document.getElementById('requestedBookingEndTime').value : '';
+  const startDateTime = (startDate && startTime) ? (startDate + 'T' + startTime) : '';
+  const endDateTime = (endDate && endTime) ? (endDate + 'T' + endTime) : '';
+  const price = currentCalculatedRate !== null ? String(currentCalculatedRate) : '';
+
+  return pageName
+    + '?resourceId=' + encodeURIComponent(resourceId)
+    + '&paymentOption=' + encodeURIComponent(paymentKey)
+    + (startDateTime ? '&startDateTime=' + encodeURIComponent(startDateTime) : '')
+    + (endDateTime ? '&endDateTime=' + encodeURIComponent(endDateTime) : '')
+    + (price !== '' ? '&price=' + encodeURIComponent(price) : '');
 }
 
 function initialiseBookingRequestForm() {

@@ -1457,6 +1457,22 @@ textarea:focus {
   display: none;
 }
 
+.public-reservation-details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1.2rem;
+  margin: 0;
+}
+
+.public-reservation-details dt {
+  font-weight: 600;
+  color: var(--text-secondary, #555);
+}
+
+.public-reservation-details dd {
+  margin: 0;
+}
+
 .public-resource-reservations-wrap {
   margin-top: 1rem;
 }
