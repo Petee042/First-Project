@@ -262,7 +262,8 @@ function calculateReservationRate(resource, start, end) {
     }
 
     if (dailyChargeMode === 'per_24_hours') {
-      return toMoney(inclusiveDays * dailyRate);
+      const billedDays = Math.ceil(totalMinutes / (24 * 60));
+      return toMoney(billedDays * dailyRate);
     }
 
     return null;
