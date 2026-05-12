@@ -362,6 +362,14 @@ function syncCurrentChargeConfigFromDialog() {
   renderChargeConfigSummary();
 }
 
+function requestSharedResourceSave() {
+  const form = document.getElementById('sharedResourceForm');
+  if (!form) {
+    return;
+  }
+  form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+}
+
 function syncChargeConfigAvailability() {
   const disabled = document.getElementById('paymentFreeOfCharge').checked;
   const button = document.getElementById('openChargeConfigBtn');
@@ -703,13 +711,8 @@ document.getElementById('saveChargeConfigBtn').addEventListener('click', () => {
   currentChargeConfig = validated;
   renderChargeConfigSummary();
   getChargeDialog().close();
-  setSharedResourceMessage('', false);
-
-  // Persist charge logic immediately so booking page cannot read stale values.
-  const form = document.getElementById('sharedResourceForm');
-  if (form) {
-    form.requestSubmit();
-  }
+  setSharedResourceMessage('Saving updated charge logic...', false);
+  requestSharedResourceSave();
 });
 
 document.querySelectorAll('.editor-btn').forEach((button) => {
@@ -846,7 +849,16 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
     renderChargeConfigSummary();
 
     document.getElementById('sharedResourceTitle').textContent = 'Shared Resource: ' + (data.resource.short_description || '');
-    setSharedResourceMessage('Shared resource saved.', false);
+    const savedSummary = [
+      'Shared resource saved.',
+      'charge_basis=' + String(data.resource.charge_basis || ''),
+      'daily_charge_mode=' + String(data.resource.daily_charge_mode || ''),
+      'daily_rate=' + (data.resource.daily_rate === null || data.resource.daily_rate === undefined ? '' : String(data.resource.daily_rate)),
+      'hourly_charge_mode=' + String(data.resource.hourly_charge_mode || ''),
+      'hourly_rate=' + (data.resource.hourly_rate === null || data.resource.hourly_rate === undefined ? '' : String(data.resource.hourly_rate)),
+      'updated_at=' + String(data.resource.updated_at || '')
+    ].join(' ');
+    setSharedResourceMessage(savedSummary, false);
   } catch {
     setSharedResourceMessage('Network error saving shared resource.', true);
   } finally {
