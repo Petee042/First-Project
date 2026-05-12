@@ -726,7 +726,8 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
   const bankTransfer = document.getElementById('paymentBankTransfer').checked;
   const onlinePayment = document.getElementById('paymentOnlinePayment').checked;
   persistActivePaymentMessage();
-  const validatedChargeConfig = validateChargeConfigDraft(currentChargeConfig);
+  const latestChargeDraft = readChargeDialogState();
+  const validatedChargeConfig = validateChargeConfigDraft(latestChargeDraft);
 
   if (!shortDescription) {
     setSharedResourceMessage('Short description is required.', true);
@@ -745,6 +746,9 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
     setSharedResourceMessage(validatedChargeConfig.error, true);
     return;
   }
+
+  currentChargeConfig = validatedChargeConfig;
+  renderChargeConfigSummary();
 
   button.disabled = true;
   try {
