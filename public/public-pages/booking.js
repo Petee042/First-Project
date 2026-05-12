@@ -151,6 +151,19 @@ function toMoney(value) {
   return Math.round(value * 100) / 100;
 }
 
+function getChargeConfigValue(resource, snakeKey, camelKey) {
+  if (!resource) {
+    return null;
+  }
+  if (resource[snakeKey] !== undefined && resource[snakeKey] !== null) {
+    return resource[snakeKey];
+  }
+  if (camelKey && resource[camelKey] !== undefined && resource[camelKey] !== null) {
+    return resource[camelKey];
+  }
+  return null;
+}
+
 function getInclusiveCalendarDayCount(start, end) {
   const startUtc = Date.UTC(start.getFullYear(), start.getMonth(), start.getDate());
   const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
@@ -159,7 +172,7 @@ function getInclusiveCalendarDayCount(start, end) {
 }
 
 function readHourlyRates(resource) {
-  const source = resource ? resource.hourly_rates_json : null;
+  const source = getChargeConfigValue(resource, 'hourly_rates_json', 'hourlyRatesJson');
   let parsed = [];
 
   if (Array.isArray(source)) {
@@ -190,14 +203,14 @@ function calculateReservationRate(resource, start, end) {
     return null;
   }
 
-  const chargeBasis = String(resource.charge_basis || '');
+  const chargeBasis = String(getChargeConfigValue(resource, 'charge_basis', 'chargeBasis') || '');
   const totalMinutes = Math.ceil((end.getTime() - start.getTime()) / 60000);
   if (totalMinutes <= 0) {
     return null;
   }
 
   if (chargeBasis === 'daily') {
-    const dailyRate = Number(resource.daily_rate);
+    const dailyRate = Number(getChargeConfigValue(resource, 'daily_rate', 'dailyRate'));
     if (!Number.isFinite(dailyRate) || dailyRate < 0) {
       return null;
     }
@@ -208,11 +221,13 @@ function calculateReservationRate(resource, start, end) {
       return null;
     }
 
-    if (resource.daily_charge_mode === 'per_calendar_day') {
+    const dailyChargeMode = String(getChargeConfigValue(resource, 'daily_charge_mode', 'dailyChargeMode') || '');
+
+    if (dailyChargeMode === 'per_calendar_day') {
       return toMoney(inclusiveDays * dailyRate);
     }
 
-    if (resource.daily_charge_mode === 'per_24_hours') {
+    if (dailyChargeMode === 'per_24_hours') {
       return toMoney(inclusiveDays * dailyRate);
     }
 
@@ -220,8 +235,10 @@ function calculateReservationRate(resource, start, end) {
   }
 
   if (chargeBasis === 'hourly') {
-    if (resource.hourly_charge_mode === 'single_rate') {
-      const hourlyRate = Number(resource.hourly_rate);
+    const hourlyChargeMode = String(getChargeConfigValue(resource, 'hourly_charge_mode', 'hourlyChargeMode') || '');
+
+    if (hourlyChargeMode === 'single_rate') {
+      const hourlyRate = Number(getChargeConfigValue(resource, 'hourly_rate', 'hourlyRate'));
       if (!Number.isFinite(hourlyRate) || hourlyRate < 0) {
         return null;
       }
@@ -231,7 +248,7 @@ function calculateReservationRate(resource, start, end) {
       return toMoney(chargedHours * hourlyRate);
     }
 
-    if (resource.hourly_charge_mode === 'per_hour_of_day') {
+    if (hourlyChargeMode === 'per_hour_of_day') {
       const hourlyRates = readHourlyRates(resource);
       if (!hourlyRates) {
         return null;
@@ -399,6 +416,9 @@ function setupCheckAvailability(resourceId) {
     availabilityConfirmed = false;
 
     try {
+      // Refresh resource first so calculation/payment options use latest admin config.
+      await loadPublicResource();
+
       const res = await fetch('/api/public/shared-resources/' + resourceId + '/check-availability', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
