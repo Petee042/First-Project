@@ -1384,6 +1384,12 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.public-booking-action-row .btn.primary {
+  width: auto;
+  margin-top: 0;
+  flex: 0 0 auto;
+}
+
 .public-booking-payment-options {
   display: flex;
   flex-direction: column;
