@@ -236,10 +236,15 @@ function calculateReservationRate(resource, start, end) {
 
   if (chargeBasis === 'hourly') {
     const hourlyChargeMode = String(getChargeConfigValue(resource, 'hourly_charge_mode', 'hourlyChargeMode') || '');
+    const hourlyRate = Number(getChargeConfigValue(resource, 'hourly_rate', 'hourlyRate'));
+    const hasSingleHourlyRate = Number.isFinite(hourlyRate) && hourlyRate >= 0;
 
-    if (hourlyChargeMode === 'single_rate') {
-      const hourlyRate = Number(getChargeConfigValue(resource, 'hourly_rate', 'hourlyRate'));
-      if (!Number.isFinite(hourlyRate) || hourlyRate < 0) {
+    // If mode metadata is stale/inconsistent but a single hourly rate exists, prefer single-rate charging.
+    const useSingleRate = hourlyChargeMode === 'single_rate'
+      || (hourlyChargeMode !== 'per_hour_of_day' && hasSingleHourlyRate);
+
+    if (useSingleRate) {
+      if (!hasSingleHourlyRate) {
         return null;
       }
       const fullHours = Math.floor(totalMinutes / 60);
@@ -251,6 +256,12 @@ function calculateReservationRate(resource, start, end) {
     if (hourlyChargeMode === 'per_hour_of_day') {
       const hourlyRates = readHourlyRates(resource);
       if (!hourlyRates) {
+        if (hasSingleHourlyRate) {
+          const fullHours = Math.floor(totalMinutes / 60);
+          const hasRemainder = totalMinutes % 60 > 0;
+          const chargedHours = fullHours + (hasRemainder ? 1 : 0);
+          return toMoney(chargedHours * hourlyRate);
+        }
         return null;
       }
 
@@ -278,14 +289,27 @@ function updateReservationRateDisplay() {
     return;
   }
 
-  const start = parseLocalDateTime(
-    document.getElementById('requestedBookingStartDate').value,
-    document.getElementById('requestedBookingStartTime').value
+  // Use checkin/checkout as the primary booking window for the displayed reservation rate.
+  // Fall back to requested start/end only when checkin/checkout is incomplete.
+  let start = parseLocalDateTime(
+    document.getElementById('guestCheckinDate').value,
+    document.getElementById('guestCheckinTime').value
   );
-  const end = parseLocalDateTime(
-    document.getElementById('requestedBookingEndDate').value,
-    document.getElementById('requestedBookingEndTime').value
+  let end = parseLocalDateTime(
+    document.getElementById('guestCheckoutDate').value,
+    document.getElementById('guestCheckoutTime').value
   );
+
+  if (!start || !end) {
+    start = parseLocalDateTime(
+      document.getElementById('requestedBookingStartDate').value,
+      document.getElementById('requestedBookingStartTime').value
+    );
+    end = parseLocalDateTime(
+      document.getElementById('requestedBookingEndDate').value,
+      document.getElementById('requestedBookingEndTime').value
+    );
+  }
 
   const total = calculateReservationRate(currentResource, start, end);
   if (total === null) {
