@@ -4876,7 +4876,7 @@ app.post('/api/public/shared-resources/:resourceId/check-availability', async (r
   }
 });
 
-// POST /api/public/shared-resources/:resourceId/reservations — create a public reservation (cash flow)
+// POST /api/public/shared-resources/:resourceId/reservations — create a public reservation
 app.post('/api/public/shared-resources/:resourceId/reservations', async (req, res) => {
   const resourceId = Number(req.params.resourceId);
   if (!Number.isInteger(resourceId) || resourceId <= 0) {
@@ -4903,6 +4903,7 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
   const emailAddress = normaliseSharedResourceReservationEmail(req.body.emailAddress);
   const telephone = normaliseSharedResourceReservationText(req.body.telephone, 60);
   const reservationAmount = normaliseSharedResourceReservationAmount(req.body.reservationAmount);
+  const paymentOption = String(req.body.paymentOption || '').trim();
   if (!firstName || !familyName || !emailAddress || !telephone) {
     return res.status(400).json({ error: 'First name, family name, email address and telephone are required.' });
   }
@@ -4912,8 +4913,36 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
     if (!resource) {
       return res.status(404).json({ error: 'Shared resource not found.' });
     }
-    if (resource.cash_on_site !== true) {
-      return res.status(400).json({ error: 'Cash on site is not enabled for this resource.' });
+
+    const optionConfig = {
+      free_of_charge: {
+        enabled: resource.free_of_charge === true,
+        status: 'Confirmed',
+        error: 'Free of charge is not enabled for this resource.'
+      },
+      cash_on_site: {
+        enabled: resource.cash_on_site === true,
+        status: 'cash',
+        error: 'Cash on site is not enabled for this resource.'
+      },
+      bank_transfer: {
+        enabled: resource.bank_transfer === true,
+        status: 'Awaiting Bank Transfer',
+        error: 'Bank transfer is not enabled for this resource.'
+      },
+      online_payment: {
+        enabled: resource.online_payment === true,
+        status: 'Awaiting Online Confirmation',
+        error: 'Online payment is not enabled for this resource.'
+      }
+    };
+
+    const selectedOption = optionConfig[paymentOption];
+    if (!selectedOption) {
+      return res.status(400).json({ error: 'Invalid payment option.' });
+    }
+    if (!selectedOption.enabled) {
+      return res.status(400).json({ error: selectedOption.error });
     }
 
     const now = new Date();
@@ -4965,7 +4994,7 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
       emailAddress,
       telephone,
       reservationAmount,
-      status: 'cash'
+      status: selectedOption.status
     });
 
     return res.status(201).json({ reservation });
