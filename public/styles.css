@@ -656,6 +656,17 @@ textarea:focus {
   padding: 0.7rem;
 }
 
+.notification-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.notification-log-header h3 {
+  margin: 0;
+}
+
 .notification-list {
   margin: 0;
   padding-left: 1rem;

@@ -3195,6 +3195,56 @@ async function upsertBookedInChangesForUser(userId, changes) {
   return { saved: normalised.length };
 }
 
+async function deleteBookedInChangesForUser(userId, changes) {
+  const payload = Array.isArray(changes) ? changes : [];
+  if (!payload.length) {
+    return { deleted: 0 };
+  }
+
+  const keys = payload
+    .map((entry) => ({
+      listingId: Number(entry.listingId),
+      reservationCheckinDate: normaliseDateKey(entry.reservationCheckinDate),
+      reservationCheckoutDate: normaliseDateKey(entry.reservationCheckoutDate)
+    }))
+    .filter((entry) => Number.isInteger(entry.listingId) && entry.listingId > 0 && entry.reservationCheckinDate && entry.reservationCheckoutDate);
+
+  if (!keys.length) {
+    return { deleted: 0 };
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const before = (store.booked_in_changes || []).length;
+    const keySet = new Set(keys.map((entry) => String(entry.listingId) + '|' + entry.reservationCheckinDate + '|' + entry.reservationCheckoutDate));
+    store.booked_in_changes = (store.booked_in_changes || []).filter((row) => {
+      if (Number(row.user_id) !== Number(userId)) {
+        return true;
+      }
+      const key = String(Number(row.listing_id)) + '|' + String(row.reservation_checkin_date || '') + '|' + String(row.reservation_checkout_date || '');
+      return !keySet.has(key);
+    });
+    writeListingsStore(store);
+    return { deleted: Math.max(0, before - store.booked_in_changes.length) };
+  }
+
+  let deleted = 0;
+  for (const entry of keys) {
+    const result = await pool.query(
+      `
+        DELETE FROM booked_in_changes
+        WHERE user_id = $1
+          AND listing_id = $2
+          AND reservation_checkin_date = $3::date
+          AND reservation_checkout_date = $4::date
+      `,
+      [userId, entry.listingId, entry.reservationCheckinDate, entry.reservationCheckoutDate]
+    );
+    deleted += Number(result.rowCount || 0);
+  }
+  return { deleted };
+}
+
 async function getFeedsForListing(listingId, userId) {
   if (!usePostgres) {
     const store = readListingsStore();
@@ -4202,6 +4252,19 @@ app.post('/api/booked-in-changes/upsert', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to save booked-in changes.' });
+  }
+});
+
+// POST /api/booked-in-changes/delete — delete booked-in changes by reservation keys
+app.post('/api/booked-in-changes/delete', requireAuth, async (req, res) => {
+  const changes = Array.isArray(req.body.changes) ? req.body.changes : [];
+
+  try {
+    const result = await deleteBookedInChangesForUser(req.session.userId, changes);
+    return res.json({ deleted: result.deleted });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete booked-in changes.' });
   }
 });
 

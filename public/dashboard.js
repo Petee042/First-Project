@@ -19,6 +19,7 @@ let currentSharedResources = [];
 let schedulePreviewRequestId = 0;
 let currentScheduleRows = [];
 let currentScheduleErrors = [];
+let currentNotificationRows = [];
 
 function setScheduleEmailMessage(text, isError) {
   const el = document.getElementById('scheduleEmailMessage');
@@ -478,6 +479,31 @@ function renderNotificationLog(lines) {
   container.appendChild(list);
 }
 
+async function deleteBookedInChanges(changes) {
+  const rows = Array.isArray(changes) ? changes : [];
+  if (!rows.length) {
+    return { deleted: 0 };
+  }
+
+  const res = await fetch('/api/booked-in-changes/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ changes: rows })
+  });
+
+  if (res.status === 401) {
+    window.location.href = '/';
+    return { deleted: 0 };
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to delete stale booked-in changes.');
+  }
+
+  return { deleted: Number(data.deleted || 0) };
+}
+
 async function buildSchedule(selectedListings, days, startDateUtc) {
   const rangeKeySet = new Set();
   for (let i = 0; i < days; i += 1) {
@@ -603,13 +629,22 @@ async function buildSchedule(selectedListings, days, startDateUtc) {
       return listingName + ': booked-in change ' + row.reservation_checkin_date + ' to ' + row.reservation_checkout_date + ' no longer matches a reservation.';
     });
 
+  const staleChanges = bookedChanges
+    .filter((row) => !reservationKeySet.has(reservationKey(row.listing_id, row.reservation_checkin_date, row.reservation_checkout_date)))
+    .map((row) => ({
+      listingId: Number(row.listing_id),
+      reservationCheckinDate: row.reservation_checkin_date,
+      reservationCheckoutDate: row.reservation_checkout_date
+    }));
+
   return {
     text: rowsToText(rows, formatCleaningScheduleLine),
     csv: rowsToCsv(rows),
     rows,
     rowCount: rows.length,
     errors,
-    notifications
+    notifications,
+    staleChanges
   };
 }
 
@@ -790,9 +825,24 @@ async function updateSchedulePreview() {
       return;
     }
 
+    let notifications = result.notifications || [];
+    currentNotificationRows = result.staleChanges || [];
+
+    if (currentNotificationRows.length) {
+      try {
+        const deletionResult = await deleteBookedInChanges(currentNotificationRows);
+        if (deletionResult.deleted > 0) {
+          notifications = notifications.concat('Removed ' + deletionResult.deleted + ' stale booked-in change(s) from the system.');
+        }
+        currentNotificationRows = [];
+      } catch (err) {
+        notifications = notifications.concat(err.message || 'Failed to remove stale booked-in changes from the system.');
+      }
+    }
+
     currentScheduleRows = result.rows || [];
     currentScheduleErrors = result.errors || [];
-    renderSchedulePreviewTable(currentScheduleRows, currentScheduleErrors, result.notifications || []);
+    renderSchedulePreviewTable(currentScheduleRows, currentScheduleErrors, notifications);
   } catch {
     if (requestId !== schedulePreviewRequestId) {
       return;
@@ -1132,6 +1182,11 @@ document.getElementById('addSharedResourceForm').addEventListener('submit', asyn
 document.getElementById('logoutBtn').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/';
+});
+
+document.getElementById('clearNotificationLogBtn').addEventListener('click', () => {
+  currentNotificationRows = [];
+  renderNotificationLog([]);
 });
 
 document.getElementById('refreshScheduleBtn').addEventListener('click', async () => {
