@@ -94,48 +94,6 @@ function configureSpacesRequiredInput(maxValue) {
   }
 }
 
-function formatDateTimeForDisplay(value) {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return String(value || '');
-  }
-  return parsed.toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
-}
-
-function renderSharedReservationsTable(resource, reservations) {
-  const body = document.getElementById('publicSharedReservationsBody');
-  if (!body) {
-    return;
-  }
-
-  const rows = Array.isArray(reservations) ? reservations : [];
-  if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="5" class="public-resource-reservations-empty">No reservations yet.</td></tr>';
-    return;
-  }
-
-  const resourceLabel = resource && resource.short_description ? resource.short_description : 'Shared Resource';
-  body.innerHTML = rows.map((row) => {
-    const reservationId = row.reservation_identifier || String(row.id || '');
-    return '<tr>'
-      + '<td>' + reservationId + '</td>'
-      + '<td>' + resourceLabel + '</td>'
-      + '<td>' + formatDateTimeForDisplay(row.requested_start_at) + '</td>'
-      + '<td>' + formatDateTimeForDisplay(row.requested_end_at) + '</td>'
-      + '<td>' + String(row.status || '') + '</td>'
-      + '</tr>';
-  }).join('');
-}
-
-async function loadSharedReservations(resourceId) {
-  const res = await fetch('/api/public/shared-resources/' + resourceId + '/reservations');
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(data.error || 'Failed to load shared resource reservations.');
-  }
-  renderSharedReservationsTable(currentResource, data.reservations || []);
-}
-
 function getCheckAvailabilityPayload(resource) {
   const checkinDate = document.getElementById('guestCheckinDate').value;
   const checkoutDate = document.getElementById('guestCheckoutDate').value;
@@ -259,7 +217,6 @@ async function loadPublicResource() {
     initialiseBookingRequestForm();
     setupCheckAvailability(resourceId);
     await loadPublicResource();
-    await loadSharedReservations(resourceId);
   } catch (err) {
     setBookingMessage(err.message || 'Unable to load booking page.', true);
   }

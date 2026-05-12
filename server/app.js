@@ -4469,6 +4469,22 @@ app.get('/api/public/shared-resources/:resourceId/reservations', async (req, res
   }
 });
 
+// GET /api/shared-resources/:resourceId/reservations — authenticated reservation list
+app.get('/api/shared-resources/:resourceId/reservations', requireAuth, async (req, res) => {
+  const resourceId = Number(req.params.resourceId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0) {
+    return res.status(400).json({ error: 'Invalid shared resource id.' });
+  }
+
+  try {
+    const reservations = await getSharedResourceReservationsByResourceId(resourceId);
+    return res.json({ reservations });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load shared resource reservations.' });
+  }
+});
+
 // POST /api/public/shared-resources/:resourceId/check-availability — validate only (no reservation created)
 app.post('/api/public/shared-resources/:resourceId/check-availability', async (req, res) => {
   const resourceId = Number(req.params.resourceId);

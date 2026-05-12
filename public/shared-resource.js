@@ -428,6 +428,62 @@ async function loadSharedResource() {
   renderChargeConfigSummary();
 }
 
+function formatAdminDateTime(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value || '');
+  }
+  return parsed.toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+}
+
+function renderAdminReservationsTable(reservations) {
+  const body = document.getElementById('adminSharedReservationsBody');
+  if (!body) {
+    return;
+  }
+
+  const rows = Array.isArray(reservations) ? reservations : [];
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="5" class="public-resource-reservations-empty">No reservations yet.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = rows.map((row) => {
+    const reservationId = row.reservation_identifier || String(row.id || '');
+    const spaces = Number.isInteger(Number(row.spaces_required)) && Number(row.spaces_required) > 0
+      ? Number(row.spaces_required)
+      : 1;
+    return '<tr>'
+      + '<td>' + reservationId + '</td>'
+      + '<td>' + formatAdminDateTime(row.requested_start_at) + '</td>'
+      + '<td>' + formatAdminDateTime(row.requested_end_at) + '</td>'
+      + '<td>' + spaces + '</td>'
+      + '<td>' + String(row.status || '') + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+async function loadAdminReservations() {
+  const msgEl = document.getElementById('adminReservationsMessage');
+  try {
+    const res = await fetch('/api/shared-resources/' + resourceId + '/reservations');
+    const data = await res.json();
+    if (!res.ok) {
+      if (msgEl) {
+        msgEl.textContent = data.error || 'Failed to load reservations.';
+        msgEl.className = 'message error';
+      }
+      return;
+    }
+    renderAdminReservationsTable(data.reservations || []);
+  } catch {
+    if (msgEl) {
+      msgEl.textContent = 'Network error loading reservations.';
+      msgEl.className = 'message error';
+    }
+  }
+}
+
 (async () => {
   setBookingPageUrl();
 
@@ -449,6 +505,7 @@ async function loadSharedResource() {
     }
 
     await loadSharedResource();
+    await loadAdminReservations();
   } catch (err) {
     setSharedResourceMessage(err.message || 'Failed to load shared resource page.', true);
   }
