@@ -1609,6 +1609,8 @@ async function getSharedResourceByIdPublic(resourceId) {
       hourly_charge_mode: resource.hourly_charge_mode || null,
       hourly_rate: resource.hourly_rate === null || resource.hourly_rate === undefined ? null : Number(resource.hourly_rate),
       hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(resource).hourly_rates),
+      created_at: resource.created_at || null,
+      updated_at: resource.updated_at || null,
       property_id: normaliseOptionalPositiveInteger(resource.property_id),
       listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
     };
@@ -1620,6 +1622,7 @@ async function getSharedResourceByIdPublic(resourceId) {
               free_of_charge, cash_on_site, bank_transfer, online_payment,
               free_of_charge_message_html, cash_on_site_message_html, bank_transfer_message_html, online_payment_message_html,
               charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
+                    created_at, updated_at,
               property_id, listing_id
       FROM shared_resources
       WHERE id = $1
@@ -1653,6 +1656,8 @@ async function getSharedResourceByIdPublic(resourceId) {
     hourly_charge_mode: row.hourly_charge_mode,
     hourly_rate: row.hourly_rate,
     hourly_rates_json: row.hourly_rates_json,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
     property_id: row.property_id,
     listing_id: row.listing_id
   };
@@ -4537,6 +4542,10 @@ app.get('/api/public/shared-resources/:resourceId', async (req, res) => {
   if (!Number.isInteger(resourceId) || resourceId <= 0) {
     return res.status(400).json({ error: 'Invalid shared resource id.' });
   }
+
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
 
   try {
     const resource = await getSharedResourceByIdPublic(resourceId);

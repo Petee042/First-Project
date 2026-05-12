@@ -334,6 +334,10 @@ function updateReservationRateDisplay() {
   const storedDailyRate = getChargeConfigValue(currentResource, 'daily_rate', 'dailyRate');
   const storedHourlyRate = getChargeConfigValue(currentResource, 'hourly_rate', 'hourlyRate');
   const hourlyRates = readHourlyRates(currentResource);
+  const urlResourceId = getResourceIdFromUrl();
+  const loadedResourceId = currentResource && currentResource.id !== undefined ? currentResource.id : null;
+  const loadedShortDescription = currentResource && currentResource.short_description ? currentResource.short_description : null;
+  const loadedUpdatedAt = currentResource && currentResource.updated_at ? currentResource.updated_at : null;
   const totalMinutes = start && end ? Math.ceil((end.getTime() - start.getTime()) / 60000) : null;
   const totalHoursRoundedUp = Number.isFinite(totalMinutes) && totalMinutes > 0
     ? Math.floor(totalMinutes / 60) + (totalMinutes % 60 > 0 ? 1 : 0)
@@ -347,6 +351,10 @@ function updateReservationRateDisplay() {
         'DEBUG booking rate',
         'requestedStart=' + (start ? start.toISOString() : 'invalid'),
         'requestedEnd=' + (end ? end.toISOString() : 'invalid'),
+        'url_resource_id=' + (urlResourceId === null ? '(null)' : String(urlResourceId)),
+        'loaded_resource_id=' + (loadedResourceId === null ? '(null)' : String(loadedResourceId)),
+        'loaded_short_description=' + (loadedShortDescription || '(empty)'),
+        'loaded_updated_at=' + (loadedUpdatedAt || '(null)'),
         'totalMinutes=' + (totalMinutes === null ? 'n/a' : String(totalMinutes)),
         'totalHoursRoundedUp=' + (totalHoursRoundedUp === null ? 'n/a' : String(totalHoursRoundedUp)),
         'charge_basis=' + (storedChargeBasis || '(empty)'),
@@ -368,6 +376,10 @@ function updateReservationRateDisplay() {
       'DEBUG booking rate',
       'requestedStart=' + (start ? start.toISOString() : 'invalid'),
       'requestedEnd=' + (end ? end.toISOString() : 'invalid'),
+      'url_resource_id=' + (urlResourceId === null ? '(null)' : String(urlResourceId)),
+      'loaded_resource_id=' + (loadedResourceId === null ? '(null)' : String(loadedResourceId)),
+      'loaded_short_description=' + (loadedShortDescription || '(empty)'),
+      'loaded_updated_at=' + (loadedUpdatedAt || '(null)'),
       'totalMinutes=' + (totalMinutes === null ? 'n/a' : String(totalMinutes)),
       'totalHoursRoundedUp=' + (totalHoursRoundedUp === null ? 'n/a' : String(totalHoursRoundedUp)),
       'charge_basis=' + (storedChargeBasis || '(empty)'),
@@ -534,7 +546,8 @@ async function loadPublicResource() {
     return;
   }
 
-  const res = await fetch('/api/public/shared-resources/' + resourceId, { cache: 'no-store' });
+  const requestUrl = '/api/public/shared-resources/' + resourceId + '?_ts=' + Date.now();
+  const res = await fetch(requestUrl, { cache: 'no-store' });
   const data = await res.json();
 
   if (!res.ok) {
