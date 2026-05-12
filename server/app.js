@@ -1603,6 +1603,12 @@ async function getSharedResourceByIdPublic(resourceId) {
       cash_on_site_message_html: sanitiseRichTextHtml(resource.cash_on_site_message_html),
       bank_transfer_message_html: sanitiseRichTextHtml(resource.bank_transfer_message_html),
       online_payment_message_html: sanitiseRichTextHtml(resource.online_payment_message_html),
+      charge_basis: resource.charge_basis || null,
+      daily_charge_mode: resource.daily_charge_mode || null,
+      daily_rate: resource.daily_rate === null || resource.daily_rate === undefined ? null : Number(resource.daily_rate),
+      hourly_charge_mode: resource.hourly_charge_mode || null,
+      hourly_rate: resource.hourly_rate === null || resource.hourly_rate === undefined ? null : Number(resource.hourly_rate),
+      hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(resource).hourly_rates),
       property_id: normaliseOptionalPositiveInteger(resource.property_id),
       listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
     };
@@ -1613,6 +1619,7 @@ async function getSharedResourceByIdPublic(resourceId) {
             SELECT id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
               free_of_charge_message_html, cash_on_site_message_html, bank_transfer_message_html, online_payment_message_html,
+              charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
               property_id, listing_id
       FROM shared_resources
       WHERE id = $1
@@ -1640,6 +1647,12 @@ async function getSharedResourceByIdPublic(resourceId) {
     cash_on_site_message_html: sanitiseRichTextHtml(row.cash_on_site_message_html),
     bank_transfer_message_html: sanitiseRichTextHtml(row.bank_transfer_message_html),
     online_payment_message_html: sanitiseRichTextHtml(row.online_payment_message_html),
+    charge_basis: row.charge_basis,
+    daily_charge_mode: row.daily_charge_mode,
+    daily_rate: row.daily_rate,
+    hourly_charge_mode: row.hourly_charge_mode,
+    hourly_rate: row.hourly_rate,
+    hourly_rates_json: row.hourly_rates_json,
     property_id: row.property_id,
     listing_id: row.listing_id
   };

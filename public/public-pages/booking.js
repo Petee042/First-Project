@@ -134,6 +134,147 @@ function configureSpacesRequiredInput(maxValue) {
   }
 }
 
+function parseLocalDateTime(dateValue, timeValue) {
+  const dateKey = String(dateValue || '').trim();
+  const timeKey = String(timeValue || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey) || !/^\d{2}:\d{2}$/.test(timeKey)) {
+    return null;
+  }
+  const parsed = new Date(dateKey + 'T' + timeKey + ':00');
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed;
+}
+
+function toMoney(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function readHourlyRates(resource) {
+  const source = resource ? resource.hourly_rates_json : null;
+  let parsed = [];
+
+  if (Array.isArray(source)) {
+    parsed = source;
+  } else if (typeof source === 'string' && source.trim()) {
+    try {
+      const json = JSON.parse(source);
+      parsed = Array.isArray(json) ? json : [];
+    } catch {
+      parsed = [];
+    }
+  }
+
+  if (parsed.length !== 24) {
+    return null;
+  }
+
+  const numeric = parsed.map((rate) => Number(rate));
+  if (numeric.some((rate) => !Number.isFinite(rate) || rate < 0)) {
+    return null;
+  }
+
+  return numeric;
+}
+
+function calculateReservationRate(resource, start, end) {
+  if (!resource || !start || !end || end.getTime() <= start.getTime()) {
+    return null;
+  }
+
+  const chargeBasis = String(resource.charge_basis || '');
+  const totalMinutes = Math.ceil((end.getTime() - start.getTime()) / 60000);
+  if (totalMinutes <= 0) {
+    return null;
+  }
+
+  if (chargeBasis === 'daily') {
+    const dailyRate = Number(resource.daily_rate);
+    if (!Number.isFinite(dailyRate) || dailyRate < 0) {
+      return null;
+    }
+
+    if (resource.daily_charge_mode === 'per_calendar_day') {
+      const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+      const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+      const dayCount = Math.floor((endDay.getTime() - startDay.getTime()) / 86400000) + 1;
+      if (dayCount <= 0) {
+        return null;
+      }
+      return toMoney(dayCount * dailyRate);
+    }
+
+    if (resource.daily_charge_mode === 'per_24_hours') {
+      const fullBlocks = Math.floor(totalMinutes / 1440);
+      const hasRemainder = totalMinutes % 1440 > 0;
+      const chargedDays = fullBlocks + (hasRemainder ? 1 : 0);
+      return toMoney(chargedDays * dailyRate);
+    }
+
+    return null;
+  }
+
+  if (chargeBasis === 'hourly') {
+    if (resource.hourly_charge_mode === 'single_rate') {
+      const hourlyRate = Number(resource.hourly_rate);
+      if (!Number.isFinite(hourlyRate) || hourlyRate < 0) {
+        return null;
+      }
+      const fullHours = Math.floor(totalMinutes / 60);
+      const hasRemainder = totalMinutes % 60 > 0;
+      const chargedHours = fullHours + (hasRemainder ? 1 : 0);
+      return toMoney(chargedHours * hourlyRate);
+    }
+
+    if (resource.hourly_charge_mode === 'per_hour_of_day') {
+      const hourlyRates = readHourlyRates(resource);
+      if (!hourlyRates) {
+        return null;
+      }
+
+      let total = 0;
+      let cursor = new Date(start.getTime());
+
+      while (cursor.getTime() < end.getTime()) {
+        total += hourlyRates[cursor.getHours()];
+        const next = new Date(cursor.getTime());
+        next.setMinutes(0, 0, 0);
+        next.setHours(next.getHours() + 1);
+        cursor = next;
+      }
+
+      return toMoney(total);
+    }
+  }
+
+  return null;
+}
+
+function updateReservationRateDisplay() {
+  const line = document.getElementById('bookingRateLine');
+  if (!line) {
+    return;
+  }
+
+  const start = parseLocalDateTime(
+    document.getElementById('requestedBookingStartDate').value,
+    document.getElementById('requestedBookingStartTime').value
+  );
+  const end = parseLocalDateTime(
+    document.getElementById('requestedBookingEndDate').value,
+    document.getElementById('requestedBookingEndTime').value
+  );
+
+  const total = calculateReservationRate(currentResource, start, end);
+  if (total === null) {
+    line.textContent = 'The rate for the reservation will be: --';
+    return;
+  }
+
+  line.textContent = 'The rate for the reservation will be: ' + total.toFixed(2);
+}
+
 function getCheckAvailabilityPayload(resource) {
   const checkinDate = document.getElementById('guestCheckinDate').value;
   const checkoutDate = document.getElementById('guestCheckoutDate').value;
@@ -188,6 +329,30 @@ function initialiseBookingRequestForm() {
       event.preventDefault();
     });
   }
+
+  [
+    'guestCheckinDate',
+    'guestCheckinTime',
+    'guestCheckoutDate',
+    'guestCheckoutTime',
+    'requestedBookingStartDate',
+    'requestedBookingStartTime',
+    'requestedBookingEndDate',
+    'requestedBookingEndTime'
+  ].forEach((id) => {
+    const input = document.getElementById(id);
+    if (!input) {
+      return;
+    }
+    input.addEventListener('input', () => {
+      availabilityConfirmed = false;
+      updateReservationRateDisplay();
+    });
+    input.addEventListener('change', () => {
+      availabilityConfirmed = false;
+      updateReservationRateDisplay();
+    });
+  });
 
   const reserveBtn = document.getElementById('reserveBtn');
   if (reserveBtn) {
@@ -274,6 +439,7 @@ async function loadPublicResource() {
   document.getElementById('publicBookingDescription').innerHTML = resource.full_description_html || '<p>No description provided.</p>';
 
   populatePaymentSelectionDropdown(resource);
+  updateReservationRateDisplay();
 
   const spacesRow = document.getElementById('bookingSpacesRequiredRow');
   const spacesInput = document.getElementById('spacesRequired');

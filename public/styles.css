@@ -1367,6 +1367,13 @@ textarea:focus {
   color: #5a6785;
 }
 
+.public-booking-rate-line {
+  margin-top: 0.9rem;
+  font-size: 0.94rem;
+  font-weight: 600;
+  color: #2f3d5a;
+}
+
 .public-booking-actions {
   margin-top: 1rem;
 }
