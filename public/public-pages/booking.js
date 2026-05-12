@@ -212,6 +212,7 @@ function calculateReservationRate(resource, start, end) {
   const hourlyChargeMode = String(getChargeConfigValue(resource, 'hourly_charge_mode', 'hourlyChargeMode') || '');
   const hourlyRate = Number(getChargeConfigValue(resource, 'hourly_rate', 'hourlyRate'));
   const hasSingleHourlyRate = Number.isFinite(hourlyRate) && hourlyRate >= 0;
+  const hasPositiveSingleHourlyRate = Number.isFinite(hourlyRate) && hourlyRate > 0;
   const hasPerHourMode = hourlyChargeMode === 'per_hour_of_day';
   const hasHourlyConfig = hasSingleHourlyRate || hasPerHourMode;
 
@@ -275,6 +276,14 @@ function calculateReservationRate(resource, start, end) {
           return toMoney(chargedHours * hourlyRate);
         }
         return null;
+      }
+
+      const hourlyGridHasAnyPositiveRate = hourlyRates.some((rate) => rate > 0);
+      if (!hourlyGridHasAnyPositiveRate && hasPositiveSingleHourlyRate) {
+        const fullHours = Math.floor(totalMinutes / 60);
+        const hasRemainder = totalMinutes % 60 > 0;
+        const chargedHours = fullHours + (hasRemainder ? 1 : 0);
+        return toMoney(chargedHours * hourlyRate);
       }
 
       let total = 0;
