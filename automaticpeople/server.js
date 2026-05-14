@@ -110,6 +110,9 @@ app.post('/logout', (req, res) => {
   });
 });
 
+// Allow logo/image assets to load on the public login page.
+app.use('/images', express.static(path.join(__dirname, 'public', 'images')));
+
 app.get('/health', async (req, res) => {
   const status = { ok: true, app: 'AutomaticPeople' };
 
