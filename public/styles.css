@@ -24,12 +24,27 @@ body {
 }
 
 /* ── Site title ────────────────────────────────────────────── */
+.site-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  margin-bottom: 1.2rem;
+}
+
+.site-title-logo {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  display: block;
+}
+
 .site-title {
   font-size: 1.75rem;
   font-weight: 700;
   color: #4361ee;
   text-align: center;
-  margin-bottom: 1.5rem;
+  margin-bottom: 0;
   letter-spacing: -0.5px;
 }
 
