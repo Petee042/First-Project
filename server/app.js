@@ -4,6 +4,7 @@ const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcrypt');
 const nodemailer = require('nodemailer');
+const Stripe = require('stripe');
 const fs = require('fs');
 const path = require('path');
 const { randomUUID, createHmac, timingSafeEqual } = require('crypto');
@@ -19,10 +20,13 @@ const KAYAK_API_BASE_URL = process.env.KAYAK_API_BASE_URL || 'https://sandbox-en
 const KAYAK_API_KEY = process.env.KAYAK_API_KEY || '';
 const STAY_API_KEY = process.env.STAY_API_KEY || '';
 const STAY_API_BASE_URL = 'https://api.stayapi.com';
+const STRIPE_SECRET_KEY = String(process.env.STRIPE_SECRET_KEY || '').trim();
+const STRIPE_CONNECT_DEFAULT_COUNTRY = String(process.env.STRIPE_CONNECT_DEFAULT_COUNTRY || 'GB').trim().toUpperCase();
 const usersFile = path.join(__dirname, 'users.json');
 const listingsFile = path.join(__dirname, 'listings.json');
 const usePostgres = Boolean(process.env.DATABASE_URL);
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
+const stripeClient = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 
 const KAYAK_COMMON_QUERY_FIELDS = [
   { key: 'userTrackId', type: 'string', required: true, description: 'Unique user/session identifier.' },
@@ -277,6 +281,26 @@ async function initializeUserStore() {
       password_hash TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS stripe_account_id TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS stripe_onboarding_complete BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS stripe_charges_enabled BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS stripe_payouts_enabled BOOLEAN NOT NULL DEFAULT FALSE
   `);
 
   await pool.query(`
@@ -645,6 +669,10 @@ async function createUser(username, email, passwordHash) {
       username,
       email,
       password_hash: passwordHash,
+      stripe_account_id: null,
+      stripe_onboarding_complete: false,
+      stripe_charges_enabled: false,
+      stripe_payouts_enabled: false,
       created_at: new Date().toISOString()
     };
 
@@ -658,7 +686,10 @@ async function createUser(username, email, passwordHash) {
     `
       INSERT INTO users (username, email, password_hash)
       VALUES ($1, $2, $3)
-      RETURNING id, username, email, password_hash, created_at
+      RETURNING id, username, email, password_hash,
+                stripe_account_id, stripe_onboarding_complete,
+                stripe_charges_enabled, stripe_payouts_enabled,
+                created_at
     `,
     [username, email, passwordHash]
   );
@@ -1338,6 +1369,77 @@ async function ensureDefaultPropertyForUser(userId) {
   }
 
   return property;
+}
+
+async function getUserById(userId) {
+  if (!Number.isInteger(Number(userId)) || Number(userId) <= 0) {
+    return null;
+  }
+
+  if (!usePostgres) {
+    return readUsersFromFile().find((user) => Number(user.id) === Number(userId)) || null;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, username, email, password_hash,
+             stripe_account_id, stripe_onboarding_complete,
+             stripe_charges_enabled, stripe_payouts_enabled,
+             created_at
+      FROM users
+      WHERE id = $1
+      LIMIT 1
+    `,
+    [userId]
+  );
+  return result.rows[0] || null;
+}
+
+async function setUserStripeConnectState(userId, nextState) {
+  const state = {
+    stripe_account_id: nextState && nextState.stripe_account_id ? String(nextState.stripe_account_id).trim() : null,
+    stripe_onboarding_complete: nextState && nextState.stripe_onboarding_complete === true,
+    stripe_charges_enabled: nextState && nextState.stripe_charges_enabled === true,
+    stripe_payouts_enabled: nextState && nextState.stripe_payouts_enabled === true
+  };
+
+  if (!usePostgres) {
+    const users = readUsersFromFile();
+    const idx = users.findIndex((user) => Number(user.id) === Number(userId));
+    if (idx < 0) {
+      return null;
+    }
+    users[idx].stripe_account_id = state.stripe_account_id;
+    users[idx].stripe_onboarding_complete = state.stripe_onboarding_complete;
+    users[idx].stripe_charges_enabled = state.stripe_charges_enabled;
+    users[idx].stripe_payouts_enabled = state.stripe_payouts_enabled;
+    writeUsersToFile(users);
+    return users[idx];
+  }
+
+  const result = await pool.query(
+    `
+      UPDATE users
+      SET stripe_account_id = $1,
+          stripe_onboarding_complete = $2,
+          stripe_charges_enabled = $3,
+          stripe_payouts_enabled = $4
+      WHERE id = $5
+      RETURNING id, username, email,
+                stripe_account_id, stripe_onboarding_complete,
+                stripe_charges_enabled, stripe_payouts_enabled,
+                created_at
+    `,
+    [
+      state.stripe_account_id,
+      state.stripe_onboarding_complete,
+      state.stripe_charges_enabled,
+      state.stripe_payouts_enabled,
+      userId
+    ]
+  );
+
+  return result.rows[0] || null;
 }
 
 async function getPropertiesForUser(userId) {
@@ -4232,6 +4334,24 @@ function maskKeyForDiagnostics(secret) {
   return '*'.repeat(value.length - 4) + value.slice(-4);
 }
 
+function getRequestBaseUrl(req) {
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
+  if (!host) {
+    return null;
+  }
+  return proto + '://' + host;
+}
+
+function formatStripeConnectStatus(user) {
+  return {
+    stripeAccountId: user && user.stripe_account_id ? String(user.stripe_account_id) : '',
+    onboardingComplete: Boolean(user && user.stripe_onboarding_complete === true),
+    chargesEnabled: Boolean(user && user.stripe_charges_enabled === true),
+    payoutsEnabled: Boolean(user && user.stripe_payouts_enabled === true)
+  };
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 // POST /api/signup
@@ -4517,12 +4637,113 @@ app.post('/api/admin/kayak/request', requireAdminAuth, async (req, res) => {
 });
 
 // GET /api/me — return current user info (requires auth)
-app.get('/api/me', requireAuth, (req, res) => {
-  res.json({
-    username: req.session.username,
-    email: req.session.email,
-    consolidated_ics_token: buildConsolidatedIcsToken(req.session.userId)
-  });
+app.get('/api/me', requireAuth, async (req, res) => {
+  try {
+    const user = await getUserById(req.session.userId);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorised' });
+    }
+
+    return res.json({
+      username: user.username || req.session.username,
+      email: user.email || req.session.email,
+      consolidated_ics_token: buildConsolidatedIcsToken(req.session.userId),
+      stripeConnect: formatStripeConnectStatus(user)
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load current user profile.' });
+  }
+});
+
+// GET /api/stripe/connect/status — current host Stripe Connect state
+app.get('/api/stripe/connect/status', requireAuth, async (req, res) => {
+  if (!stripeClient) {
+    return res.status(503).json({ error: 'Stripe is not configured on the server.' });
+  }
+
+  try {
+    const user = await getUserById(req.session.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    if (!user.stripe_account_id) {
+      return res.json({ stripeConnect: formatStripeConnectStatus(user) });
+    }
+
+    const stripeAccount = await stripeClient.accounts.retrieve(String(user.stripe_account_id));
+    const updated = await setUserStripeConnectState(req.session.userId, {
+      stripe_account_id: stripeAccount.id,
+      stripe_onboarding_complete: stripeAccount.details_submitted === true,
+      stripe_charges_enabled: stripeAccount.charges_enabled === true,
+      stripe_payouts_enabled: stripeAccount.payouts_enabled === true
+    });
+
+    return res.json({ stripeConnect: formatStripeConnectStatus(updated || user) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load Stripe Connect status.' });
+  }
+});
+
+// POST /api/stripe/connect/start — create/reuse connected account and return onboarding URL
+app.post('/api/stripe/connect/start', requireAuth, async (req, res) => {
+  if (!stripeClient) {
+    return res.status(503).json({ error: 'Stripe is not configured on the server.' });
+  }
+
+  try {
+    const user = await getUserById(req.session.userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    let stripeAccountId = user.stripe_account_id ? String(user.stripe_account_id).trim() : '';
+
+    if (!stripeAccountId) {
+      const account = await stripeClient.accounts.create({
+        type: 'express',
+        country: STRIPE_CONNECT_DEFAULT_COUNTRY || 'GB',
+        email: user.email,
+        metadata: {
+          app_user_id: String(user.id)
+        },
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true }
+        }
+      });
+      stripeAccountId = account.id;
+
+      await setUserStripeConnectState(req.session.userId, {
+        stripe_account_id: stripeAccountId,
+        stripe_onboarding_complete: account.details_submitted === true,
+        stripe_charges_enabled: account.charges_enabled === true,
+        stripe_payouts_enabled: account.payouts_enabled === true
+      });
+    }
+
+    const baseUrl = getRequestBaseUrl(req);
+    if (!baseUrl) {
+      return res.status(400).json({ error: 'Unable to determine application URL for Stripe onboarding.' });
+    }
+
+    const accountLink = await stripeClient.accountLinks.create({
+      account: stripeAccountId,
+      type: 'account_onboarding',
+      refresh_url: baseUrl + '/dashboard.html?stripeConnect=refresh',
+      return_url: baseUrl + '/dashboard.html?stripeConnect=return'
+    });
+
+    return res.json({
+      onboardingUrl: accountLink.url,
+      stripeAccountId
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to start Stripe Connect onboarding.' });
+  }
 });
 
 // GET /api/cleaners — all cleaners for current user

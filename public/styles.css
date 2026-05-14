@@ -115,6 +115,10 @@ label {
   color: #888;
 }
 
+.hint.error {
+  color: #7a2e2e;
+}
+
 input[type="text"],
 input[type="email"],
 input[type="password"],

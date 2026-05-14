@@ -52,6 +52,14 @@ services:
         value: noreply@automaticpeople.com
       - key: POSTMARK_MESSAGE_STREAM
         value: outbound
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_CONNECT_DEFAULT_COUNTRY
+        value: GB
 
 databases:
   - name: two-page-website-db

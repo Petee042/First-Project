@@ -44,6 +44,58 @@ function setMessage(text, isError) {
   el.className = text ? 'message ' + (isError ? 'error' : 'success') : 'message';
 }
 
+function setStripeConnectStatus(text, isError) {
+  const el = document.getElementById('stripeConnectStatus');
+  if (!el) {
+    return;
+  }
+  el.textContent = text || '';
+  el.className = isError ? 'hint error' : 'hint';
+}
+
+function renderStripeConnectStatus(status) {
+  const button = document.getElementById('startStripeConnectBtn');
+  const connected = Boolean(status && status.onboardingComplete && status.chargesEnabled && status.payoutsEnabled);
+  const accountId = status && status.stripeAccountId ? String(status.stripeAccountId) : '';
+
+  if (connected) {
+    setStripeConnectStatus('Stripe account connected and ready to receive payments.' + (accountId ? (' (' + accountId + ')') : ''), false);
+    if (button) {
+      button.textContent = 'Manage Stripe Account';
+    }
+    return;
+  }
+
+  if (accountId) {
+    setStripeConnectStatus('Stripe account linked but onboarding is incomplete. Complete setup to enable online payments.', false);
+    if (button) {
+      button.textContent = 'Complete Stripe Setup';
+    }
+    return;
+  }
+
+  setStripeConnectStatus('No Stripe account connected yet. Connect one to accept online payments.', false);
+  if (button) {
+    button.textContent = 'Connect Stripe Account';
+  }
+}
+
+async function fetchStripeConnectStatus() {
+  const response = await fetch('/api/stripe/connect/status');
+
+  if (response.status === 401) {
+    window.location.href = '/';
+    return;
+  }
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to load Stripe Connect status.');
+  }
+
+  renderStripeConnectStatus(data.stripeConnect || null);
+}
+
 function renderListings(listings) {
   const tbody = document.getElementById('listingsTableBody');
   tbody.innerHTML = '';
@@ -1052,12 +1104,14 @@ async function persistCurrentScheduleChanges() {
     if (meData.email) {
       document.getElementById('scheduleEmailTo').value = meData.email;
     }
+    renderStripeConnectStatus(meData.stripeConnect || null);
 
     await fetchProperties();
     await fetchListings();
     await fetchFeedSources();
     await fetchCleaners();
     await fetchSharedResources();
+    await fetchStripeConnectStatus();
 
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -1182,6 +1236,30 @@ document.getElementById('addSharedResourceForm').addEventListener('submit', asyn
 document.getElementById('logoutBtn').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/';
+});
+
+document.getElementById('startStripeConnectBtn').addEventListener('click', async () => {
+  const button = document.getElementById('startStripeConnectBtn');
+  button.disabled = true;
+  setStripeConnectStatus('Opening Stripe onboarding...', false);
+
+  try {
+    const response = await fetch('/api/stripe/connect/start', { method: 'POST' });
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to start Stripe onboarding.');
+    }
+
+    if (!data.onboardingUrl) {
+      throw new Error('Stripe onboarding URL is missing.');
+    }
+
+    window.location.href = data.onboardingUrl;
+  } catch (err) {
+    setStripeConnectStatus(err.message || 'Failed to start Stripe onboarding.', true);
+    button.disabled = false;
+  }
 });
 
 document.getElementById('clearNotificationLogBtn').addEventListener('click', () => {
