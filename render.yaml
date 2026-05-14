@@ -45,6 +45,12 @@ services:
         fromDatabase:
           name: two-page-website-db
           property: connectionString
+      - key: POSTMARK_SERVER_TOKEN
+        sync: false
+      - key: POSTMARK_FROM
+        value: noreply@automaticpeople.com
+      - key: POSTMARK_MESSAGE_STREAM
+        value: outbound
 
 databases:
   - name: two-page-website-db

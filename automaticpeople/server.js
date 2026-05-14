@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const nodemailer = require('nodemailer');
+const postmark = require('postmark');
 const path = require('path');
 const { Pool } = require('pg');
 
@@ -9,12 +9,9 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const NODE_ENV = String(process.env.NODE_ENV || '').toLowerCase();
 const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
-const SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
-const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
-const SMTP_SECURE = String(process.env.SMTP_SECURE || '').trim().toLowerCase() === 'true';
-const SMTP_USER = String(process.env.SMTP_USER || '').trim();
-const SMTP_PASS = String(process.env.SMTP_PASS || '').trim();
-const SMTP_FROM = String(process.env.SMTP_FROM || SMTP_USER || 'noreply@automaticpeople.com').trim();
+const POSTMARK_SERVER_TOKEN = String(process.env.POSTMARK_SERVER_TOKEN || '').trim();
+const POSTMARK_FROM = String(process.env.POSTMARK_FROM || 'noreply@automaticpeople.com').trim();
+const POSTMARK_MESSAGE_STREAM = String(process.env.POSTMARK_MESSAGE_STREAM || 'outbound').trim();
 
 const pool = DATABASE_URL
   ? new Pool({
@@ -24,19 +21,11 @@ const pool = DATABASE_URL
   : null;
 
 function createMailer() {
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    throw new Error('SMTP is not configured.');
+  if (!POSTMARK_SERVER_TOKEN) {
+    throw new Error('Postmark server token is not configured.');
   }
 
-  return nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS
-    }
-  });
+  return new postmark.ServerClient(POSTMARK_SERVER_TOKEN);
 }
 
 function isValidEmail(value) {
@@ -65,7 +54,7 @@ app.get('/health', async (req, res) => {
 app.get('/api/status', (req, res) => {
   res.json({
     ok: true,
-    emailConfigured: Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS),
+    emailConfigured: Boolean(POSTMARK_SERVER_TOKEN && POSTMARK_FROM),
     databaseConfigured: Boolean(pool)
   });
 });
@@ -87,11 +76,12 @@ app.post('/api/send-email', async (req, res) => {
   }
 
   try {
-    await mailer.sendMail({
-      from: SMTP_FROM,
-      to: recipient,
-      subject,
-      text: message + '\n\nSent from AutomaticPeople.'
+    await mailer.sendEmail({
+      From: POSTMARK_FROM,
+      To: recipient,
+      Subject: subject,
+      TextBody: message + '\n\nSent from AutomaticPeople.',
+      MessageStream: POSTMARK_MESSAGE_STREAM
     });
 
     res.json({ ok: true, message: 'Email sent.' });
