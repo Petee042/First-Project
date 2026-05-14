@@ -31,10 +31,11 @@ services:
     autoDeployTrigger: commit
     buildFilter:
       paths:
-        - automaticpeople/**
+        - public/**
+        - server/**
         - render.yaml
-    buildCommand: cd automaticpeople && npm install
-    startCommand: cd automaticpeople && npm start
+    buildCommand: cd server && npm install
+    startCommand: cd server && npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
@@ -45,16 +46,6 @@ services:
         fromDatabase:
           name: two-page-website-db
           property: connectionString
-      - key: POSTMARK_SERVER_TOKEN
-        sync: false
-      - key: POSTMARK_FROM
-        value: noreply@automaticpeople.com
-      - key: POSTMARK_MESSAGE_STREAM
-        value: outbound
-      - key: SHELL_LOGIN_USERNAME
-        value: Peterku
-      - key: SHELL_LOGIN_PASSWORD
-        value: letmein1
 
 databases:
   - name: two-page-website-db
