@@ -51,6 +51,10 @@ services:
         value: noreply@automaticpeople.com
       - key: POSTMARK_MESSAGE_STREAM
         value: outbound
+      - key: SHELL_LOGIN_USERNAME
+        value: Peterku
+      - key: SHELL_LOGIN_PASSWORD
+        value: letmein1
 
 databases:
   - name: two-page-website-db

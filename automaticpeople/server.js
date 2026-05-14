@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const session = require('express-session');
 const postmark = require('postmark');
 const path = require('path');
 const { Pool } = require('pg');
@@ -8,6 +9,9 @@ const { Pool } = require('pg');
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const NODE_ENV = String(process.env.NODE_ENV || '').toLowerCase();
+const SESSION_SECRET = String(process.env.SESSION_SECRET || 'change-me').trim();
+const SHELL_LOGIN_USERNAME = String(process.env.SHELL_LOGIN_USERNAME || 'Peterku').trim();
+const SHELL_LOGIN_PASSWORD = String(process.env.SHELL_LOGIN_PASSWORD || 'letmein1').trim();
 const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
 const POSTMARK_SERVER_TOKEN = String(process.env.POSTMARK_SERVER_TOKEN || '').trim();
 const POSTMARK_FROM = String(process.env.POSTMARK_FROM || 'noreply@automaticpeople.com').trim();
@@ -55,9 +59,56 @@ function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
 
+function requireShellAuth(req, res, next) {
+  if (req.session && req.session.isShellAuthed === true) {
+    return next();
+  }
+  return res.redirect('/login');
+}
+
+if (NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(session({
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: NODE_ENV === 'production',
+    maxAge: 1000 * 60 * 60 * 8
+  }
+}));
+
+app.get('/login', (req, res) => {
+  if (req.session && req.session.isShellAuthed === true) {
+    return res.redirect('/');
+  }
+  return res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.post('/login', (req, res) => {
+  const username = String(req.body.username || '').trim();
+  const password = String(req.body.password || '').trim();
+  if (username === SHELL_LOGIN_USERNAME && password === SHELL_LOGIN_PASSWORD) {
+    req.session.isShellAuthed = true;
+    return res.redirect('/');
+  }
+  return res.status(401).sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+app.post('/logout', (req, res) => {
+  if (!req.session) {
+    return res.redirect('/login');
+  }
+  req.session.destroy(() => {
+    res.redirect('/login');
+  });
+});
 
 app.get('/health', async (req, res) => {
   const status = { ok: true, app: 'AutomaticPeople' };
@@ -81,6 +132,9 @@ app.get('/api/status', (req, res) => {
     databaseConfigured: Boolean(pool)
   });
 });
+
+app.use(requireShellAuth);
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.post('/api/send-email', async (req, res) => {
   const recipient = String(req.body.recipient || '').trim();
