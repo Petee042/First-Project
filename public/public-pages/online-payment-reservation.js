@@ -12,6 +12,31 @@ const spacesRequiredParam = params.get('spacesRequired') || '';
 
 let currentResource = null;
 
+function isParkingResource(resource) {
+  if (!resource) {
+    return false;
+  }
+  const resourceType = String(resource.resource_type || resource.resourceType || '').trim().toLowerCase();
+  return resourceType === 'parking';
+}
+
+function renderVehicleRegistrationField(resource) {
+  const labelEl = document.getElementById('guestVehicleRegistrationLabel');
+  const inputEl = document.getElementById('guestVehicleRegistration');
+  if (!labelEl || !inputEl) {
+    return;
+  }
+
+  const showField = isParkingResource(resource);
+  labelEl.classList.toggle('hidden', !showField);
+  inputEl.classList.toggle('hidden', !showField);
+
+  inputEl.required = showField;
+  if (!showField) {
+    inputEl.value = '';
+  }
+}
+
 function formatReservationDateTime(isoStr) {
   if (!isoStr) return '-';
   const d = new Date(isoStr);
@@ -35,9 +60,16 @@ function getGuestPayload() {
   const familyName = document.getElementById('guestFamilyName') ? document.getElementById('guestFamilyName').value.trim() : '';
   const emailAddress = document.getElementById('guestEmailAddress') ? document.getElementById('guestEmailAddress').value.trim() : '';
   const telephone = document.getElementById('guestTelephone') ? document.getElementById('guestTelephone').value.trim() : '';
+  const vehicleRegistration = document.getElementById('guestVehicleRegistration')
+    ? document.getElementById('guestVehicleRegistration').value.trim()
+    : '';
 
   if (!firstName || !familyName || !emailAddress || !telephone) {
     return { error: 'Please enter first name, family name, email address and telephone.' };
+  }
+
+  if (isParkingResource(currentResource) && !vehicleRegistration) {
+    return { error: 'Please enter vehicle registration for parking reservations.' };
   }
 
   return {
@@ -45,7 +77,8 @@ function getGuestPayload() {
       firstName,
       familyName,
       emailAddress,
-      telephone
+      telephone,
+      vehicleRegistration
     }
   };
 }
@@ -103,6 +136,7 @@ async function loadPublicResource() {
     document.getElementById('reservationTitle').textContent = (currentResource.short_description || 'Reservation') + ' - Online Payment';
 
     renderPaymentMethodMessage(currentResource, paymentOption);
+    renderVehicleRegistrationField(currentResource);
   } catch (err) {
     setReservationMessage(err.message || 'Unable to load reservation page.', true);
   }
@@ -155,7 +189,8 @@ document.getElementById('submitReservationBtn').addEventListener('click', async 
         firstName: guest.payload.firstName,
         familyName: guest.payload.familyName,
         emailAddress: guest.payload.emailAddress,
-        telephone: guest.payload.telephone
+        telephone: guest.payload.telephone,
+        vehicleRegistration: guest.payload.vehicleRegistration
       })
     });
     const data = await res.json();
