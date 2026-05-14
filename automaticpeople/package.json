@@ -1,0 +1,15 @@
+{
+  "name": "automaticpeople",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shell site for AutomaticPeople with email sending and shared database access",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "nodemailer": "^6.9.16",
+    "pg": "^8.13.1"
+  }
+}

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutomaticPeople</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="page-shell">
+    <section class="hero-card">
+      <p class="eyebrow">New production shell</p>
+      <h1>AutomaticPeople</h1>
+      <p class="lede">
+        This is the launch shell for the new domain. It can send an email to any valid address entered below,
+        and it is wired to share the same backend database later when the full application goes live.
+      </p>
+
+      <form id="emailForm" class="email-form" novalidate>
+        <label for="recipient">Email address</label>
+        <input id="recipient" name="recipient" type="email" autocomplete="email" placeholder="name@example.com" required />
+
+        <label for="subject">Subject</label>
+        <input id="subject" name="subject" type="text" maxlength="140" value="Welcome to AutomaticPeople" />
+
+        <label for="message">Message</label>
+        <textarea id="message" name="message" rows="5" maxlength="1000">Thanks for visiting AutomaticPeople.</textarea>
+
+        <button id="sendButton" type="submit">Send email</button>
+      </form>
+
+      <p id="statusMessage" class="status" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <script src="/script.js"></script>
+</body>
+</html>
