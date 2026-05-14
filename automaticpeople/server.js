@@ -28,6 +28,29 @@ function createMailer() {
   return new postmark.ServerClient(POSTMARK_SERVER_TOKEN);
 }
 
+function getPostmarkErrorMessage(error) {
+  if (!error) {
+    return 'Unknown email provider error.';
+  }
+
+  const statusCode = error.statusCode || (error.response && error.response.statusCode) || null;
+  const code = error.code || (error.response && error.response.body && error.response.body.ErrorCode) || null;
+  const message = String(
+    error.message
+    || (error.response && error.response.body && error.response.body.Message)
+    || 'Unknown email provider error.'
+  ).trim();
+
+  let combined = message;
+  if (statusCode) {
+    combined += ' (HTTP ' + String(statusCode) + ')';
+  }
+  if (code) {
+    combined += ' [Postmark code ' + String(code) + ']';
+  }
+  return combined;
+}
+
 function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
@@ -64,6 +87,12 @@ app.post('/api/send-email', async (req, res) => {
   const subject = String(req.body.subject || 'Welcome to AutomaticPeople').trim();
   const message = String(req.body.message || 'Thanks for visiting AutomaticPeople.').trim();
 
+  console.log('[send-email] request received', {
+    recipient,
+    subjectLength: subject.length,
+    messageLength: message.length
+  });
+
   if (!isValidEmail(recipient)) {
     return res.status(400).json({ error: 'Enter a valid email address.' });
   }
@@ -72,6 +101,7 @@ app.post('/api/send-email', async (req, res) => {
   try {
     mailer = createMailer();
   } catch (error) {
+    console.error('[send-email] mailer configuration error:', error.message || error);
     return res.status(500).json({ error: error.message || 'Email service is not configured.' });
   }
 
@@ -84,9 +114,12 @@ app.post('/api/send-email', async (req, res) => {
       MessageStream: POSTMARK_MESSAGE_STREAM
     });
 
+    console.log('[send-email] email sent successfully', { recipient });
     res.json({ ok: true, message: 'Email sent.' });
   } catch (error) {
-    res.status(500).json({ error: 'Unable to send email.' });
+    const providerMessage = getPostmarkErrorMessage(error);
+    console.error('[send-email] Postmark send failed:', providerMessage);
+    res.status(500).json({ error: providerMessage });
   }
 });
 
@@ -96,4 +129,9 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log('AutomaticPeople listening on port ' + PORT);
+  console.log('AutomaticPeople email configuration', {
+    postmarkTokenConfigured: Boolean(POSTMARK_SERVER_TOKEN),
+    postmarkFrom: POSTMARK_FROM,
+    postmarkMessageStream: POSTMARK_MESSAGE_STREAM
+  });
 });
