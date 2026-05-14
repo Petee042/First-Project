@@ -5685,7 +5685,7 @@ function buildIcsEventSummary(listing, event) {
 
 function buildIcsCalendar(listing, events) {
   const now = buildIcsDateString(new Date().toISOString());
-  const prodId = '-//herupa1//Listing ' + listing.id + '//EN';
+  const prodId = '-//AutomaticPeople//Listing ' + listing.id + '//EN';
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -5699,7 +5699,7 @@ function buildIcsCalendar(listing, events) {
     const range = buildIcsDateRange(event);
     if (!range) return;
     const { dtstart, dtend, isAllDay } = range;
-    const uid = 'listing-' + listing.id + '-' + idx + '@herupa1';
+    const uid = 'listing-' + listing.id + '-' + idx + '@automaticpeople';
 
     lines.push('BEGIN:VEVENT');
     lines.push('UID:' + uid);
