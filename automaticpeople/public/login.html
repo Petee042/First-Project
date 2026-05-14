@@ -6,12 +6,13 @@
   <title>AutomaticPeople Login</title>
   <style>
     :root {
-      --bg: #f4efe6;
+      --bg: #f1f8f7;
       --card: rgba(255, 255, 255, 0.9);
-      --text: #171717;
-      --muted: #5f5a52;
-      --accent: #c4572f;
-      --border: rgba(23, 23, 23, 0.14);
+      --text: #122a2a;
+      --muted: #355a59;
+      --accent: rgb(36, 105, 101);
+      --accent-dark: #1c6c68;
+      --border: rgba(18, 42, 42, 0.14);
     }
 
     * { box-sizing: border-box; }
@@ -21,8 +22,8 @@
       font-family: Georgia, 'Times New Roman', Times, serif;
       color: var(--text);
       background:
-        radial-gradient(circle at top left, rgba(196, 87, 47, 0.22), transparent 30%),
-        linear-gradient(160deg, #faf6f0 0%, #f3eadf 100%);
+        radial-gradient(circle at top left, rgba(36, 105, 101, 0.2), transparent 30%),
+        linear-gradient(160deg, #f4fbfa 0%, #e6f3f2 100%);
       display: grid;
       place-items: center;
       padding: 1.25rem;
@@ -32,19 +33,22 @@
       position: fixed;
       top: 0.9rem;
       left: 0.9rem;
-      width: 72px;
-      height: 72px;
+      width: 112px;
+      height: 112px;
       display: inline-block;
-      border-radius: 12px;
+      padding: 0.25rem;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(36, 105, 101, 0.2);
       overflow: hidden;
-      box-shadow: 0 12px 24px rgba(66, 33, 11, 0.2);
+      box-shadow: 0 12px 24px rgba(14, 74, 71, 0.2);
       z-index: 20;
     }
 
     .ap-top-left-logo img {
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      object-fit: contain;
       display: block;
     }
 
@@ -54,7 +58,7 @@
       border: 1px solid var(--border);
       border-radius: 20px;
       padding: 1.5rem;
-      box-shadow: 0 20px 40px rgba(66, 33, 11, 0.14);
+      box-shadow: 0 20px 40px rgba(14, 74, 71, 0.14);
     }
 
     h1 {
@@ -92,7 +96,7 @@
       border: 0;
       border-radius: 999px;
       padding: 0.9rem 1rem;
-      background: var(--accent);
+      background: linear-gradient(135deg, var(--accent), var(--accent-dark));
       color: #fff;
       font-weight: 700;
       cursor: pointer;
@@ -100,8 +104,8 @@
 
     @media (max-width: 600px) {
       .ap-top-left-logo {
-        width: 56px;
-        height: 56px;
+        width: 82px;
+        height: 82px;
         top: 0.7rem;
         left: 0.7rem;
       }

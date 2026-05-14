@@ -1,13 +1,14 @@
 :root {
   color-scheme: light;
-  --bg: #f4efe6;
+  --bg: #f1f8f7;
   --card: rgba(255, 255, 255, 0.84);
-  --text: #171717;
-  --muted: #5f5a52;
-  --accent: #c4572f;
-  --accent-dark: #953e1d;
-  --border: rgba(23, 23, 23, 0.12);
-  --shadow: 0 24px 60px rgba(66, 33, 11, 0.16);
+  --text: #122a2a;
+  --muted: #355a59;
+  --accent: rgb(36, 105, 101);
+  --accent-dark: #1c6c68;
+  --accent-soft: #d8eceb;
+  --border: rgba(18, 42, 42, 0.14);
+  --shadow: 0 24px 60px rgba(14, 74, 71, 0.16);
 }
 
 * {
@@ -24,28 +25,31 @@ body {
   font-family: Georgia, 'Times New Roman', Times, serif;
   color: var(--text);
   background:
-    radial-gradient(circle at top left, rgba(196, 87, 47, 0.22), transparent 30%),
-    radial-gradient(circle at bottom right, rgba(149, 62, 29, 0.14), transparent 28%),
-    linear-gradient(160deg, #faf6f0 0%, #f3eadf 100%);
+    radial-gradient(circle at top left, rgba(36, 105, 101, 0.2), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(28, 108, 104, 0.14), transparent 28%),
+    linear-gradient(160deg, #f4fbfa 0%, #e6f3f2 100%);
 }
 
 .ap-top-left-logo {
   position: fixed;
   top: 0.9rem;
   left: 0.9rem;
-  width: 72px;
-  height: 72px;
+  width: 112px;
+  height: 112px;
   display: inline-block;
-  border-radius: 12px;
+  padding: 0.25rem;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(36, 105, 101, 0.2);
   overflow: hidden;
-  box-shadow: 0 12px 24px rgba(66, 33, 11, 0.2);
+  box-shadow: 0 12px 24px rgba(14, 74, 71, 0.2);
   z-index: 20;
 }
 
 .ap-top-left-logo img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
 }
 
@@ -113,14 +117,19 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 0.95rem 1rem;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.95);
   color: var(--text);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #5b7b79;
 }
 
 input:focus,
 textarea:focus,
 button:focus {
-  outline: 3px solid rgba(196, 87, 47, 0.28);
+  outline: 3px solid rgba(36, 105, 101, 0.28);
   outline-offset: 2px;
 }
 
@@ -133,7 +142,7 @@ button {
   color: #fff;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 14px 30px rgba(149, 62, 29, 0.24);
+  box-shadow: 0 14px 30px rgba(14, 74, 71, 0.24);
 }
 
 button:hover {
@@ -154,17 +163,17 @@ button:disabled {
 }
 
 .status.error {
-  color: #a23333;
+  color: #7e2e3b;
 }
 
 .status.success {
-  color: #1f6b43;
+  color: #1c6c68;
 }
 
 @media (max-width: 600px) {
   .ap-top-left-logo {
-    width: 56px;
-    height: 56px;
+    width: 82px;
+    height: 82px;
     top: 0.7rem;
     left: 0.7rem;
   }
