@@ -21,6 +21,8 @@ const KAYAK_API_KEY = process.env.KAYAK_API_KEY || '';
 const STAY_API_KEY = process.env.STAY_API_KEY || '';
 const STAY_API_BASE_URL = 'https://api.stayapi.com';
 const STRIPE_SECRET_KEY = String(process.env.STRIPE_SECRET_KEY || '').trim();
+const STRIPE_PUBLISHABLE_KEY = String(process.env.STRIPE_PUBLISHABLE_KEY || '').trim();
+const STRIPE_WEBHOOK_SECRET = String(process.env.STRIPE_WEBHOOK_SECRET || '').trim();
 const STRIPE_CONNECT_DEFAULT_COUNTRY = String(process.env.STRIPE_CONNECT_DEFAULT_COUNTRY || 'GB').trim().toUpperCase();
 const usersFile = path.join(__dirname, 'users.json');
 const listingsFile = path.join(__dirname, 'listings.json');
@@ -556,7 +558,16 @@ async function initializeUserStore() {
       family_name TEXT NOT NULL DEFAULT '',
       email_address TEXT NOT NULL DEFAULT '',
       telephone TEXT NOT NULL DEFAULT '',
+      vehicle_registration TEXT NOT NULL DEFAULT '',
       reservation_amount NUMERIC(10,2),
+      payment_provider TEXT NOT NULL DEFAULT '',
+      payment_intent_id TEXT,
+      payment_status TEXT NOT NULL DEFAULT '',
+      payment_currency TEXT NOT NULL DEFAULT '',
+      payment_amount_minor INTEGER,
+      application_fee_minor INTEGER,
+      payment_last_error TEXT,
+      paid_at TIMESTAMPTZ,
       status TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -585,7 +596,58 @@ async function initializeUserStore() {
 
   await pool.query(`
     ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS vehicle_registration TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
     ADD COLUMN IF NOT EXISTS reservation_amount NUMERIC(10,2)
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS payment_provider TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS payment_intent_id TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS payment_currency TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS payment_amount_minor INTEGER
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS application_fee_minor INTEGER
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS payment_last_error TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE shared_resource_reservations
+    ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_resource_reservations_payment_intent_id
+    ON shared_resource_reservations (payment_intent_id)
+    WHERE payment_intent_id IS NOT NULL
   `);
 
   await migrateUsersFromFile();
@@ -786,6 +848,23 @@ function normaliseSharedResourceReservationAmount(value) {
     return null;
   }
   return Number(parsed.toFixed(2));
+}
+
+function normaliseSharedResourceReservationPaymentStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  if (!status) {
+    return '';
+  }
+  const allowed = new Set(['pending', 'processing', 'succeeded', 'failed', 'canceled', 'requires_action']);
+  return allowed.has(status) ? status : '';
+}
+
+function toMinorUnits(amount) {
+  const numeric = normaliseSharedResourceReservationAmount(amount);
+  if (numeric === null) {
+    return null;
+  }
+  return Math.round(numeric * 100);
 }
 
 function getDefaultSharedResourceReservationStatus(resource) {
@@ -1887,7 +1966,20 @@ async function getSharedResourceReservationsByResourceId(resourceId) {
         family_name: String(row.family_name || ''),
         email_address: String(row.email_address || ''),
         telephone: String(row.telephone || ''),
+        vehicle_registration: String(row.vehicle_registration || ''),
         reservation_amount: normaliseSharedResourceReservationAmount(row.reservation_amount),
+        payment_provider: String(row.payment_provider || ''),
+        payment_intent_id: String(row.payment_intent_id || ''),
+        payment_status: normaliseSharedResourceReservationPaymentStatus(row.payment_status),
+        payment_currency: String(row.payment_currency || ''),
+        payment_amount_minor: row.payment_amount_minor === null || row.payment_amount_minor === undefined
+          ? null
+          : Number(row.payment_amount_minor),
+        application_fee_minor: row.application_fee_minor === null || row.application_fee_minor === undefined
+          ? null
+          : Number(row.application_fee_minor),
+        payment_last_error: String(row.payment_last_error || ''),
+        paid_at: row.paid_at || null,
         status: normaliseSharedResourceReservationStatus(row.status) || 'Confirmed',
         created_at: row.created_at,
         updated_at: row.updated_at
@@ -1901,7 +1993,9 @@ async function getSharedResourceReservationsByResourceId(resourceId) {
              reservation_checkin_date::text AS reservation_checkin_date,
              reservation_checkout_date::text AS reservation_checkout_date,
               requested_start_at, requested_end_at, spaces_required,
-              first_name, family_name, email_address, telephone, reservation_amount,
+              first_name, family_name, email_address, telephone, vehicle_registration, reservation_amount,
+              payment_provider, payment_intent_id, payment_status, payment_currency,
+              payment_amount_minor, application_fee_minor, payment_last_error, paid_at,
               status, created_at, updated_at
       FROM shared_resource_reservations
       WHERE shared_resource_id = $1
@@ -1912,6 +2006,7 @@ async function getSharedResourceReservationsByResourceId(resourceId) {
 
   return result.rows.map((row) => ({
     ...row,
+    payment_status: normaliseSharedResourceReservationPaymentStatus(row.payment_status),
     status: normaliseSharedResourceReservationStatus(row.status) || 'Confirmed'
   }));
 }
@@ -2037,6 +2132,15 @@ function findAvailablePeriods(existingReservations, requestedStartAt, requestedE
 
 async function createSharedResourceReservation(input) {
   const status = normaliseSharedResourceReservationStatus(input.status) || 'Confirmed';
+  const paymentStatus = normaliseSharedResourceReservationPaymentStatus(input.paymentStatus);
+  const paymentProvider = String(input.paymentProvider || '').trim().slice(0, 40);
+  const paymentIntentId = String(input.paymentIntentId || '').trim().slice(0, 120);
+  const paymentCurrency = String(input.paymentCurrency || '').trim().toLowerCase().slice(0, 12);
+  const paymentAmountMinor = Number.isInteger(Number(input.paymentAmountMinor)) ? Number(input.paymentAmountMinor) : null;
+  const applicationFeeMinor = Number.isInteger(Number(input.applicationFeeMinor)) ? Number(input.applicationFeeMinor) : null;
+  const paymentLastError = String(input.paymentLastError || '').trim().slice(0, 500);
+  const paidAt = input.paidAt ? String(input.paidAt).trim() : null;
+  const vehicleRegistration = String(input.vehicleRegistration || '').trim().slice(0, 60);
 
   if (!usePostgres) {
     const store = readListingsStore();
@@ -2059,7 +2163,16 @@ async function createSharedResourceReservation(input) {
       family_name: String(input.familyName || ''),
       email_address: String(input.emailAddress || ''),
       telephone: String(input.telephone || ''),
+      vehicle_registration: vehicleRegistration,
       reservation_amount: normaliseSharedResourceReservationAmount(input.reservationAmount),
+      payment_provider: paymentProvider,
+      payment_intent_id: paymentIntentId,
+      payment_status: paymentStatus,
+      payment_currency: paymentCurrency,
+      payment_amount_minor: paymentAmountMinor,
+      application_fee_minor: applicationFeeMinor,
+      payment_last_error: paymentLastError,
+      paid_at: paidAt,
       status,
       created_at: now,
       updated_at: now
@@ -2076,15 +2189,22 @@ async function createSharedResourceReservation(input) {
         user_id, shared_resource_id, reservation_identifier, listing_id,
         reservation_checkin_date, reservation_checkout_date,
         requested_start_at, requested_end_at, spaces_required,
-        first_name, family_name, email_address, telephone, reservation_amount,
+        first_name, family_name, email_address, telephone, vehicle_registration, reservation_amount,
+        payment_provider, payment_intent_id, payment_status, payment_currency,
+        payment_amount_minor, application_fee_minor, payment_last_error, paid_at,
         status
       )
-      VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::timestamptz, $8::timestamptz, $9, $10, $11, $12, $13, $14)
+      VALUES ($1, $2, $3, $4, $5::date, $6::date, $7::timestamptz, $8::timestamptz, $9,
+              $10, $11, $12, $13, $14, $15,
+              $16, $17, $18, $19, $20, $21, $22, $23::timestamptz,
+              $24)
       RETURNING id, user_id, shared_resource_id, reservation_identifier, listing_id,
                 reservation_checkin_date::text AS reservation_checkin_date,
                 reservation_checkout_date::text AS reservation_checkout_date,
                 requested_start_at, requested_end_at, spaces_required,
-                first_name, family_name, email_address, telephone, reservation_amount,
+                first_name, family_name, email_address, telephone, vehicle_registration, reservation_amount,
+                payment_provider, payment_intent_id, payment_status, payment_currency,
+                payment_amount_minor, application_fee_minor, payment_last_error, paid_at,
                 status, created_at, updated_at
     `,
     [
@@ -2101,11 +2221,135 @@ async function createSharedResourceReservation(input) {
       String(input.familyName || ''),
       String(input.emailAddress || ''),
       String(input.telephone || ''),
+      vehicleRegistration,
       normaliseSharedResourceReservationAmount(input.reservationAmount),
+      paymentProvider,
+      paymentIntentId || null,
+      paymentStatus,
+      paymentCurrency,
+      paymentAmountMinor,
+      applicationFeeMinor,
+      paymentLastError || null,
+      paidAt,
       status
     ]
   );
   return result.rows[0];
+}
+
+async function updateSharedResourceReservationPaymentById(reservationId, input) {
+  const paymentStatus = normaliseSharedResourceReservationPaymentStatus(input.paymentStatus);
+  const nextStatus = normaliseSharedResourceReservationStatus(input.status) || null;
+  const paymentLastError = String(input.paymentLastError || '').trim().slice(0, 500);
+  const paidAt = input.paidAt ? String(input.paidAt).trim() : null;
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    const idx = (store.shared_resource_reservations || []).findIndex((row) => Number(row.id) === Number(reservationId));
+    if (idx < 0) {
+      return null;
+    }
+
+    const row = store.shared_resource_reservations[idx];
+    if (input.paymentIntentId !== undefined) {
+      row.payment_intent_id = String(input.paymentIntentId || '').trim();
+    }
+    if (input.paymentProvider !== undefined) {
+      row.payment_provider = String(input.paymentProvider || '').trim().slice(0, 40);
+    }
+    if (input.paymentCurrency !== undefined) {
+      row.payment_currency = String(input.paymentCurrency || '').trim().toLowerCase().slice(0, 12);
+    }
+    if (input.paymentAmountMinor !== undefined) {
+      row.payment_amount_minor = Number.isInteger(Number(input.paymentAmountMinor)) ? Number(input.paymentAmountMinor) : null;
+    }
+    if (input.applicationFeeMinor !== undefined) {
+      row.application_fee_minor = Number.isInteger(Number(input.applicationFeeMinor)) ? Number(input.applicationFeeMinor) : null;
+    }
+    if (paymentStatus) {
+      row.payment_status = paymentStatus;
+    }
+    row.payment_last_error = paymentLastError;
+    if (paidAt) {
+      row.paid_at = paidAt;
+    }
+    if (nextStatus) {
+      row.status = nextStatus;
+    }
+    row.updated_at = new Date().toISOString();
+    writeListingsStore(store);
+    return row;
+  }
+
+  const result = await pool.query(
+    `
+      UPDATE shared_resource_reservations
+      SET payment_provider = COALESCE($1, payment_provider),
+          payment_intent_id = COALESCE($2, payment_intent_id),
+          payment_status = COALESCE(NULLIF($3, ''), payment_status),
+          payment_currency = COALESCE(NULLIF($4, ''), payment_currency),
+          payment_amount_minor = COALESCE($5, payment_amount_minor),
+          application_fee_minor = COALESCE($6, application_fee_minor),
+          payment_last_error = COALESCE($7, payment_last_error),
+          paid_at = COALESCE($8::timestamptz, paid_at),
+          status = COALESCE($9, status),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $10
+      RETURNING id, user_id, shared_resource_id, reservation_identifier, listing_id,
+                reservation_checkin_date::text AS reservation_checkin_date,
+                reservation_checkout_date::text AS reservation_checkout_date,
+                requested_start_at, requested_end_at, spaces_required,
+                first_name, family_name, email_address, telephone, vehicle_registration, reservation_amount,
+                payment_provider, payment_intent_id, payment_status, payment_currency,
+                payment_amount_minor, application_fee_minor, payment_last_error, paid_at,
+                status, created_at, updated_at
+    `,
+    [
+      input.paymentProvider !== undefined ? String(input.paymentProvider || '').trim().slice(0, 40) : null,
+      input.paymentIntentId !== undefined ? String(input.paymentIntentId || '').trim().slice(0, 120) : null,
+      paymentStatus,
+      input.paymentCurrency !== undefined ? String(input.paymentCurrency || '').trim().toLowerCase().slice(0, 12) : null,
+      input.paymentAmountMinor !== undefined && Number.isInteger(Number(input.paymentAmountMinor)) ? Number(input.paymentAmountMinor) : null,
+      input.applicationFeeMinor !== undefined && Number.isInteger(Number(input.applicationFeeMinor)) ? Number(input.applicationFeeMinor) : null,
+      paymentLastError || null,
+      paidAt,
+      nextStatus,
+      reservationId
+    ]
+  );
+
+  return result.rows[0] || null;
+}
+
+async function getSharedResourceReservationByPaymentIntentId(paymentIntentId) {
+  const id = String(paymentIntentId || '').trim();
+  if (!id) {
+    return null;
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return (store.shared_resource_reservations || []).find((row) => String(row.payment_intent_id || '') === id) || null;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, user_id, shared_resource_id, reservation_identifier, listing_id,
+             reservation_checkin_date::text AS reservation_checkin_date,
+             reservation_checkout_date::text AS reservation_checkout_date,
+             requested_start_at, requested_end_at, spaces_required,
+             first_name, family_name, email_address, telephone, vehicle_registration, reservation_amount,
+             payment_provider, payment_intent_id, payment_status, payment_currency,
+             payment_amount_minor, application_fee_minor, payment_last_error, paid_at,
+             status, created_at, updated_at
+      FROM shared_resource_reservations
+      WHERE payment_intent_id = $1
+      LIMIT 1
+    `,
+    [id]
+  );
+
+  return result.rows[0] || null;
 }
 
 async function updateSharedResourceReservationStatusForUser(reservationId, resourceId, userId, status) {
@@ -2166,7 +2410,9 @@ async function getSharedResourceReservationByIdForUser(reservationId, resourceId
              reservation_checkin_date::text AS reservation_checkin_date,
              reservation_checkout_date::text AS reservation_checkout_date,
              requested_start_at, requested_end_at, spaces_required,
-             first_name, family_name, email_address, telephone, reservation_amount,
+              first_name, family_name, email_address, telephone, vehicle_registration, reservation_amount,
+              payment_provider, payment_intent_id, payment_status, payment_currency,
+              payment_amount_minor, application_fee_minor, payment_last_error, paid_at,
              status, created_at, updated_at
       FROM shared_resource_reservations
       WHERE id = $1 AND shared_resource_id = $2 AND user_id = $3
@@ -2206,6 +2452,7 @@ async function updateSharedResourceReservationForUser(reservationId, resourceId,
     current.family_name = String(input.familyName || '');
     current.email_address = String(input.emailAddress || '');
     current.telephone = String(input.telephone || '');
+    current.vehicle_registration = String(input.vehicleRegistration || current.vehicle_registration || '');
     current.reservation_amount = normaliseSharedResourceReservationAmount(input.reservationAmount);
     current.status = nextStatus;
     current.updated_at = new Date().toISOString();
@@ -2227,15 +2474,18 @@ async function updateSharedResourceReservationForUser(reservationId, resourceId,
           family_name = $8,
           email_address = $9,
           telephone = $10,
-          reservation_amount = $11,
-          status = $12,
+          vehicle_registration = $11,
+          reservation_amount = $12,
+          status = $13,
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = $13 AND shared_resource_id = $14 AND user_id = $15
+      WHERE id = $14 AND shared_resource_id = $15 AND user_id = $16
       RETURNING id, user_id, shared_resource_id, reservation_identifier, listing_id,
                 reservation_checkin_date::text AS reservation_checkin_date,
                 reservation_checkout_date::text AS reservation_checkout_date,
                 requested_start_at, requested_end_at, spaces_required,
-                first_name, family_name, email_address, telephone, reservation_amount,
+                first_name, family_name, email_address, telephone, vehicle_registration, reservation_amount,
+                payment_provider, payment_intent_id, payment_status, payment_currency,
+                payment_amount_minor, application_fee_minor, payment_last_error, paid_at,
                 status, created_at, updated_at
     `,
     [
@@ -2249,6 +2499,7 @@ async function updateSharedResourceReservationForUser(reservationId, resourceId,
       String(input.familyName || ''),
       String(input.emailAddress || ''),
       String(input.telephone || ''),
+      String(input.vehicleRegistration || ''),
       normaliseSharedResourceReservationAmount(input.reservationAmount),
       nextStatus,
       reservationId,
@@ -4256,7 +4507,14 @@ if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({
+  limit: '5mb',
+  verify: (req, _res, buf) => {
+    if (req.originalUrl === '/api/stripe/webhook') {
+      req.rawBody = buf.toString('utf8');
+    }
+  }
+}));
 app.use(express.urlencoded({ extended: false }));
 
 app.use(session({
@@ -4746,6 +5004,75 @@ app.post('/api/stripe/connect/start', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/stripe/webhook — Stripe event receiver for payment intent lifecycle
+app.post('/api/stripe/webhook', async (req, res) => {
+  if (!stripeClient || !STRIPE_WEBHOOK_SECRET) {
+    return res.status(503).json({ error: 'Stripe webhook is not configured.' });
+  }
+
+  const signature = req.headers['stripe-signature'];
+  if (!signature || !req.rawBody) {
+    return res.status(400).json({ error: 'Missing Stripe signature or raw payload.' });
+  }
+
+  let event;
+  try {
+    event = stripeClient.webhooks.constructEvent(req.rawBody, signature, STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('Stripe webhook signature verification failed:', err && err.message ? err.message : err);
+    return res.status(400).json({ error: 'Invalid Stripe webhook signature.' });
+  }
+
+  try {
+    if (event.type && event.type.startsWith('payment_intent.')) {
+      const paymentIntent = event.data && event.data.object ? event.data.object : null;
+      const paymentIntentId = paymentIntent && paymentIntent.id ? String(paymentIntent.id) : '';
+      if (paymentIntentId) {
+        const reservation = await getSharedResourceReservationByPaymentIntentId(paymentIntentId);
+        if (reservation) {
+          const commonUpdate = {
+            paymentProvider: 'stripe',
+            paymentIntentId,
+            paymentStatus: String(paymentIntent.status || '').toLowerCase(),
+            paymentCurrency: String(paymentIntent.currency || 'gbp').toLowerCase(),
+            paymentAmountMinor: Number.isInteger(paymentIntent.amount_received)
+              ? paymentIntent.amount_received
+              : (Number.isInteger(paymentIntent.amount) ? paymentIntent.amount : null),
+            paymentLastError: paymentIntent.last_payment_error && paymentIntent.last_payment_error.message
+              ? String(paymentIntent.last_payment_error.message)
+              : ''
+          };
+
+          if (event.type === 'payment_intent.succeeded') {
+            await updateSharedResourceReservationPaymentById(reservation.id, {
+              ...commonUpdate,
+              paidAt: new Date().toISOString(),
+              status: 'Confirmed'
+            });
+          } else if (event.type === 'payment_intent.payment_failed') {
+            await updateSharedResourceReservationPaymentById(reservation.id, {
+              ...commonUpdate,
+              status: 'Awaiting Online Confirmation'
+            });
+          } else if (event.type === 'payment_intent.canceled') {
+            await updateSharedResourceReservationPaymentById(reservation.id, {
+              ...commonUpdate,
+              status: 'Declined'
+            });
+          } else {
+            await updateSharedResourceReservationPaymentById(reservation.id, commonUpdate);
+          }
+        }
+      }
+    }
+
+    return res.json({ received: true });
+  } catch (err) {
+    console.error('Stripe webhook handling failed:', err);
+    return res.status(500).json({ error: 'Failed to process webhook event.' });
+  }
+});
+
 // GET /api/cleaners — all cleaners for current user
 app.get('/api/cleaners', requireAuth, async (req, res) => {
   try {
@@ -5097,6 +5424,171 @@ app.post('/api/public/shared-resources/:resourceId/check-availability', async (r
   }
 });
 
+// POST /api/public/shared-resources/:resourceId/online-payment/prepare — create provisional reservation + payment intent
+app.post('/api/public/shared-resources/:resourceId/online-payment/prepare', async (req, res) => {
+  if (!stripeClient || !STRIPE_PUBLISHABLE_KEY) {
+    return res.status(503).json({ error: 'Stripe is not configured on the server.' });
+  }
+
+  const resourceId = Number(req.params.resourceId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0) {
+    return res.status(400).json({ error: 'Invalid shared resource id.' });
+  }
+
+  const requestedStartAtRaw = String(req.body.requestedStartAt || '').trim();
+  const requestedEndAtRaw = String(req.body.requestedEndAt || '').trim();
+  const requestedStartAt = new Date(requestedStartAtRaw);
+  const requestedEndAt = new Date(requestedEndAtRaw);
+
+  if (Number.isNaN(requestedStartAt.getTime()) || Number.isNaN(requestedEndAt.getTime()) || requestedEndAt.getTime() <= requestedStartAt.getTime()) {
+    return res.status(400).json({ error: 'Requested end must be after requested start.' });
+  }
+
+  const checkinDate = normaliseDateKey(req.body.checkinDate) || getDateKeyFromEventDateTime(requestedStartAtRaw);
+  const checkoutDate = normaliseDateKey(req.body.checkoutDate) || getDateKeyFromEventDateTime(requestedEndAtRaw);
+  if (!checkinDate || !checkoutDate) {
+    return res.status(400).json({ error: 'Checkin and checkout dates are required.' });
+  }
+
+  const firstName = normaliseSharedResourceReservationText(req.body.firstName, 100);
+  const familyName = normaliseSharedResourceReservationText(req.body.familyName, 100);
+  const emailAddress = normaliseSharedResourceReservationEmail(req.body.emailAddress);
+  const telephone = normaliseSharedResourceReservationText(req.body.telephone, 60);
+  const vehicleRegistration = normaliseSharedResourceReservationText(req.body.vehicleRegistration, 60) || '';
+  const reservationAmount = normaliseSharedResourceReservationAmount(req.body.reservationAmount);
+  if (!firstName || !familyName || !emailAddress || !telephone) {
+    return res.status(400).json({ error: 'First name, family name, email address and telephone are required.' });
+  }
+  if (reservationAmount === null || reservationAmount <= 0) {
+    return res.status(400).json({ error: 'A valid reservation amount is required for online payment.' });
+  }
+
+  try {
+    const resource = await getSharedResourceByIdPublic(resourceId);
+    if (!resource) {
+      return res.status(404).json({ error: 'Shared resource not found.' });
+    }
+    if (resource.online_payment !== true) {
+      return res.status(400).json({ error: 'Online payment is not enabled for this resource.' });
+    }
+
+    const hostUser = await getUserById(Number(resource.user_id));
+    if (!hostUser || !hostUser.stripe_account_id) {
+      return res.status(400).json({ error: 'Host Stripe account is not connected yet.' });
+    }
+
+    const stripeAccount = await stripeClient.accounts.retrieve(String(hostUser.stripe_account_id));
+    await setUserStripeConnectState(hostUser.id, {
+      stripe_account_id: stripeAccount.id,
+      stripe_onboarding_complete: stripeAccount.details_submitted === true,
+      stripe_charges_enabled: stripeAccount.charges_enabled === true,
+      stripe_payouts_enabled: stripeAccount.payouts_enabled === true
+    });
+
+    if (stripeAccount.charges_enabled !== true || stripeAccount.payouts_enabled !== true) {
+      return res.status(400).json({ error: 'Host Stripe account onboarding is incomplete.' });
+    }
+
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const maxDays = normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365;
+    const latestAllowed = new Date(now.getTime());
+    latestAllowed.setDate(latestAllowed.getDate() + maxDays);
+    const checkinTime = new Date(checkinDate + 'T00:00:00');
+    if (checkinTime.getTime() > latestAllowed.getTime()) {
+      return res.status(400).json({ error: 'Requested checkin exceeds max days advance booking.' });
+    }
+
+    const listingIds = await getListingIdsForSharedResource(resource);
+    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
+    if (!matchingListingId) {
+      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
+    }
+
+    const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
+    const maxUnits = normaliseSharedResourceMaxUnits(resource.max_units) || 1;
+    const requestedSpacesRaw = normaliseSharedResourceMaxUnits(req.body.spacesRequired) || 1;
+    const requestedSpaces = resource.resource_type === 'parking'
+      ? Math.min(maxUnits, Math.max(1, requestedSpacesRaw))
+      : 1;
+
+    const conflict = findCapacityConflictPeriod(
+      existingReservations,
+      requestedStartAt.toISOString(),
+      requestedEndAt.toISOString(),
+      requestedSpaces,
+      maxUnits
+    );
+    if (conflict) {
+      return res.status(409).json({ error: 'Not fully available for your requested dates.' });
+    }
+
+    const reservationIdentifier = 'SR-' + resourceId + '-' + Date.now();
+    const reservation = await createSharedResourceReservation({
+      userId: resource.user_id,
+      sharedResourceId: resourceId,
+      reservationIdentifier,
+      listingId: matchingListingId,
+      reservationCheckinDate: checkinDate,
+      reservationCheckoutDate: checkoutDate,
+      requestedStartAt: requestedStartAt.toISOString(),
+      requestedEndAt: requestedEndAt.toISOString(),
+      spacesRequired: requestedSpaces,
+      firstName,
+      familyName,
+      emailAddress,
+      telephone,
+      vehicleRegistration,
+      reservationAmount,
+      status: 'Awaiting Online Confirmation',
+      paymentProvider: 'stripe',
+      paymentStatus: 'pending',
+      paymentCurrency: 'gbp',
+      paymentAmountMinor: toMinorUnits(reservationAmount)
+    });
+
+    const paymentIntent = await stripeClient.paymentIntents.create(
+      {
+        amount: toMinorUnits(reservationAmount),
+        currency: 'gbp',
+        automatic_payment_methods: { enabled: true },
+        transfer_data: {
+          destination: String(stripeAccount.id)
+        },
+        metadata: {
+          reservation_id: String(reservation.id),
+          reservation_identifier: String(reservation.reservation_identifier || reservationIdentifier),
+          resource_id: String(resourceId),
+          host_user_id: String(resource.user_id)
+        },
+        receipt_email: emailAddress
+      },
+      {
+        idempotencyKey: 'pi-' + String(reservation.reservation_identifier || reservationIdentifier)
+      }
+    );
+
+    await updateSharedResourceReservationPaymentById(reservation.id, {
+      paymentProvider: 'stripe',
+      paymentIntentId: paymentIntent.id,
+      paymentStatus: String(paymentIntent.status || '').toLowerCase(),
+      paymentCurrency: String(paymentIntent.currency || 'gbp').toLowerCase(),
+      paymentAmountMinor: Number.isInteger(paymentIntent.amount) ? paymentIntent.amount : toMinorUnits(reservationAmount)
+    });
+
+    return res.status(201).json({
+      reservationId: reservation.id,
+      reservationIdentifier: reservation.reservation_identifier,
+      publishableKey: STRIPE_PUBLISHABLE_KEY,
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to prepare online payment.' });
+  }
+});
+
 // POST /api/public/shared-resources/:resourceId/reservations — create a public reservation
 app.post('/api/public/shared-resources/:resourceId/reservations', async (req, res) => {
   const resourceId = Number(req.params.resourceId);
@@ -5123,6 +5615,7 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
   const familyName = normaliseSharedResourceReservationText(req.body.familyName, 100);
   const emailAddress = normaliseSharedResourceReservationEmail(req.body.emailAddress);
   const telephone = normaliseSharedResourceReservationText(req.body.telephone, 60);
+  const vehicleRegistration = normaliseSharedResourceReservationText(req.body.vehicleRegistration, 60) || '';
   const reservationAmount = normaliseSharedResourceReservationAmount(req.body.reservationAmount);
   const paymentOption = String(req.body.paymentOption || '').trim();
   if (!firstName || !familyName || !emailAddress || !telephone) {
@@ -5214,6 +5707,7 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
       familyName,
       emailAddress,
       telephone,
+      vehicleRegistration,
       reservationAmount,
       status: selectedOption.status
     });

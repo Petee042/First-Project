@@ -11,6 +11,10 @@ const checkoutDateParam = params.get('checkoutDate') || '';
 const spacesRequiredParam = params.get('spacesRequired') || '';
 
 let currentResource = null;
+let stripeClient = null;
+let stripeElements = null;
+let stripePaymentElement = null;
+let preparedPayment = null;
 
 function isParkingResource(resource) {
   if (!resource) {
@@ -92,6 +96,25 @@ function setReservationMessage(text, isError) {
   el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
 }
 
+function setSubmitButtonState(text, disabled) {
+  const submitBtn = document.getElementById('submitReservationBtn');
+  if (!submitBtn) {
+    return;
+  }
+  if (text) {
+    submitBtn.textContent = text;
+  }
+  submitBtn.disabled = Boolean(disabled);
+}
+
+function showStripePaymentSection(show) {
+  const section = document.getElementById('stripePaymentSection');
+  if (!section) {
+    return;
+  }
+  section.classList.toggle('hidden', !show);
+}
+
 function getPaymentMessageField(paymentKey) {
   const fieldMap = {
     free_of_charge: 'free_of_charge_message_html',
@@ -142,6 +165,74 @@ async function loadPublicResource() {
   }
 }
 
+async function prepareOnlinePayment(guestPayload) {
+  const response = await fetch('/api/public/shared-resources/' + resourceId + '/online-payment/prepare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      paymentOption,
+      checkinDate: checkinDateParam,
+      checkoutDate: checkoutDateParam,
+      requestedStartAt: startDateTimeParam,
+      requestedEndAt: endDateTimeParam,
+      spacesRequired: spacesRequiredParam,
+      reservationAmount: priceParam,
+      firstName: guestPayload.firstName,
+      familyName: guestPayload.familyName,
+      emailAddress: guestPayload.emailAddress,
+      telephone: guestPayload.telephone,
+      vehicleRegistration: guestPayload.vehicleRegistration
+    })
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to prepare online payment.');
+  }
+  if (!data.publishableKey || !data.clientSecret) {
+    throw new Error('Payment setup response is missing Stripe details.');
+  }
+  if (!window.Stripe) {
+    throw new Error('Stripe.js did not load.');
+  }
+
+  stripeClient = window.Stripe(data.publishableKey);
+  stripeElements = stripeClient.elements({ clientSecret: data.clientSecret });
+  stripePaymentElement = stripeElements.create('payment');
+  stripePaymentElement.mount('#stripePaymentElement');
+
+  preparedPayment = {
+    reservationId: data.reservationId,
+    reservationIdentifier: data.reservationIdentifier || '',
+    paymentIntentId: data.paymentIntentId || '',
+    clientSecret: data.clientSecret
+  };
+}
+
+async function confirmPreparedPayment() {
+  if (!stripeClient || !stripeElements || !preparedPayment) {
+    throw new Error('Payment form is not ready yet.');
+  }
+
+  const result = await stripeClient.confirmPayment({
+    elements: stripeElements,
+    redirect: 'if_required'
+  });
+
+  if (result.error) {
+    throw new Error(result.error.message || 'Payment confirmation failed.');
+  }
+  if (!result.paymentIntent) {
+    throw new Error('Stripe did not return a payment result.');
+  }
+
+  const status = String(result.paymentIntent.status || '').toLowerCase();
+  if (status === 'requires_payment_method') {
+    throw new Error('Payment was not completed. Please try another card or method.');
+  }
+  return status;
+}
+
 (async () => {
   try {
     await loadPublicResource();
@@ -167,49 +258,39 @@ document.getElementById('submitReservationBtn').addEventListener('click', async 
     return;
   }
 
-  const submitBtn = document.getElementById('submitReservationBtn');
-  if (submitBtn) {
-    submitBtn.disabled = true;
-  }
-
-  setReservationMessage('Submitting reservation...', false);
+  setSubmitButtonState(null, true);
 
   try {
-    const res = await fetch('/api/public/shared-resources/' + resourceId + '/reservations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        paymentOption,
-        checkinDate: checkinDateParam,
-        checkoutDate: checkoutDateParam,
-        requestedStartAt: startDateTimeParam,
-        requestedEndAt: endDateTimeParam,
-        spacesRequired: spacesRequiredParam,
-        reservationAmount: priceParam,
-        firstName: guest.payload.firstName,
-        familyName: guest.payload.familyName,
-        emailAddress: guest.payload.emailAddress,
-        telephone: guest.payload.telephone,
-        vehicleRegistration: guest.payload.vehicleRegistration
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Failed to submit reservation.');
+    if (!preparedPayment) {
+      setReservationMessage('Preparing secure payment form...', false);
+      await prepareOnlinePayment(guest.payload);
+      showStripePaymentSection(true);
+      setSubmitButtonState('Pay and Confirm Reservation', false);
+      setReservationMessage('Payment form is ready. Enter card details and click Pay and Confirm Reservation.', false);
+      return;
     }
 
-    const reference = data && data.reservation && data.reservation.reservation_identifier
-      ? data.reservation.reservation_identifier
-      : '';
+    setReservationMessage('Confirming payment...', false);
+    const status = await confirmPreparedPayment();
+    const reference = preparedPayment.reservationIdentifier || '';
+    const statusSuffix = status ? (' Status: ' + status + '.') : '';
     setReservationMessage(
-      reference ? ('Reservation confirmed. Reference: ' + reference) : 'Reservation confirmed.',
+      reference
+        ? ('Payment submitted. Reservation reference: ' + reference + '.' + statusSuffix)
+        : ('Payment submitted.' + statusSuffix),
       false
     );
+    setSubmitButtonState('Payment Submitted', true);
   } catch (err) {
-    setReservationMessage(err.message || 'Failed to submit reservation.', true);
+    setReservationMessage(err.message || 'Failed to process payment.', true);
+    if (preparedPayment) {
+      setSubmitButtonState('Pay and Confirm Reservation', false);
+    } else {
+      setSubmitButtonState('Load Payment Form', false);
+    }
   } finally {
-    if (submitBtn) {
-      submitBtn.disabled = false;
+    if (!preparedPayment) {
+      setSubmitButtonState('Load Payment Form', false);
     }
   }
 });

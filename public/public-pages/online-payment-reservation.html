@@ -49,13 +49,20 @@
         </div>
       </section>
 
+      <section id="stripePaymentSection" class="listing-form-section hidden">
+        <h3>Card Payment</h3>
+        <p class="public-booking-placeholder">Enter card details, then click Pay and Confirm Reservation.</p>
+        <div id="stripePaymentElement"></div>
+      </section>
+
       <div class="feed-actions">
         <button type="button" id="backToPaymentBtn" class="btn secondary">Back to Payment Selection</button>
-        <button type="button" id="submitReservationBtn" class="btn primary">Confirm Reservation</button>
+        <button type="button" id="submitReservationBtn" class="btn primary">Load Payment Form</button>
       </div>
     </div>
   </main>
 
+  <script src="https://js.stripe.com/v3/"></script>
   <script src="online-payment-reservation.js"></script>
 </body>
 </html>
