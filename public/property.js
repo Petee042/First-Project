@@ -3,6 +3,12 @@
 const params = new URLSearchParams(window.location.search);
 const propertyId = Number(params.get('id'));
 let canEditProperty = false;
+let currentAccessRole = '';
+let currentUserEmail = '';
+let managerScopeState = {
+  hasAssignments: false,
+  propertyIdSet: new Set()
+};
 
 function setPropertyMessage(text, isError) {
   const el = document.getElementById('propertyMessage');
@@ -16,6 +22,48 @@ function formatEntityId(value) {
     return '';
   }
   return String(numeric).padStart(8, '0');
+}
+
+function setPropertyScopeHint(text) {
+  const el = document.getElementById('propertyScopeHint');
+  if (!el) return;
+  el.textContent = text || '';
+}
+
+async function loadPropertyManagerScope() {
+  managerScopeState = {
+    hasAssignments: false,
+    propertyIdSet: new Set()
+  };
+
+  if (currentAccessRole !== 'Manager') {
+    return;
+  }
+
+  const res = await fetch('/api/access/manager-assignments');
+  if (!res.ok) {
+    return;
+  }
+
+  const data = await res.json();
+  const managers = Array.isArray(data.managers) ? data.managers : [];
+  const manager = managers.find((row) => String(row.email || '').toLowerCase() === currentUserEmail) || null;
+  if (!manager) {
+    return;
+  }
+
+  const membershipId = Number(manager.membership_id);
+  const propertyIdSet = new Set(
+    (data.propertyAssignments || [])
+      .filter((row) => Number(row.manager_membership_id) === membershipId)
+      .map((row) => Number(row.property_id))
+      .filter((value) => Number.isInteger(value) && value > 0)
+  );
+
+  managerScopeState = {
+    hasAssignments: propertyIdSet.size > 0,
+    propertyIdSet
+  };
 }
 
 function applyPropertyAccess(role) {
@@ -71,6 +119,18 @@ async function loadProperty() {
   document.getElementById('managerName').value = property.manager_name || '';
   document.getElementById('managerEmail').value = property.manager_email || '';
   document.getElementById('deletePropertyBtn').disabled = !canEditProperty || property.is_default === true;
+
+  if (currentAccessRole === 'Manager') {
+    if (!managerScopeState.hasAssignments) {
+      setPropertyScopeHint('Scope: manager access currently has no explicit assignments, so all client properties are visible.');
+    } else if (managerScopeState.propertyIdSet.has(Number(property.id))) {
+      setPropertyScopeHint('Scope: visible through direct property assignment.');
+    } else {
+      setPropertyScopeHint('Scope: visible in manager context.');
+    }
+  } else {
+    setPropertyScopeHint('');
+  }
 }
 
 (async () => {
@@ -87,8 +147,10 @@ async function loadProperty() {
     }
 
     const meData = await meRes.json();
-    const activeRole = String((meData && meData.accessContext && meData.accessContext.activeRole) || '');
-    applyPropertyAccess(activeRole);
+    currentAccessRole = String((meData && meData.accessContext && meData.accessContext.activeRole) || '');
+    currentUserEmail = String(meData.email || '').toLowerCase();
+    applyPropertyAccess(currentAccessRole);
+    await loadPropertyManagerScope();
 
     await loadProperty();
   } catch (err) {

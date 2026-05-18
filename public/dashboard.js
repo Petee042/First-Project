@@ -22,6 +22,7 @@ let currentScheduleErrors = [];
 let currentNotificationRows = [];
 let currentAccessContext = null;
 let currentTeamMembers = [];
+let currentUserEmail = '';
 let currentManagerAssignments = {
   managers: [],
   propertyAssignments: [],
@@ -84,6 +85,53 @@ function canViewGuests() {
   return currentAccessContext.activeRole === 'Client' || currentAccessContext.activeRole === 'Manager';
 }
 
+function getCurrentManagerScopeState() {
+  const empty = {
+    managerMembershipId: null,
+    hasAssignments: false,
+    propertyIdSet: new Set(),
+    listingIdSet: new Set()
+  };
+
+  if (!currentAccessContext || currentAccessContext.activeRole !== 'Manager') {
+    return empty;
+  }
+
+  const managers = Array.isArray(currentManagerAssignments.managers) ? currentManagerAssignments.managers : [];
+  const membership = managers.find((row) => String(row.email || '').toLowerCase() === String(currentUserEmail || '').toLowerCase()) || null;
+  if (!membership) {
+    return empty;
+  }
+
+  const managerMembershipId = Number(membership.membership_id);
+  const propertyIdSet = new Set(
+    (currentManagerAssignments.propertyAssignments || [])
+      .filter((row) => Number(row.manager_membership_id) === managerMembershipId)
+      .map((row) => Number(row.property_id))
+      .filter((value) => Number.isInteger(value) && value > 0)
+  );
+  const listingIdSet = new Set(
+    (currentManagerAssignments.listingAssignments || [])
+      .filter((row) => Number(row.manager_membership_id) === managerMembershipId)
+      .map((row) => Number(row.listing_id))
+      .filter((value) => Number.isInteger(value) && value > 0)
+  );
+
+  return {
+    managerMembershipId,
+    hasAssignments: propertyIdSet.size > 0 || listingIdSet.size > 0,
+    propertyIdSet,
+    listingIdSet
+  };
+}
+
+function createScopeBadge(text) {
+  const badge = document.createElement('span');
+  badge.className = 'scope-badge';
+  badge.textContent = text;
+  return badge;
+}
+
 function applyAccessRoleVisibility() {
   const addTeamForm = document.getElementById('addTeamMemberForm');
   const saveAssignmentsBtn = document.getElementById('saveManagerAssignmentsBtn');
@@ -128,9 +176,16 @@ function renderAccessContext(context) {
   }
 
   const activeMembership = memberships.find((membership) => Number(membership.client_account_id) === activeClientAccountId) || null;
-  summary.textContent = activeMembership
-    ? ('Active: ' + (activeMembership.account_name || ('Client #' + activeClientAccountId)) + ' as ' + (activeRole || activeMembership.role))
-    : 'No active client access context.';
+  if (!activeMembership) {
+    summary.textContent = 'No active client access context.';
+  } else {
+    let nextText = 'Active: ' + (activeMembership.account_name || ('Client #' + activeClientAccountId)) + ' as ' + (activeRole || activeMembership.role);
+    const scopeState = getCurrentManagerScopeState();
+    if (activeRole === 'Manager' && scopeState.hasAssignments) {
+      nextText += ' | Assignment scope active (' + scopeState.propertyIdSet.size + ' properties, ' + scopeState.listingIdSet.size + ' listings).';
+    }
+    summary.textContent = nextText;
+  }
 
   applyAccessRoleVisibility();
 }
@@ -501,6 +556,10 @@ async function fetchManagerAssignments() {
   }
 
   renderManagerAssignmentSelectors(data);
+  renderAccessContext(currentAccessContext);
+  renderProperties(currentProperties || []);
+  renderListings(currentListings || []);
+  renderSharedResources(currentSharedResources || []);
 }
 
 async function saveManagerAssignments() {
@@ -578,8 +637,22 @@ function renderListings(listings) {
   listings.forEach((listing) => {
     const row = document.createElement('tr');
 
+    const scopeState = getCurrentManagerScopeState();
+    let scopeLabel = '';
+    if (scopeState.hasAssignments) {
+      if (scopeState.listingIdSet.has(Number(listing.id))) {
+        scopeLabel = 'Direct listing assignment';
+      } else if (scopeState.propertyIdSet.has(Number(listing.property_id))) {
+        scopeLabel = 'Property-based assignment';
+      }
+    }
+
     const nameCell = document.createElement('td');
     nameCell.textContent = listing.name;
+    if (scopeLabel) {
+      nameCell.appendChild(document.createTextNode(' '));
+      nameCell.appendChild(createScopeBadge(scopeLabel));
+    }
 
     const propertyCell = document.createElement('td');
     propertyCell.textContent = listing.property_name || 'default';
@@ -618,8 +691,17 @@ function renderProperties(properties) {
     currentProperties.forEach((property) => {
       const row = document.createElement('tr');
 
+      const scopeState = getCurrentManagerScopeState();
+      const scopeLabel = scopeState.hasAssignments && scopeState.propertyIdSet.has(Number(property.id))
+        ? 'Direct property assignment'
+        : '';
+
       const nameCell = document.createElement('td');
       nameCell.textContent = property.name;
+      if (scopeLabel) {
+        nameCell.appendChild(document.createTextNode(' '));
+        nameCell.appendChild(createScopeBadge(scopeLabel));
+      }
 
       const managerCell = document.createElement('td');
       managerCell.textContent = property.manager_name || property.manager_email || 'Not set';
@@ -753,8 +835,22 @@ function renderSharedResources(resources) {
   currentSharedResources.forEach((resource) => {
     const row = document.createElement('tr');
 
+    const scopeState = getCurrentManagerScopeState();
+    let scopeLabel = '';
+    if (scopeState.hasAssignments) {
+      if (scopeState.listingIdSet.has(Number(resource.listing_id))) {
+        scopeLabel = 'Listing-assigned scope';
+      } else if (scopeState.propertyIdSet.has(Number(resource.property_id))) {
+        scopeLabel = 'Property-assigned scope';
+      }
+    }
+
     const shortCell = document.createElement('td');
     shortCell.textContent = resource.short_description || '';
+    if (scopeLabel) {
+      shortCell.appendChild(document.createTextNode(' '));
+      shortCell.appendChild(createScopeBadge(scopeLabel));
+    }
 
     const propertyCell = document.createElement('td');
     const propertyId = Number(resource.property_id || 0);
@@ -1583,6 +1679,7 @@ async function loadDashboardData() {
     }
     const meData = await meRes.json();
     setConsolidatedIcsUrl(meData.consolidated_ics_token || '');
+    currentUserEmail = String(meData.email || '').toLowerCase();
     if (meData.email) {
       document.getElementById('scheduleEmailTo').value = meData.email;
     }

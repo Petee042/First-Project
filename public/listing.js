@@ -3,6 +3,13 @@
 const params = new URLSearchParams(window.location.search);
 const listingId = Number(params.get('id'));
 let canEditListing = false;
+let currentAccessRole = '';
+let currentUserEmail = '';
+let managerScopeState = {
+  hasAssignments: false,
+  propertyIdSet: new Set(),
+  listingIdSet: new Set()
+};
 let currentFeeds = [];
 let currentEvents = [];
 let currentMonthDate = new Date();
@@ -807,6 +814,12 @@ function setListingMessage(text, isError) {
   el.className = text ? 'message ' + (isError ? 'error' : 'success') : 'message';
 }
 
+function setListingScopeHint(text) {
+  const el = document.getElementById('listingScopeHint');
+  if (!el) return;
+  el.textContent = text || '';
+}
+
 function formatEntityId(value) {
   const numeric = Number(value);
   if (!Number.isInteger(numeric) || numeric <= 0) {
@@ -819,6 +832,50 @@ function setCalendarMessage(text, isError) {
   const el = document.getElementById('calendarMessage');
   el.textContent = text;
   el.className = text ? 'message ' + (isError ? 'error' : 'success') : 'message';
+}
+
+async function loadListingManagerScope() {
+  managerScopeState = {
+    hasAssignments: false,
+    propertyIdSet: new Set(),
+    listingIdSet: new Set()
+  };
+
+  if (currentAccessRole !== 'Manager') {
+    return;
+  }
+
+  const res = await fetch('/api/access/manager-assignments');
+  if (!res.ok) {
+    return;
+  }
+
+  const data = await res.json();
+  const managers = Array.isArray(data.managers) ? data.managers : [];
+  const manager = managers.find((row) => String(row.email || '').toLowerCase() === currentUserEmail) || null;
+  if (!manager) {
+    return;
+  }
+
+  const membershipId = Number(manager.membership_id);
+  const propertyIdSet = new Set(
+    (data.propertyAssignments || [])
+      .filter((row) => Number(row.manager_membership_id) === membershipId)
+      .map((row) => Number(row.property_id))
+      .filter((value) => Number.isInteger(value) && value > 0)
+  );
+  const listingIdSet = new Set(
+    (data.listingAssignments || [])
+      .filter((row) => Number(row.manager_membership_id) === membershipId)
+      .map((row) => Number(row.listing_id))
+      .filter((value) => Number.isInteger(value) && value > 0)
+  );
+
+  managerScopeState = {
+    hasAssignments: propertyIdSet.size > 0 || listingIdSet.size > 0,
+    propertyIdSet,
+    listingIdSet
+  };
 }
 
 function applyListingAccess(role) {
@@ -936,6 +993,20 @@ async function loadListing() {
   document.getElementById('listingPropertyId').value = String(listing.property_id || '');
   document.getElementById('listingDateBasis').value = listing.date_basis === 'checkin' ? 'checkin' : 'checkout';
 
+  if (currentAccessRole === 'Manager') {
+    if (!managerScopeState.hasAssignments) {
+      setListingScopeHint('Scope: manager access currently has no explicit assignments, so all client listings are visible.');
+    } else if (managerScopeState.listingIdSet.has(Number(listing.id))) {
+      setListingScopeHint('Scope: visible through direct listing assignment.');
+    } else if (managerScopeState.propertyIdSet.has(Number(listing.property_id))) {
+      setListingScopeHint('Scope: visible through property-based assignment.');
+    } else {
+      setListingScopeHint('Scope: visible in manager context.');
+    }
+  } else {
+    setListingScopeHint('');
+  }
+
   const cleaners = await loadCleaners();
   populateUsualCleanerSelect(cleaners, listing.usual_cleaner_id || null);
 
@@ -1047,8 +1118,10 @@ async function updateCalendars() {
     }
 
     const meData = await meRes.json();
-    const activeRole = String((meData && meData.accessContext && meData.accessContext.activeRole) || '');
-    applyListingAccess(activeRole);
+    currentAccessRole = String((meData && meData.accessContext && meData.accessContext.activeRole) || '');
+    currentUserEmail = String(meData.email || '').toLowerCase();
+    applyListingAccess(currentAccessRole);
+    await loadListingManagerScope();
 
     await loadListing();
     await loadCachedCalendar();

@@ -119,6 +119,26 @@ label {
   color: #7a2e2e;
 }
 
+.scope-hint {
+  margin-top: 0.35rem;
+  font-size: 0.86rem;
+  color: #4b5e84;
+}
+
+.scope-badge {
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid #c6d2f5;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #3650a8;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  vertical-align: middle;
+}
+
 input[type="text"],
 input[type="email"],
 input[type="password"],
