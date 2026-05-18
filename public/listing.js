@@ -10,6 +10,11 @@ let managerScopeState = {
   propertyIdSet: new Set(),
   listingIdSet: new Set()
 };
+let currentManagerAssignments = {
+  managers: [],
+  propertyAssignments: [],
+  listingAssignments: []
+};
 let currentFeeds = [];
 let currentEvents = [];
 let currentMonthDate = new Date();
@@ -1125,10 +1130,133 @@ async function updateCalendars() {
 
     await loadListing();
     await loadCachedCalendar();
+    await fetchListingManagers();
   } catch (err) {
     setListingMessage(err.message || 'Failed to load listing page.', true);
   }
 })();
+
+async function fetchListingManagers() {
+  const res = await fetch('/api/access/manager-assignments');
+  if (res.status === 401) {
+    window.location.href = '/';
+    return;
+  }
+  if (res.status === 403) {
+    applyListingAssignmentEditor(null);
+    return;
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    return;
+  }
+
+  currentManagerAssignments = data;
+  applyListingAssignmentEditor(data);
+}
+
+function applyListingAssignmentEditor(snapshot) {
+  const editor = document.getElementById('listingAssignmentEditor');
+  if (!editor) {
+    return;
+  }
+
+  if (currentAccessRole !== 'Client') {
+    editor.classList.add('hidden');
+    return;
+  }
+
+  editor.classList.remove('hidden');
+
+  const container = document.getElementById('listingManagersContainer');
+  if (!container) {
+    return;
+  }
+
+  if (!snapshot || !Array.isArray(snapshot.managers) || snapshot.managers.length === 0) {
+    container.innerHTML = '<p class="cleaning-empty">No managers available.</p>';
+    return;
+  }
+
+  const listingAssignments = new Set(
+    (snapshot.listingAssignments || [])
+      .filter((row) => Number(row.listing_id) === listingId)
+      .map((row) => Number(row.manager_membership_id))
+  );
+
+  container.innerHTML = '';
+  snapshot.managers.forEach((manager) => {
+    const row = document.createElement('label');
+    row.className = 'cleaning-listing-row';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'listing-manager-checkbox';
+    checkbox.value = String(manager.membership_id);
+    checkbox.checked = listingAssignments.has(Number(manager.membership_id));
+
+    const text = document.createElement('span');
+    text.className = 'cleaning-listing-name';
+    text.textContent = manager.email || manager.username || ('Manager #' + manager.membership_id);
+
+    row.appendChild(checkbox);
+    row.appendChild(text);
+    container.appendChild(row);
+  });
+}
+
+async function saveListingManagerAssignments() {
+  if (currentAccessRole !== 'Client') {
+    setListingMessage('Only Client role can change manager assignments.', true);
+    return;
+  }
+
+  const managers = (currentManagerAssignments.managers || []);
+  const propertyAssignments = (currentManagerAssignments.propertyAssignments || []);
+
+  const savePromises = managers.map(async (manager) => {
+    const membershipId = Number(manager.membership_id);
+    const checkbox = document.querySelector(
+      '.listing-manager-checkbox[value="' + membershipId + '"]'
+    );
+    const isChecked = checkbox && checkbox.checked;
+
+    const currentPropertyIds = new Set(
+      propertyAssignments
+        .filter((row) => Number(row.manager_membership_id) === membershipId)
+        .map((row) => Number(row.property_id))
+    );
+
+    const shouldHaveListingAssignment = isChecked;
+    const currentHasListingAssignment = propertyAssignments.some(
+      (row) => Number(row.manager_membership_id) === membershipId && Number(row.listing_id) === listingId
+    );
+
+    if (shouldHaveListingAssignment !== currentHasListingAssignment) {
+      const propertyIds = Array.from(currentPropertyIds).filter((id) => Number.isInteger(id) && id > 0);
+
+      const res = await fetch('/api/access/manager-assignments/' + encodeURIComponent(membershipId), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propertyIds, listingIds: isChecked ? [listingId] : [] })
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to save assignments for a manager.');
+      }
+    }
+  });
+
+  try {
+    await Promise.all(savePromises);
+    setListingMessage('Manager assignments saved.', false);
+    await fetchListingManagers();
+  } catch (err) {
+    setListingMessage(err.message || 'Failed to save manager assignments.', true);
+  }
+}
 
 async function loadCleaners() {
   const res = await fetch('/api/cleaners');
@@ -1295,4 +1423,14 @@ document.getElementById('backBtn').addEventListener('click', () => {
 document.getElementById('logoutBtn').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/';
+});
+
+document.getElementById('saveListingAssignmentsBtn').addEventListener('click', async () => {
+  const button = document.getElementById('saveListingAssignmentsBtn');
+  button.disabled = true;
+  try {
+    await saveListingManagerAssignments();
+  } finally {
+    button.disabled = false;
+  }
 });

@@ -9,6 +9,11 @@ let managerScopeState = {
   hasAssignments: false,
   propertyIdSet: new Set()
 };
+let currentManagerAssignments = {
+  managers: [],
+  propertyAssignments: [],
+  listingAssignments: []
+};
 
 function setPropertyMessage(text, isError) {
   const el = document.getElementById('propertyMessage');
@@ -133,6 +138,129 @@ async function loadProperty() {
   }
 }
 
+async function fetchPropertyManagers() {
+  const res = await fetch('/api/access/manager-assignments');
+  if (res.status === 401) {
+    window.location.href = '/';
+    return;
+  }
+  if (res.status === 403) {
+    applyPropertyAssignmentEditor(null);
+    return;
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    return;
+  }
+
+  currentManagerAssignments = data;
+  applyPropertyAssignmentEditor(data);
+}
+
+function applyPropertyAssignmentEditor(snapshot) {
+  const editor = document.getElementById('propertyAssignmentEditor');
+  if (!editor) {
+    return;
+  }
+
+  if (currentAccessRole !== 'Client') {
+    editor.classList.add('hidden');
+    return;
+  }
+
+  editor.classList.remove('hidden');
+
+  const container = document.getElementById('propertyManagersContainer');
+  if (!container) {
+    return;
+  }
+
+  if (!snapshot || !Array.isArray(snapshot.managers) || snapshot.managers.length === 0) {
+    container.innerHTML = '<p class="cleaning-empty">No managers available.</p>';
+    return;
+  }
+
+  const propertyAssignments = new Set(
+    (snapshot.propertyAssignments || [])
+      .filter((row) => Number(row.property_id) === propertyId)
+      .map((row) => Number(row.manager_membership_id))
+  );
+
+  container.innerHTML = '';
+  snapshot.managers.forEach((manager) => {
+    const row = document.createElement('label');
+    row.className = 'cleaning-listing-row';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'property-manager-checkbox';
+    checkbox.value = String(manager.membership_id);
+    checkbox.checked = propertyAssignments.has(Number(manager.membership_id));
+
+    const text = document.createElement('span');
+    text.className = 'cleaning-listing-name';
+    text.textContent = manager.email || manager.username || ('Manager #' + manager.membership_id);
+
+    row.appendChild(checkbox);
+    row.appendChild(text);
+    container.appendChild(row);
+  });
+}
+
+async function savePropertyManagerAssignments() {
+  if (currentAccessRole !== 'Client') {
+    setPropertyMessage('Only Client role can change manager assignments.', true);
+    return;
+  }
+
+  const managers = (currentManagerAssignments.managers || []);
+  const propertyAssignments = (currentManagerAssignments.propertyAssignments || []);
+  const listingAssignments = (currentManagerAssignments.listingAssignments || []);
+
+  const savePromises = managers.map(async (manager) => {
+    const membershipId = Number(manager.membership_id);
+    const checkbox = document.querySelector(
+      '.property-manager-checkbox[value="' + membershipId + '"]'
+    );
+    const isChecked = checkbox && checkbox.checked;
+
+    const currentListingIds = new Set(
+      listingAssignments
+        .filter((row) => Number(row.manager_membership_id) === membershipId)
+        .map((row) => Number(row.listing_id))
+    );
+
+    const shouldHavePropertyAssignment = isChecked;
+    const currentHasPropertyAssignment = propertyAssignments.some(
+      (row) => Number(row.manager_membership_id) === membershipId && Number(row.property_id) === propertyId
+    );
+
+    if (shouldHavePropertyAssignment !== currentHasPropertyAssignment) {
+      const listingIds = Array.from(currentListingIds).filter((id) => Number.isInteger(id) && id > 0);
+
+      const res = await fetch('/api/access/manager-assignments/' + encodeURIComponent(membershipId), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ propertyIds: isChecked ? [propertyId] : [], listingIds })
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to save assignments for a manager.');
+      }
+    }
+  });
+
+  try {
+    await Promise.all(savePromises);
+    setPropertyMessage('Manager assignments saved.', false);
+    await fetchPropertyManagers();
+  } catch (err) {
+    setPropertyMessage(err.message || 'Failed to save manager assignments.', true);
+  }
+}
+
 (async () => {
   if (!Number.isInteger(propertyId) || propertyId <= 0) {
     setPropertyMessage('Invalid property id.', true);
@@ -153,6 +281,7 @@ async function loadProperty() {
     await loadPropertyManagerScope();
 
     await loadProperty();
+    await fetchPropertyManagers();
   } catch (err) {
     setPropertyMessage(err.message || 'Failed to load property page.', true);
   }
@@ -234,6 +363,16 @@ document.getElementById('deletePropertyBtn').addEventListener('click', async () 
     if (!window.location.href.endsWith('/dashboard.html')) {
       button.disabled = false;
     }
+  }
+});
+
+document.getElementById('savePropertyAssignmentsBtn').addEventListener('click', async () => {
+  const button = document.getElementById('savePropertyAssignmentsBtn');
+  button.disabled = true;
+  try {
+    await savePropertyManagerAssignments();
+  } finally {
+    button.disabled = false;
   }
 });
 
