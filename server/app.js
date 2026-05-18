@@ -5,7 +5,6 @@ const session = require('express-session');
 const bcrypt = require('bcrypt');
 const nodemailer = require('nodemailer');
 const Stripe = require('stripe');
-const fs = require('fs');
 const path = require('path');
 const { randomUUID, createHmac, timingSafeEqual } = require('crypto');
 const { Pool } = require('pg');
@@ -27,20 +26,19 @@ const STRIPE_SECRET_KEY = String(process.env.STRIPE_SECRET_KEY || '').trim();
 const STRIPE_PUBLISHABLE_KEY = String(process.env.STRIPE_PUBLISHABLE_KEY || '').trim();
 const STRIPE_WEBHOOK_SECRET = String(process.env.STRIPE_WEBHOOK_SECRET || '').trim();
 const STRIPE_CONNECT_DEFAULT_COUNTRY = String(process.env.STRIPE_CONNECT_DEFAULT_COUNTRY || 'GB').trim().toUpperCase();
-const usersFile = path.join(__dirname, 'users.json');
-const listingsFile = path.join(__dirname, 'listings.json');
-const DATA_RESET_MARKER_FILE = path.join(__dirname, '.minimal-profile-reset-v1');
 const DATA_RESET_FLAG_KEY = 'minimal-profile-reset-v1';
 const APP_BASE_URL = String(process.env.APP_BASE_URL || '').trim();
 const ACCOUNT_VALIDATION_TOKEN_VERSION = 'v1';
 const ACCOUNT_VALIDATION_TOKEN_TTL_MS = Number(process.env.ACCOUNT_VALIDATION_TOKEN_TTL_MS || (1000 * 60 * 60 * 24 * 7));
-const usePostgres = Boolean(process.env.DATABASE_URL);
+const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const stripeClient = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 
-if (!usePostgres) {
+if (!DATABASE_URL) {
   throw new Error('DATABASE_URL is required. Legacy local JSON storage mode has been removed.');
 }
+
+
 
 const KAYAK_COMMON_QUERY_FIELDS = [
   { key: 'userTrackId', type: 'string', required: true, description: 'Unique user/session identifier.' },
@@ -126,113 +124,13 @@ const KAYAK_HOTEL_ENDPOINTS = {
   }
 };
 
-const pool = usePostgres
-  ? new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-    })
-  : null;
-
-// ── User storage ─────────────────────────────────────────────────────────────
-function readUsersFromFile() {
-  if (!fs.existsSync(usersFile)) {
-    fs.writeFileSync(usersFile, '[]', 'utf8');
-  }
-
-  const content = fs.readFileSync(usersFile, 'utf8');
-  return JSON.parse(content);
-}
-
-function writeUsersToFile(users) {
-  fs.writeFileSync(usersFile, JSON.stringify(users, null, 2), 'utf8');
-}
-
-function ensureLocalListingsStore() {
-  if (!fs.existsSync(listingsFile)) {
-    fs.writeFileSync(listingsFile, JSON.stringify({ listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [], booked_in_changes: [], shared_resources: [], shared_resource_reservations: [] }, null, 2), 'utf8');
-  }
-}
-
-function readListingsStore() {
-  ensureLocalListingsStore();
-  const content = fs.readFileSync(listingsFile, 'utf8');
-  const parsed = JSON.parse(content);
-  if (!parsed || !Array.isArray(parsed.listings) || !Array.isArray(parsed.feeds)) {
-    return { listings: [], feeds: [], source_colors: [], properties: [], cached_events: [], cleaners: [], booked_in_changes: [], shared_resources: [], shared_resource_reservations: [] };
-  }
-  if (!Array.isArray(parsed.source_colors)) {
-    parsed.source_colors = [];
-  }
-  if (!Array.isArray(parsed.properties)) {
-    parsed.properties = [];
-  }
-  if (!Array.isArray(parsed.cached_events)) {
-    parsed.cached_events = [];
-  }
-  if (!Array.isArray(parsed.cleaners)) {
-    parsed.cleaners = [];
-  }
-  if (!Array.isArray(parsed.booked_in_changes)) {
-    parsed.booked_in_changes = [];
-  }
-  if (!Array.isArray(parsed.shared_resources)) {
-    parsed.shared_resources = [];
-  }
-  if (!Array.isArray(parsed.shared_resource_reservations)) {
-    parsed.shared_resource_reservations = [];
-  }
-  parsed.listings.forEach((listing) => {
-    if (listing.date_basis !== 'checkin' && listing.date_basis !== 'checkout') {
-      listing.date_basis = 'checkout';
-    }
-    if (!Object.prototype.hasOwnProperty.call(listing, 'usual_cleaner_id')) {
-      listing.usual_cleaner_id = null;
-    }
-  });
-  parsed.shared_resources.forEach((resource) => {
-    resource.property_id = normaliseOptionalPositiveInteger(resource.property_id);
-    resource.listing_id = normaliseOptionalPositiveInteger(resource.listing_id);
-    resource.resource_type = normaliseSharedResourceType(resource.resource_type || resource.resourceType);
-    resource.max_days_advance_booking = normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365;
-    const chargeConfig = normaliseSharedResourceChargeConfig(resource);
-    resource.free_of_charge_message_html = sanitiseRichTextHtml(resource.free_of_charge_message_html);
-    resource.cash_on_site_message_html = sanitiseRichTextHtml(resource.cash_on_site_message_html);
-    resource.bank_transfer_message_html = sanitiseRichTextHtml(resource.bank_transfer_message_html);
-    resource.online_payment_message_html = sanitiseRichTextHtml(resource.online_payment_message_html);
-    resource.charge_basis = chargeConfig.charge_basis;
-    resource.daily_charge_mode = chargeConfig.daily_charge_mode;
-    resource.daily_rate = chargeConfig.daily_rate;
-    resource.hourly_charge_mode = chargeConfig.hourly_charge_mode;
-    resource.hourly_rate = chargeConfig.hourly_rate;
-    resource.hourly_rates_json = JSON.stringify(chargeConfig.hourly_rates);
-  });
-  return parsed;
-}
-
-function writeListingsStore(store) {
-  fs.writeFileSync(listingsFile, JSON.stringify(store, null, 2), 'utf8');
-}
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
 
 async function runOneTimeSiteDataResetIfNeeded() {
-  if (!usePostgres) {
-    if (fs.existsSync(DATA_RESET_MARKER_FILE)) {
-      return;
-    }
-    writeUsersToFile([]);
-    writeListingsStore({
-      listings: [],
-      feeds: [],
-      source_colors: [],
-      properties: [],
-      cached_events: [],
-      cleaners: [],
-      booked_in_changes: [],
-      shared_resources: [],
-      shared_resource_reservations: []
-    });
-    fs.writeFileSync(DATA_RESET_MARKER_FILE, DATA_RESET_FLAG_KEY, 'utf8');
-    return;
-  }
+  
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_runtime_flags (
@@ -349,14 +247,7 @@ function normaliseColor(value) {
 }
 
 async function initializeUserStore() {
-  if (!usePostgres) {
-    if (!fs.existsSync(usersFile)) {
-      fs.writeFileSync(usersFile, '[]', 'utf8');
-    }
-    ensureLocalListingsStore();
-    await runOneTimeSiteDataResetIfNeeded();
-    return;
-  }
+  
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
@@ -1281,18 +1172,14 @@ async function initializeUserStore() {
 }
 
 async function findUserByEmail(email) {
-  if (!usePostgres) {
-    return readUsersFromFile().find((user) => user.email === email);
-  }
+  
 
   const result = await pool.query('SELECT * FROM users WHERE email = $1 LIMIT 1', [email]);
   return result.rows[0];
 }
 
 async function findUserByUsername(username) {
-  if (!usePostgres) {
-    return readUsersFromFile().find((user) => user.username === username);
-  }
+  
 
   const result = await pool.query('SELECT * FROM users WHERE username = $1 LIMIT 1', [username]);
   return result.rows[0];
@@ -1304,32 +1191,7 @@ async function createUser(username, email, passwordHash, profile = {}) {
   const countryOfResidence = normaliseCountryOfResidence(profile.country) || '';
   const isValidated = profile.isValidated === true;
 
-  if (!usePostgres) {
-    const users = readUsersFromFile();
-    const nextId = users.length ? Math.max(...users.map((user) => user.id)) + 1 : 1;
-
-    const user = {
-      id: nextId,
-      username,
-      email,
-      password_hash: passwordHash,
-      first_name: firstName,
-      family_name: familyName,
-      country_of_residence: countryOfResidence,
-      is_validated: isValidated,
-      stripe_account_id: null,
-      stripe_onboarding_complete: false,
-      stripe_charges_enabled: false,
-      stripe_payouts_enabled: false,
-      created_at: new Date().toISOString()
-    };
-
-    users.push(user);
-    writeUsersToFile(users);
-    await ensureDefaultPropertyForUser(user.id);
-    await ensureClientAccountForUser(user.id, user.username);
-    return user;
-  }
+  
 
   const result = await pool.query(
     `
@@ -1895,16 +1757,7 @@ async function markUserValidated(userId) {
     return null;
   }
 
-  if (!usePostgres) {
-    const users = readUsersFromFile();
-    const index = users.findIndex((user) => Number(user.id) === id);
-    if (index < 0) {
-      return null;
-    }
-    users[index].is_validated = true;
-    writeUsersToFile(users);
-    return users[index];
-  }
+  
 
   await pool.query(
     `
@@ -2020,27 +1873,7 @@ async function sendSiteUserValidationEmail(req, user) {
 }
 
 async function getCleanersForUser(userId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    return (store.cleaners || [])
-      .filter((cleaner) => Number(cleaner.user_id) === Number(userId))
-      .sort((a, b) => {
-        const byLast = String(a.last_name || '').localeCompare(String(b.last_name || ''));
-        if (byLast !== 0) return byLast;
-        return String(a.first_name || '').localeCompare(String(b.first_name || ''));
-      })
-      .map((cleaner) => ({
-        id: cleaner.id,
-        user_id: cleaner.user_id,
-        cleaner_user_id: cleaner.cleaner_user_id || null,
-        first_name: cleaner.first_name,
-        last_name: cleaner.last_name,
-        email: cleaner.email,
-        telephone: cleaner.telephone,
-        created_at: cleaner.created_at,
-        updated_at: cleaner.updated_at
-      }));
-  }
+  
 
   const result = await pool.query(
     `
@@ -2070,47 +1903,7 @@ async function createCleanerForUser(userId, input) {
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const duplicate = (store.cleaners || []).some(
-      (cleaner) => Number(cleaner.user_id) === Number(userId) && String(cleaner.email).toLowerCase() === email
-    );
-    if (duplicate) {
-      return { error: 'A cleaner with this email already exists.' };
-    }
-
-    const nextId = (store.cleaners || []).length
-      ? Math.max(...store.cleaners.map((cleaner) => Number(cleaner.id))) + 1
-      : 1;
-    const now = new Date().toISOString();
-    const cleaner = {
-      id: nextId,
-      user_id: Number(userId),
-      first_name: firstName,
-      last_name: lastName,
-      email,
-      telephone,
-      password_hash: passwordHash,
-      created_at: now,
-      updated_at: now
-    };
-    store.cleaners.push(cleaner);
-    writeListingsStore(store);
-
-    return {
-      cleaner: {
-        id: cleaner.id,
-        user_id: cleaner.user_id,
-        cleaner_user_id: cleaner.cleaner_user_id || null,
-        first_name: cleaner.first_name,
-        last_name: cleaner.last_name,
-        email: cleaner.email,
-        telephone: cleaner.telephone,
-        created_at: cleaner.created_at,
-        updated_at: cleaner.updated_at
-      }
-    };
-  }
+  
 
   try {
     const ownerContext = await getOrCreateAccessContextForUser(userId, null);
@@ -2178,48 +1971,7 @@ async function updateCleanerForUser(cleanerId, userId, input) {
     return { error: 'Cleaner password must be at least 8 characters.' };
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const idx = (store.cleaners || []).findIndex(
-      (cleaner) => Number(cleaner.id) === Number(cleanerId) && Number(cleaner.user_id) === Number(userId)
-    );
-    if (idx === -1) {
-      return { error: 'Cleaner not found.' };
-    }
-
-    const duplicate = store.cleaners.some(
-      (cleaner) => Number(cleaner.user_id) === Number(userId)
-        && Number(cleaner.id) !== Number(cleanerId)
-        && String(cleaner.email).toLowerCase() === email
-    );
-    if (duplicate) {
-      return { error: 'A cleaner with this email already exists.' };
-    }
-
-    store.cleaners[idx].first_name = firstName;
-    store.cleaners[idx].last_name = lastName;
-    store.cleaners[idx].email = email;
-    store.cleaners[idx].telephone = telephone;
-    store.cleaners[idx].updated_at = new Date().toISOString();
-    if (password) {
-      store.cleaners[idx].password_hash = await bcrypt.hash(password, SALT_ROUNDS);
-    }
-    writeListingsStore(store);
-
-    return {
-      cleaner: {
-        id: store.cleaners[idx].id,
-        user_id: store.cleaners[idx].user_id,
-        cleaner_user_id: store.cleaners[idx].cleaner_user_id || null,
-        first_name: store.cleaners[idx].first_name,
-        last_name: store.cleaners[idx].last_name,
-        email: store.cleaners[idx].email,
-        telephone: store.cleaners[idx].telephone,
-        created_at: store.cleaners[idx].created_at,
-        updated_at: store.cleaners[idx].updated_at
-      }
-    };
-  }
+  
 
   const existing = await pool.query(
     `
@@ -2295,41 +2047,7 @@ async function updateCleanerForUser(cleanerId, userId, input) {
 }
 
 async function ensureDefaultPropertyForUser(userId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const existing = store.properties.find(
-      (property) => Number(property.user_id) === Number(userId) && (property.is_default === true || String(property.name).toLowerCase() === 'default')
-    );
-    if (existing) {
-      if (!existing.is_default) {
-        existing.is_default = true;
-        writeListingsStore(store);
-      }
-      return existing;
-    }
-
-    const nextId = store.properties.length
-      ? Math.max(...store.properties.map((property) => Number(property.id))) + 1
-      : 1;
-    const property = {
-      id: nextId,
-      user_id: Number(userId),
-      name: 'default',
-      postal_address: '',
-      manager_name: '',
-      manager_email: '',
-      is_default: true,
-      created_at: new Date().toISOString()
-    };
-    store.properties.push(property);
-    store.listings.forEach((listing) => {
-      if (Number(listing.user_id) === Number(userId) && !listing.property_id) {
-        listing.property_id = property.id;
-      }
-    });
-    writeListingsStore(store);
-    return property;
-  }
+  
 
   // Resolve the canonical default property before attempting to create one.
   const candidatesResult = await pool.query(
@@ -2401,9 +2119,7 @@ async function getUserById(userId) {
     return null;
   }
 
-  if (!usePostgres) {
-    return readUsersFromFile().find((user) => Number(user.id) === Number(userId)) || null;
-  }
+  
 
   const result = await pool.query(
     `
@@ -2427,14 +2143,7 @@ async function ensureClientAccountForUser(userId, displayName) {
     return null;
   }
 
-  if (!usePostgres) {
-    return {
-      client_account_id: id,
-      role: 'Client',
-      status: 'active',
-      display_name: String(displayName || ('User ' + id)) + ' Client Account'
-    };
-  }
+  
 
   const existingMembership = await pool.query(
     `
@@ -2484,15 +2193,7 @@ async function getAccessMembershipsForUser(userId) {
     return [];
   }
 
-  if (!usePostgres) {
-    return [{
-      membership_id: id,
-      client_account_id: id,
-      client_display_name: 'Default Client Account',
-      role: 'Client',
-      status: 'active'
-    }];
-  }
+  
 
   const result = await pool.query(
     `
@@ -2586,9 +2287,7 @@ async function getTeamMembershipsForClientAccount(clientAccountId) {
     return [];
   }
 
-  if (!usePostgres) {
-    return [];
-  }
+  
 
   const result = await pool.query(
     `
@@ -2627,7 +2326,7 @@ async function getUserByEmailStrict(email) {
 
 async function hasPendingClientInviteForUser(userId) {
   const id = Number(userId);
-  if (!usePostgres || !Number.isInteger(id) || id <= 0) {
+  if (!Number.isInteger(id) || id <= 0) {
     return false;
   }
 
@@ -2648,9 +2347,7 @@ async function hasPendingClientInviteForUser(userId) {
 }
 
 async function createUnvalidatedSiteUserForInvite(input) {
-  if (!usePostgres) {
-    return { error: 'Team invitations require database mode.' };
-  }
+  
 
   const email = normaliseOptionalEmail(input.email);
   const firstName = String(input.firstName || '').trim();
@@ -2688,9 +2385,7 @@ async function createUnvalidatedSiteUserForInvite(input) {
 }
 
 async function setClientTeamRolesForUser(clientAccountId, invitedByUserId, targetUserId, rolesInput) {
-  if (!usePostgres) {
-    return { error: 'Membership management requires database mode.' };
-  }
+  
 
   const roles = normaliseClientTeamRoles(rolesInput);
   const user = await getUserById(targetUserId);
@@ -2801,9 +2496,7 @@ async function setClientTeamRolesForUser(clientAccountId, invitedByUserId, targe
 }
 
 async function removeTeamMemberFromClientScope(clientAccountId, targetUserId) {
-  if (!usePostgres) {
-    return { error: 'Membership management requires database mode.' };
-  }
+  
 
   const userId = Number(targetUserId);
   if (!Number.isInteger(userId) || userId <= 0) {
@@ -2876,9 +2569,7 @@ async function removeTeamMemberFromClientScope(clientAccountId, targetUserId) {
 }
 
 async function getTeamMemberRemovalImpact(clientAccountId, targetUserId) {
-  if (!usePostgres) {
-    return { error: 'Membership management requires database mode.' };
-  }
+  
 
   const userId = Number(targetUserId);
   if (!Number.isInteger(userId) || userId <= 0) {
@@ -2929,9 +2620,7 @@ async function getTeamMemberRemovalImpact(clientAccountId, targetUserId) {
 }
 
 async function updateUserInviteProfileIfMissing(userId, input) {
-  if (!usePostgres) {
-    return;
-  }
+  
 
   const firstName = String(input.firstName || '').trim();
   const familyName = String(input.familyName || '').trim();
@@ -2967,9 +2656,7 @@ async function addClientMembershipByEmail(clientAccountId, invitedByUserId, emai
     return { error: 'Role must be Manager or Staff.' };
   }
 
-  if (!usePostgres) {
-    return { error: 'Membership management requires database mode.' };
-  }
+  
 
   const user = await getUserByEmailStrict(email);
   if (!user) {
@@ -2992,9 +2679,7 @@ async function addClientMembershipByEmail(clientAccountId, invitedByUserId, emai
 }
 
 async function revokeClientMembership(clientAccountId, membershipId) {
-  if (!usePostgres) {
-    return { error: 'Membership management requires database mode.' };
-  }
+  
 
   const result = await pool.query(
     `
@@ -3013,9 +2698,7 @@ async function revokeClientMembership(clientAccountId, membershipId) {
 }
 
 async function getManagerAssignmentSnapshot(clientAccountId) {
-  if (!usePostgres) {
-    return { managers: [], propertyAssignments: [], listingAssignments: [] };
-  }
+  
 
   const managersResult = await pool.query(
     `
@@ -3062,9 +2745,7 @@ async function getManagerAssignmentSnapshot(clientAccountId) {
 }
 
 async function replaceManagerAssignments(clientAccountId, managerMembershipId, propertyIds, listingIds) {
-  if (!usePostgres) {
-    return { error: 'Assignment management requires database mode.' };
-  }
+  
 
   const membershipCheck = await pool.query(
     `
@@ -3142,9 +2823,7 @@ async function replaceManagerAssignments(clientAccountId, managerMembershipId, p
 }
 
 async function getGuestsForClientAccount(clientAccountId) {
-  if (!usePostgres) {
-    return [];
-  }
+  
 
   const result = await pool.query(
     `
@@ -3179,19 +2858,7 @@ async function setUserStripeConnectState(userId, nextState) {
     stripe_payouts_enabled: nextState && nextState.stripe_payouts_enabled === true
   };
 
-  if (!usePostgres) {
-    const users = readUsersFromFile();
-    const idx = users.findIndex((user) => Number(user.id) === Number(userId));
-    if (idx < 0) {
-      return null;
-    }
-    users[idx].stripe_account_id = state.stripe_account_id;
-    users[idx].stripe_onboarding_complete = state.stripe_onboarding_complete;
-    users[idx].stripe_charges_enabled = state.stripe_charges_enabled;
-    users[idx].stripe_payouts_enabled = state.stripe_payouts_enabled;
-    writeUsersToFile(users);
-    return users[idx];
-  }
+  
 
   const result = await pool.query(
     `
@@ -3221,12 +2888,7 @@ async function setUserStripeConnectState(userId, nextState) {
 async function getPropertiesForUser(userId) {
   await ensureDefaultPropertyForUser(userId);
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    return store.properties
-      .filter((property) => Number(property.user_id) === Number(userId))
-      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  }
+  
 
   const result = await pool.query(
     `
@@ -3243,12 +2905,7 @@ async function getPropertiesForUser(userId) {
 async function getPropertyByIdForUser(propertyId, userId) {
   await ensureDefaultPropertyForUser(userId);
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    return store.properties.find(
-      (property) => Number(property.id) === Number(propertyId) && Number(property.user_id) === Number(userId)
-    );
-  }
+  
 
   const result = await pool.query(
     `
@@ -3268,31 +2925,7 @@ async function createPropertyForUser(userId, name) {
     return { error: 'Property name is required.' };
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const duplicate = store.properties.some(
-      (property) => Number(property.user_id) === Number(userId) && String(property.name).toLowerCase() === trimmedName.toLowerCase()
-    );
-    if (duplicate) {
-      return { error: 'A property with this name already exists.' };
-    }
-
-    const nextId = store.properties.length
-      ? Math.max(...store.properties.map((property) => Number(property.id))) + 1
-      : 1;
-    const property = {
-      id: nextId,
-      user_id: Number(userId),
-      name: trimmedName,
-      postal_address: '',
-      manager_name: '',
-      manager_email: '',
-      created_at: new Date().toISOString()
-    };
-    store.properties.push(property);
-    writeListingsStore(store);
-    return { property };
-  }
+  
 
   try {
     const result = await pool.query(
@@ -3326,31 +2959,7 @@ async function updatePropertyForUser(propertyId, userId, input) {
     return { error: 'Manager email is invalid.' };
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const idx = store.properties.findIndex(
-      (property) => Number(property.id) === Number(propertyId) && Number(property.user_id) === Number(userId)
-    );
-    if (idx === -1) {
-      return { error: 'Property not found.' };
-    }
-
-    const duplicate = store.properties.some(
-      (property) => Number(property.user_id) === Number(userId)
-        && Number(property.id) !== Number(propertyId)
-        && String(property.name).toLowerCase() === name.toLowerCase()
-    );
-    if (duplicate) {
-      return { error: 'A property with this name already exists.' };
-    }
-
-    store.properties[idx].name = name;
-    store.properties[idx].postal_address = postalAddress;
-    store.properties[idx].manager_name = managerName;
-    store.properties[idx].manager_email = managerEmail || '';
-    writeListingsStore(store);
-    return { property: store.properties[idx] };
-  }
+  
 
   try {
     const existing = await getPropertyByIdForUser(propertyId, userId);
@@ -3388,22 +2997,7 @@ async function deletePropertyForUser(propertyId, userId) {
     return { error: 'The default property cannot be deleted.' };
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const assignedCount = store.listings.filter(
-      (listing) => Number(listing.user_id) === Number(userId) && Number(listing.property_id) === Number(propertyId)
-    ).length;
-    if (assignedCount > 0) {
-      return { error: 'This property cannot be deleted while listings are assigned to it.' };
-    }
-
-    const nextProperties = store.properties.filter(
-      (item) => !(Number(item.id) === Number(propertyId) && Number(item.user_id) === Number(userId))
-    );
-    store.properties = nextProperties;
-    writeListingsStore(store);
-    return { deletedPropertyId: Number(propertyId) };
-  }
+  
 
   const assignedResult = await pool.query(
     'SELECT COUNT(*)::int AS count FROM listings WHERE user_id = $1 AND property_id = $2',
@@ -3425,22 +3019,7 @@ async function deletePropertyForUser(propertyId, userId) {
 }
 
 async function getSharedResourcesForUser(userId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    return (store.shared_resources || [])
-      .filter((resource) => Number(resource.user_id) === Number(userId))
-      .map((resource) => ({
-        ...resource,
-        max_days_advance_booking: normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365,
-        property_id: normaliseOptionalPositiveInteger(resource.property_id),
-        listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
-        resource_type: normaliseSharedResourceType(resource.resource_type || resource.resourceType),
-        ...normaliseSharedResourcePaymentOptions(resource),
-        ...normaliseSharedResourceChargeConfig(resource),
-        hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(resource).hourly_rates)
-      }))
-      .sort((a, b) => String(a.short_description || '').localeCompare(String(b.short_description || '')));
-  }
+  
 
   const result = await pool.query(
     `
@@ -3465,26 +3044,7 @@ async function getSharedResourcesForUser(userId) {
 }
 
 async function getSharedResourceByIdForUser(resourceId, userId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const resource = (store.shared_resources || []).find(
-      (resource) => Number(resource.id) === Number(resourceId) && Number(resource.user_id) === Number(userId)
-    ) || null;
-    if (!resource) {
-      return null;
-    }
-    return {
-      ...resource,
-      max_days_advance_booking: normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365,
-      property_id: normaliseOptionalPositiveInteger(resource.property_id),
-      listing_id: normaliseOptionalPositiveInteger(resource.listing_id),
-      resource_type: normaliseSharedResourceType(resource.resource_type || resource.resourceType),
-      ...normaliseSharedResourcePaymentOptions(resource),
-      ...normaliseSharedResourcePaymentMessages(resource),
-      ...normaliseSharedResourceChargeConfig(resource),
-      hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(resource).hourly_rates)
-    };
-  }
+  
 
   const result = await pool.query(
     `
@@ -3514,42 +3074,7 @@ async function getSharedResourceByIdForUser(resourceId, userId) {
 }
 
 async function getSharedResourceByIdPublic(resourceId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const resource = (store.shared_resources || []).find(
-      (row) => Number(row.id) === Number(resourceId)
-    ) || null;
-    if (!resource) {
-      return null;
-    }
-    return {
-      id: Number(resource.id),
-      user_id: Number(resource.user_id),
-      short_description: String(resource.short_description || ''),
-      full_description_html: String(resource.full_description_html || ''),
-      max_units: Number(resource.max_units || 0) || null,
-      max_days_advance_booking: normaliseSharedResourceMaxAdvanceBookingDays(resource.max_days_advance_booking) || 365,
-      resource_type: normaliseSharedResourceType(resource.resource_type || resource.resourceType),
-      free_of_charge: resource.free_of_charge === true,
-      cash_on_site: resource.cash_on_site === true,
-      bank_transfer: resource.bank_transfer === true,
-      online_payment: resource.online_payment === true,
-      free_of_charge_message_html: sanitiseRichTextHtml(resource.free_of_charge_message_html),
-      cash_on_site_message_html: sanitiseRichTextHtml(resource.cash_on_site_message_html),
-      bank_transfer_message_html: sanitiseRichTextHtml(resource.bank_transfer_message_html),
-      online_payment_message_html: sanitiseRichTextHtml(resource.online_payment_message_html),
-      charge_basis: resource.charge_basis || null,
-      daily_charge_mode: resource.daily_charge_mode || null,
-      daily_rate: resource.daily_rate === null || resource.daily_rate === undefined ? null : Number(resource.daily_rate),
-      hourly_charge_mode: resource.hourly_charge_mode || null,
-      hourly_rate: resource.hourly_rate === null || resource.hourly_rate === undefined ? null : Number(resource.hourly_rate),
-      hourly_rates_json: JSON.stringify(normaliseSharedResourceChargeConfig(resource).hourly_rates),
-      created_at: resource.created_at || null,
-      updated_at: resource.updated_at || null,
-      property_id: normaliseOptionalPositiveInteger(resource.property_id),
-      listing_id: normaliseOptionalPositiveInteger(resource.listing_id)
-    };
-  }
+  
 
   const result = await pool.query(
     `
@@ -3644,45 +3169,7 @@ async function findMatchingCalendarListingId(listingIds, checkinDate, checkoutDa
 }
 
 async function getSharedResourceReservationsByResourceId(resourceId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    return (store.shared_resource_reservations || [])
-      .filter((row) => Number(row.shared_resource_id) === Number(resourceId))
-      .map((row) => ({
-        id: Number(row.id),
-        user_id: Number(row.user_id),
-        shared_resource_id: Number(row.shared_resource_id),
-        reservation_identifier: String(row.reservation_identifier || ''),
-        listing_id: normaliseOptionalPositiveInteger(row.listing_id),
-        reservation_checkin_date: normaliseDateKey(row.reservation_checkin_date),
-        reservation_checkout_date: normaliseDateKey(row.reservation_checkout_date),
-        requested_start_at: String(row.requested_start_at || ''),
-        requested_end_at: String(row.requested_end_at || ''),
-        spaces_required: normaliseSharedResourceMaxUnits(row.spaces_required) || 1,
-        first_name: String(row.first_name || ''),
-        family_name: String(row.family_name || ''),
-        email_address: String(row.email_address || ''),
-        telephone: String(row.telephone || ''),
-        vehicle_registration: String(row.vehicle_registration || ''),
-        reservation_amount: normaliseSharedResourceReservationAmount(row.reservation_amount),
-        payment_provider: String(row.payment_provider || ''),
-        payment_intent_id: String(row.payment_intent_id || ''),
-        payment_status: normaliseSharedResourceReservationPaymentStatus(row.payment_status),
-        payment_currency: String(row.payment_currency || ''),
-        payment_amount_minor: row.payment_amount_minor === null || row.payment_amount_minor === undefined
-          ? null
-          : Number(row.payment_amount_minor),
-        application_fee_minor: row.application_fee_minor === null || row.application_fee_minor === undefined
-          ? null
-          : Number(row.application_fee_minor),
-        payment_last_error: String(row.payment_last_error || ''),
-        paid_at: row.paid_at || null,
-        status: normaliseSharedResourceReservationStatus(row.status) || 'Confirmed',
-        created_at: row.created_at,
-        updated_at: row.updated_at
-      }))
-      .sort((a, b) => new Date(a.requested_start_at).getTime() - new Date(b.requested_start_at).getTime());
-  }
+  
 
   const result = await pool.query(
     `
@@ -3839,46 +3326,7 @@ async function createSharedResourceReservation(input) {
   const paidAt = input.paidAt ? String(input.paidAt).trim() : null;
   const vehicleRegistration = String(input.vehicleRegistration || '').trim().slice(0, 60);
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const nextId = (store.shared_resource_reservations || []).length
-      ? Math.max(...store.shared_resource_reservations.map((row) => Number(row.id))) + 1
-      : 1;
-    const now = new Date().toISOString();
-    const record = {
-      id: nextId,
-      user_id: Number(input.userId),
-      shared_resource_id: Number(input.sharedResourceId),
-      reservation_identifier: String(input.reservationIdentifier || ''),
-      listing_id: normaliseOptionalPositiveInteger(input.listingId),
-      reservation_checkin_date: input.reservationCheckinDate,
-      reservation_checkout_date: input.reservationCheckoutDate,
-      requested_start_at: input.requestedStartAt,
-      requested_end_at: input.requestedEndAt,
-      spaces_required: normaliseSharedResourceMaxUnits(input.spacesRequired) || 1,
-      first_name: String(input.firstName || ''),
-      family_name: String(input.familyName || ''),
-      email_address: String(input.emailAddress || ''),
-      telephone: String(input.telephone || ''),
-      vehicle_registration: vehicleRegistration,
-      reservation_amount: normaliseSharedResourceReservationAmount(input.reservationAmount),
-      payment_provider: paymentProvider,
-      payment_intent_id: paymentIntentId,
-      payment_status: paymentStatus,
-      payment_currency: paymentCurrency,
-      payment_amount_minor: paymentAmountMinor,
-      application_fee_minor: applicationFeeMinor,
-      payment_last_error: paymentLastError,
-      paid_at: paidAt,
-      status,
-      created_at: now,
-      updated_at: now
-    };
-    store.shared_resource_reservations = store.shared_resource_reservations || [];
-    store.shared_resource_reservations.push(record);
-    writeListingsStore(store);
-    return record;
-  }
+  
 
   const result = await pool.query(
     `
@@ -3940,43 +3388,7 @@ async function updateSharedResourceReservationPaymentById(reservationId, input) 
   const paymentLastError = String(input.paymentLastError || '').trim().slice(0, 500);
   const paidAt = input.paidAt ? String(input.paidAt).trim() : null;
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const idx = (store.shared_resource_reservations || []).findIndex((row) => Number(row.id) === Number(reservationId));
-    if (idx < 0) {
-      return null;
-    }
-
-    const row = store.shared_resource_reservations[idx];
-    if (input.paymentIntentId !== undefined) {
-      row.payment_intent_id = String(input.paymentIntentId || '').trim();
-    }
-    if (input.paymentProvider !== undefined) {
-      row.payment_provider = String(input.paymentProvider || '').trim().slice(0, 40);
-    }
-    if (input.paymentCurrency !== undefined) {
-      row.payment_currency = String(input.paymentCurrency || '').trim().toLowerCase().slice(0, 12);
-    }
-    if (input.paymentAmountMinor !== undefined) {
-      row.payment_amount_minor = Number.isInteger(Number(input.paymentAmountMinor)) ? Number(input.paymentAmountMinor) : null;
-    }
-    if (input.applicationFeeMinor !== undefined) {
-      row.application_fee_minor = Number.isInteger(Number(input.applicationFeeMinor)) ? Number(input.applicationFeeMinor) : null;
-    }
-    if (paymentStatus) {
-      row.payment_status = paymentStatus;
-    }
-    row.payment_last_error = paymentLastError;
-    if (paidAt) {
-      row.paid_at = paidAt;
-    }
-    if (nextStatus) {
-      row.status = nextStatus;
-    }
-    row.updated_at = new Date().toISOString();
-    writeListingsStore(store);
-    return row;
-  }
+  
 
   const result = await pool.query(
     `
@@ -4024,10 +3436,7 @@ async function getSharedResourceReservationByPaymentIntentId(paymentIntentId) {
     return null;
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    return (store.shared_resource_reservations || []).find((row) => String(row.payment_intent_id || '') === id) || null;
-  }
+  
 
   const result = await pool.query(
     `
@@ -4055,10 +3464,7 @@ async function getSharedResourceReservationByIdentifier(reservationIdentifier) {
     return null;
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    return (store.shared_resource_reservations || []).find((row) => String(row.reservation_identifier || '') === id) || null;
-  }
+  
 
   const result = await pool.query(
     `
@@ -4086,21 +3492,7 @@ async function updateSharedResourceReservationStatusForUser(reservationId, resou
     return { error: 'Invalid reservation status.' };
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const idx = (store.shared_resource_reservations || []).findIndex((row) =>
-      Number(row.id) === Number(reservationId)
-      && Number(row.shared_resource_id) === Number(resourceId)
-      && Number(row.user_id) === Number(userId)
-    );
-    if (idx < 0) {
-      return { error: 'Reservation not found.' };
-    }
-    store.shared_resource_reservations[idx].status = nextStatus;
-    store.shared_resource_reservations[idx].updated_at = new Date().toISOString();
-    writeListingsStore(store);
-    return { reservation: store.shared_resource_reservations[idx] };
-  }
+  
 
   const result = await pool.query(
     `
@@ -4122,15 +3514,7 @@ async function updateSharedResourceReservationStatusForUser(reservationId, resou
 }
 
 async function getSharedResourceReservationByIdForUser(reservationId, resourceId, userId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const row = (store.shared_resource_reservations || []).find((entry) =>
-      Number(entry.id) === Number(reservationId)
-      && Number(entry.shared_resource_id) === Number(resourceId)
-      && Number(entry.user_id) === Number(userId)
-    );
-    return row || null;
-  }
+  
 
   const result = await pool.query(
     `
@@ -4158,36 +3542,7 @@ async function updateSharedResourceReservationForUser(reservationId, resourceId,
     return { error: 'Invalid reservation status.' };
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const idx = (store.shared_resource_reservations || []).findIndex((row) =>
-      Number(row.id) === Number(reservationId)
-      && Number(row.shared_resource_id) === Number(resourceId)
-      && Number(row.user_id) === Number(userId)
-    );
-    if (idx < 0) {
-      return { error: 'Reservation not found.' };
-    }
-
-    const current = store.shared_resource_reservations[idx];
-    current.reservation_checkin_date = input.reservationCheckinDate;
-    current.reservation_checkout_date = input.reservationCheckoutDate;
-    current.requested_start_at = input.requestedStartAt;
-    current.requested_end_at = input.requestedEndAt;
-    current.listing_id = normaliseOptionalPositiveInteger(input.listingId);
-    current.spaces_required = normaliseSharedResourceMaxUnits(input.spacesRequired) || 1;
-    current.first_name = String(input.firstName || '');
-    current.family_name = String(input.familyName || '');
-    current.email_address = String(input.emailAddress || '');
-    current.telephone = String(input.telephone || '');
-    current.vehicle_registration = String(input.vehicleRegistration || current.vehicle_registration || '');
-    current.reservation_amount = normaliseSharedResourceReservationAmount(input.reservationAmount);
-    current.status = nextStatus;
-    current.updated_at = new Date().toISOString();
-
-    writeListingsStore(store);
-    return { reservation: current };
-  }
+  
 
   const result = await pool.query(
     `
@@ -4293,42 +3648,7 @@ async function createSharedResourceForUser(userId, input) {
     }
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const nextId = store.shared_resources.length
-      ? Math.max(...store.shared_resources.map((resource) => Number(resource.id))) + 1
-      : 1;
-    const resource = {
-      id: nextId,
-      user_id: Number(userId),
-      short_description: shortDescription,
-      full_description_html: '',
-      max_units: 1,
-      max_days_advance_booking: maxDaysAdvanceBooking,
-      property_id: propertyId,
-      listing_id: listingId,
-      resource_type: resourceType,
-      free_of_charge: paymentOptions.free_of_charge,
-      cash_on_site: paymentOptions.cash_on_site,
-      bank_transfer: paymentOptions.bank_transfer,
-      online_payment: paymentOptions.online_payment,
-      free_of_charge_message_html: paymentMessages.free_of_charge_message_html,
-      cash_on_site_message_html: paymentMessages.cash_on_site_message_html,
-      bank_transfer_message_html: paymentMessages.bank_transfer_message_html,
-      online_payment_message_html: paymentMessages.online_payment_message_html,
-      charge_basis: chargeConfig.charge_basis,
-      daily_charge_mode: chargeConfig.daily_charge_mode,
-      daily_rate: chargeConfig.daily_rate,
-      hourly_charge_mode: chargeConfig.hourly_charge_mode,
-      hourly_rate: chargeConfig.hourly_rate,
-      hourly_rates_json: JSON.stringify(chargeConfig.hourly_rates),
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    store.shared_resources.push(resource);
-    writeListingsStore(store);
-    return { resource };
-  }
+  
 
   const result = await pool.query(
     `
@@ -4433,39 +3753,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
     }
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const idx = (store.shared_resources || []).findIndex(
-      (resource) => Number(resource.id) === Number(resourceId) && Number(resource.user_id) === Number(userId)
-    );
-    if (idx === -1) {
-      return { error: 'Shared resource not found.' };
-    }
-    store.shared_resources[idx].short_description = shortDescription;
-    store.shared_resources[idx].full_description_html = fullDescriptionHtml;
-    store.shared_resources[idx].max_units = maxUnits;
-    store.shared_resources[idx].max_days_advance_booking = maxDaysAdvanceBooking;
-    store.shared_resources[idx].property_id = propertyId;
-    store.shared_resources[idx].listing_id = listingId;
-    store.shared_resources[idx].resource_type = resourceType;
-    store.shared_resources[idx].free_of_charge = paymentOptions.free_of_charge;
-    store.shared_resources[idx].cash_on_site = paymentOptions.cash_on_site;
-    store.shared_resources[idx].bank_transfer = paymentOptions.bank_transfer;
-    store.shared_resources[idx].online_payment = paymentOptions.online_payment;
-    store.shared_resources[idx].free_of_charge_message_html = paymentMessages.free_of_charge_message_html;
-    store.shared_resources[idx].cash_on_site_message_html = paymentMessages.cash_on_site_message_html;
-    store.shared_resources[idx].bank_transfer_message_html = paymentMessages.bank_transfer_message_html;
-    store.shared_resources[idx].online_payment_message_html = paymentMessages.online_payment_message_html;
-    store.shared_resources[idx].charge_basis = chargeConfig.charge_basis;
-    store.shared_resources[idx].daily_charge_mode = chargeConfig.daily_charge_mode;
-    store.shared_resources[idx].daily_rate = chargeConfig.daily_rate;
-    store.shared_resources[idx].hourly_charge_mode = chargeConfig.hourly_charge_mode;
-    store.shared_resources[idx].hourly_rate = chargeConfig.hourly_rate;
-    store.shared_resources[idx].hourly_rates_json = JSON.stringify(chargeConfig.hourly_rates);
-    store.shared_resources[idx].updated_at = new Date().toISOString();
-    writeListingsStore(store);
-    return { resource: store.shared_resources[idx] };
-  }
+  
 
   const result = await pool.query(
     `
@@ -4534,24 +3822,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
 }
 
 async function deleteSharedResourceForUser(resourceId, userId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const existing = (store.shared_resources || []).find(
-      (resource) => Number(resource.id) === Number(resourceId) && Number(resource.user_id) === Number(userId)
-    );
-    if (!existing) {
-      return { error: 'Shared resource not found.' };
-    }
-
-    store.shared_resources = (store.shared_resources || []).filter(
-      (resource) => !(Number(resource.id) === Number(resourceId) && Number(resource.user_id) === Number(userId))
-    );
-    store.shared_resource_reservations = (store.shared_resource_reservations || []).filter(
-      (reservation) => Number(reservation.shared_resource_id) !== Number(resourceId)
-    );
-    writeListingsStore(store);
-    return { deletedResourceId: Number(resourceId) };
-  }
+  
 
   const result = await pool.query(
     'DELETE FROM shared_resources WHERE id = $1 AND user_id = $2 RETURNING id',
@@ -4576,16 +3847,7 @@ async function resolvePropertyForListing(userId, propertyId) {
 }
 
 async function getAllUsers() {
-  if (!usePostgres) {
-    return readUsersFromFile()
-      .slice()
-      .sort((a, b) => String(a.email).localeCompare(String(b.email)))
-      .map((user) => ({
-        id: user.id,
-        email: user.email,
-        created_at: user.created_at
-      }));
-  }
+  
 
   const result = await pool.query(
     'SELECT id, email, created_at FROM users ORDER BY email ASC'
@@ -4594,21 +3856,7 @@ async function getAllUsers() {
 }
 
 async function getAllSiteUsersWithMemberships() {
-  if (!usePostgres) {
-    return readUsersFromFile()
-      .slice()
-      .sort((a, b) => String(a.email).localeCompare(String(b.email)))
-      .map((user) => ({
-        id: Number(user.id),
-        email: user.email,
-        first_name: user.first_name || '',
-        family_name: user.family_name || '',
-        country_of_residence: user.country_of_residence || '',
-        is_validated: user.is_validated !== false,
-        created_at: user.created_at || null,
-        memberships: []
-      }));
-  }
+  
 
   const result = await pool.query(
     `
@@ -4686,31 +3934,7 @@ async function updateSiteUserForAdmin(userId, input) {
     passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
   }
 
-  if (!usePostgres) {
-    const users = readUsersFromFile();
-    const index = users.findIndex((user) => Number(user.id) === id);
-    if (index < 0) {
-      return { error: 'User not found.' };
-    }
-
-    const duplicateEmail = users.some((user) => Number(user.id) !== id && String(user.email || '').toLowerCase() === email);
-    if (duplicateEmail) {
-      return { error: 'Email address already in use.' };
-    }
-
-    users[index].first_name = firstName;
-    users[index].family_name = familyName;
-    users[index].country_of_residence = country;
-    users[index].email = email;
-    users[index].is_validated = isValidated;
-    if (passwordHash) {
-      users[index].password_hash = passwordHash;
-    }
-
-    writeUsersToFile(users);
-    const updated = await getSiteUserForAdmin(id);
-    return { user: updated };
-  }
+  
 
   const emailConflict = await pool.query(
     'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id <> $2 LIMIT 1',
@@ -4770,38 +3994,7 @@ async function updateSiteUserForAdmin(userId, input) {
 }
 
 async function deleteUserAndData(userId) {
-  if (!usePostgres) {
-    const users = readUsersFromFile();
-    const existing = users.find((user) => Number(user.id) === Number(userId));
-    if (!existing) {
-      return { error: 'User not found.' };
-    }
-
-    const remainingUsers = users.filter((user) => Number(user.id) !== Number(userId));
-    writeUsersToFile(remainingUsers);
-
-    const store = readListingsStore();
-    const removedListingIds = new Set(
-      store.listings
-        .filter((listing) => Number(listing.user_id) === Number(userId))
-        .map((listing) => Number(listing.id))
-    );
-
-    const updatedStore = {
-      properties: (store.properties || []).filter((property) => Number(property.user_id) !== Number(userId)),
-      listings: store.listings.filter((listing) => Number(listing.user_id) !== Number(userId)),
-      feeds: store.feeds.filter((feed) => !removedListingIds.has(Number(feed.listing_id))),
-      source_colors: (store.source_colors || []).filter((row) => Number(row.user_id) !== Number(userId)),
-      cleaners: (store.cleaners || []).filter((cleaner) => Number(cleaner.user_id) !== Number(userId)),
-      cached_events: (store.cached_events || []).filter((row) => !removedListingIds.has(Number(row.listing_id))),
-      booked_in_changes: (store.booked_in_changes || []).filter((row) => Number(row.user_id) !== Number(userId)),
-      shared_resources: (store.shared_resources || []).filter((row) => Number(row.user_id) !== Number(userId)),
-      shared_resource_reservations: (store.shared_resource_reservations || []).filter((row) => Number(row.user_id) !== Number(userId))
-    };
-    writeListingsStore(updatedStore);
-
-    return { deletedUserId: Number(userId) };
-  }
+  
 
   const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [userId]);
   if (!result.rows[0]) {
@@ -4814,35 +4007,7 @@ async function deleteUserAndData(userId) {
 async function getListingsForUser(userId) {
   const defaultProperty = await ensureDefaultPropertyForUser(userId);
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    let changed = false;
-    const propertiesById = new Map(
-      store.properties
-        .filter((property) => Number(property.user_id) === Number(userId))
-        .map((property) => [Number(property.id), property])
-    );
-    const listings = store.listings
-      .filter((listing) => Number(listing.user_id) === Number(userId))
-      .map((listing) => {
-        if (!listing.property_id && defaultProperty) {
-          listing.property_id = defaultProperty.id;
-          changed = true;
-        }
-        const property = propertiesById.get(Number(listing.property_id));
-        return {
-          ...listing,
-          property_id: Number(listing.property_id || (defaultProperty ? defaultProperty.id : 0)) || null,
-          property_name: property ? property.name : (defaultProperty ? defaultProperty.name : null),
-          date_basis: normaliseDateBasis(listing.date_basis)
-        };
-      })
-      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
-    if (changed) {
-      writeListingsStore(store);
-    }
-    return listings;
-  }
+  
 
   await pool.query(
     `
@@ -4869,26 +4034,7 @@ async function getListingsForUser(userId) {
 async function getListingByIdForUser(listingId, userId) {
   const defaultProperty = await ensureDefaultPropertyForUser(userId);
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const listing = store.listings.find(
-      (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
-    );
-    if (!listing) {
-      return null;
-    }
-    if (!listing.property_id && defaultProperty) {
-      listing.property_id = defaultProperty.id;
-      writeListingsStore(store);
-    }
-    const property = store.properties.find((item) => Number(item.id) === Number(listing.property_id));
-    return {
-      ...listing,
-      property_id: Number(listing.property_id || (defaultProperty ? defaultProperty.id : 0)) || null,
-      property_name: property ? property.name : (defaultProperty ? defaultProperty.name : null),
-      date_basis: normaliseDateBasis(listing.date_basis)
-    };
-  }
+  
 
   const result = await pool.query(
     `
@@ -4920,25 +4066,7 @@ async function getListingByIdForUser(listingId, userId) {
 }
 
 async function getListingById(listingId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const listing = store.listings.find((item) => Number(item.id) === Number(listingId));
-    if (!listing) {
-      return null;
-    }
-    const defaultProperty = await ensureDefaultPropertyForUser(listing.user_id);
-    if (!listing.property_id && defaultProperty) {
-      listing.property_id = defaultProperty.id;
-      writeListingsStore(store);
-    }
-    const property = store.properties.find((item) => Number(item.id) === Number(listing.property_id));
-    return {
-      ...listing,
-      property_id: Number(listing.property_id || (defaultProperty ? defaultProperty.id : 0)) || null,
-      property_name: property ? property.name : (defaultProperty ? defaultProperty.name : null),
-      date_basis: normaliseDateBasis(listing.date_basis)
-    };
-  }
+  
 
   const result = await pool.query(
     `
@@ -5027,39 +4155,7 @@ function isValidIcsAccessToken(listing, token) {
 }
 
 async function createListingForUser(userId, name, propertyId, dateBasis, usualCleanerId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const alreadyExists = store.listings.some(
-      (listing) => Number(listing.user_id) === Number(userId) && listing.name.toLowerCase() === name.toLowerCase()
-    );
-
-    if (alreadyExists) {
-      return { error: 'A listing with this name already exists.' };
-    }
-
-    const nextId = store.listings.length
-      ? Math.max(...store.listings.map((listing) => Number(listing.id))) + 1
-      : 1;
-
-    const property = await resolvePropertyForListing(userId, propertyId);
-    if (!property) {
-      return { error: 'Property not found.' };
-    }
-
-    const listing = {
-      id: nextId,
-      user_id: Number(userId),
-      property_id: Number(property.id),
-      date_basis: normaliseDateBasis(dateBasis),
-      usual_cleaner_id: normaliseCleanerId(usualCleanerId),
-      name,
-      created_at: new Date().toISOString()
-    };
-
-    store.listings.push(listing);
-    writeListingsStore(store);
-    return { listing };
-  }
+  
 
   try {
     const property = await resolvePropertyForListing(userId, propertyId);
@@ -5086,44 +4182,7 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
 }
 
 async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const idx = store.listings.findIndex(
-      (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
-    );
-
-    if (idx === -1) {
-      return { error: 'Listing not found.' };
-    }
-
-    const duplicate = store.listings.some(
-      (listing) =>
-        Number(listing.user_id) === Number(userId) &&
-        Number(listing.id) !== Number(listingId) &&
-        listing.name.toLowerCase() === name.toLowerCase()
-    );
-
-    if (duplicate) {
-      return { error: 'A listing with this name already exists.' };
-    }
-
-    const property = await resolvePropertyForListing(userId, propertyId);
-    if (!property) {
-      return { error: 'Property not found.' };
-    }
-
-    store.listings[idx].name = name;
-    store.listings[idx].property_id = Number(property.id);
-    store.listings[idx].date_basis = normaliseDateBasis(dateBasis);
-    store.listings[idx].usual_cleaner_id = normaliseCleanerId(usualCleanerId);
-    writeListingsStore(store);
-    return {
-      listing: {
-        ...store.listings[idx],
-        property_name: property.name
-      }
-    };
-  }
+  
 
   try {
     const property = await resolvePropertyForListing(userId, propertyId);
@@ -5163,24 +4222,7 @@ async function getBookedInChangesForUserByListings(userId, listingIds) {
     return [];
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    return (store.booked_in_changes || [])
-      .filter((row) => Number(row.user_id) === Number(userId) && uniqueListingIds.includes(Number(row.listing_id)))
-      .map((row) => ({
-        id: row.id,
-        user_id: row.user_id,
-        property_id: row.property_id || null,
-        listing_id: row.listing_id,
-        reservation_checkin_date: row.reservation_checkin_date,
-        reservation_checkout_date: row.reservation_checkout_date,
-        changeover_date: row.changeover_date,
-        cleaner_id: row.cleaner_id || null,
-        cleaner_user_id: row.cleaner_user_id || null,
-        created_at: row.created_at,
-        updated_at: row.updated_at
-      }));
-  }
+  
 
   const result = await pool.query(
     `
@@ -5274,49 +4316,7 @@ async function upsertBookedInChangesForUser(userId, changes) {
     return { saved: 0 };
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const nextIdStart = (store.booked_in_changes || []).length
-      ? Math.max(...store.booked_in_changes.map((item) => Number(item.id))) + 1
-      : 1;
-    let nextId = nextIdStart;
-    const now = new Date().toISOString();
-
-    normalised.forEach((entry) => {
-      const idx = (store.booked_in_changes || []).findIndex((item) =>
-        Number(item.user_id) === Number(userId)
-        && Number(item.listing_id) === Number(entry.listingId)
-        && String(item.reservation_checkin_date) === entry.reservationCheckinDate
-        && String(item.reservation_checkout_date) === entry.reservationCheckoutDate
-      );
-
-      if (idx >= 0) {
-        store.booked_in_changes[idx].property_id = entry.propertyId;
-        store.booked_in_changes[idx].changeover_date = entry.changeoverDate;
-        store.booked_in_changes[idx].cleaner_id = entry.cleanerId;
-        store.booked_in_changes[idx].cleaner_user_id = entry.cleanerUserId;
-        store.booked_in_changes[idx].updated_at = now;
-      } else {
-        store.booked_in_changes.push({
-          id: nextId,
-          user_id: Number(userId),
-          property_id: entry.propertyId,
-          listing_id: entry.listingId,
-          reservation_checkin_date: entry.reservationCheckinDate,
-          reservation_checkout_date: entry.reservationCheckoutDate,
-          changeover_date: entry.changeoverDate,
-          cleaner_id: entry.cleanerId,
-          cleaner_user_id: entry.cleanerUserId,
-          created_at: now,
-          updated_at: now
-        });
-        nextId += 1;
-      }
-    });
-
-    writeListingsStore(store);
-    return { saved: normalised.length };
-  }
+  
 
   for (const entry of normalised) {
     await pool.query(
@@ -5374,20 +4374,7 @@ async function deleteBookedInChangesForUser(userId, changes) {
     return { deleted: 0 };
   }
 
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const before = (store.booked_in_changes || []).length;
-    const keySet = new Set(keys.map((entry) => String(entry.listingId) + '|' + entry.reservationCheckinDate + '|' + entry.reservationCheckoutDate));
-    store.booked_in_changes = (store.booked_in_changes || []).filter((row) => {
-      if (Number(row.user_id) !== Number(userId)) {
-        return true;
-      }
-      const key = String(Number(row.listing_id)) + '|' + String(row.reservation_checkin_date || '') + '|' + String(row.reservation_checkout_date || '');
-      return !keySet.has(key);
-    });
-    writeListingsStore(store);
-    return { deleted: Math.max(0, before - store.booked_in_changes.length) };
-  }
+  
 
   let deleted = 0;
   for (const entry of keys) {
@@ -5407,19 +4394,7 @@ async function deleteBookedInChangesForUser(userId, changes) {
 }
 
 async function getFeedsForListing(listingId, userId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const ownedListing = store.listings.find(
-      (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
-    );
-    if (!ownedListing) {
-      return null;
-    }
-
-    return store.feeds
-      .filter((feed) => Number(feed.listing_id) === Number(listingId))
-      .sort((a, b) => Number(a.id) - Number(b.id));
-  }
+  
 
   const listingResult = await pool.query(
     'SELECT id FROM listings WHERE id = $1 AND user_id = $2 LIMIT 1',
@@ -5437,31 +4412,7 @@ async function getFeedsForListing(listingId, userId) {
 }
 
 async function createFeedForListing(listingId, userId, label, url) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const ownedListing = store.listings.find(
-      (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
-    );
-    if (!ownedListing) {
-      return { error: 'Listing not found.' };
-    }
-
-    const nextId = store.feeds.length
-      ? Math.max(...store.feeds.map((feed) => Number(feed.id))) + 1
-      : 1;
-
-    const feed = {
-      id: nextId,
-      listing_id: Number(listingId),
-      label,
-      url,
-      created_at: new Date().toISOString()
-    };
-
-    store.feeds.push(feed);
-    writeListingsStore(store);
-    return { feed };
-  }
+  
 
   const listingResult = await pool.query(
     'SELECT id FROM listings WHERE id = $1 AND user_id = $2 LIMIT 1',
@@ -5479,27 +4430,7 @@ async function createFeedForListing(listingId, userId, label, url) {
 }
 
 async function updateFeedForListing(feedId, listingId, userId, label, url) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const ownedListing = store.listings.find(
-      (listing) => Number(listing.id) === Number(listingId) && Number(listing.user_id) === Number(userId)
-    );
-    if (!ownedListing) {
-      return { error: 'Listing not found.' };
-    }
-
-    const idx = store.feeds.findIndex(
-      (feed) => Number(feed.id) === Number(feedId) && Number(feed.listing_id) === Number(listingId)
-    );
-    if (idx === -1) {
-      return { error: 'Feed not found.' };
-    }
-
-    store.feeds[idx].label = label;
-    store.feeds[idx].url = url;
-    writeListingsStore(store);
-    return { feed: store.feeds[idx] };
-  }
+  
 
   const listingResult = await pool.query(
     'SELECT id FROM listings WHERE id = $1 AND user_id = $2 LIMIT 1',
@@ -5522,40 +4453,7 @@ async function updateFeedForListing(feedId, listingId, userId, label, url) {
 }
 
 async function getFeedSourcesForUser(userId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const listingIds = new Set(
-      store.listings
-        .filter((listing) => Number(listing.user_id) === Number(userId))
-        .map((listing) => Number(listing.id))
-    );
-
-    const uniqueLabels = new Map();
-    store.feeds
-      .filter((feed) => listingIds.has(Number(feed.listing_id)))
-      .forEach((feed) => {
-        const label = String(feed.label || '').trim();
-        if (!label) return;
-        const key = label.toLowerCase();
-        if (!uniqueLabels.has(key)) {
-          uniqueLabels.set(key, label);
-        }
-      });
-
-    const colorByKey = new Map();
-    store.source_colors
-      .filter((row) => Number(row.user_id) === Number(userId))
-      .forEach((row) => {
-        const label = String(row.label || '').trim();
-        const color = normaliseColor(row.color);
-        if (!label || !color) return;
-        colorByKey.set(label.toLowerCase(), color);
-      });
-
-    return Array.from(uniqueLabels.entries())
-      .map(([key, label]) => ({ label, color: colorByKey.get(key) || null }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }
+  
 
   const labelsResult = await pool.query(
     `
@@ -5591,30 +4489,7 @@ async function getFeedSourcesForUser(userId) {
 }
 
 async function upsertFeedSourceColorForUser(userId, label, color) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const key = label.toLowerCase();
-    const idx = store.source_colors.findIndex(
-      (row) => Number(row.user_id) === Number(userId) && String(row.label || '').trim().toLowerCase() === key
-    );
-
-    if (idx >= 0) {
-      store.source_colors[idx].label = label;
-      store.source_colors[idx].color = color;
-      store.source_colors[idx].updated_at = new Date().toISOString();
-    } else {
-      store.source_colors.push({
-        user_id: Number(userId),
-        label,
-        color,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      });
-    }
-
-    writeListingsStore(store);
-    return { label, color };
-  }
+  
 
   const result = await pool.query(
     `
@@ -5764,11 +4639,7 @@ function isAirbnbNotAvailableSummary(summary) {
 // ── Persistent event cache ───────────────────────────────────────────────────
 
 async function getAllListingsWithFeeds() {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const listingIds = [...new Set(store.feeds.map((f) => Number(f.listing_id)))];
-    return listingIds.map((id) => ({ id }));
-  }
+  
   const result = await pool.query(
     'SELECT DISTINCT listing_id AS id FROM calendar_feeds ORDER BY listing_id ASC'
   );
@@ -5776,10 +4647,7 @@ async function getAllListingsWithFeeds() {
 }
 
 async function getFeedsForListingInternal(listingId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    return store.feeds.filter((f) => Number(f.listing_id) === Number(listingId));
-  }
+  
   const result = await pool.query(
     'SELECT id, listing_id, label, url FROM calendar_feeds WHERE listing_id = $1 ORDER BY id ASC',
     [listingId]
@@ -5790,27 +4658,7 @@ async function getFeedsForListingInternal(listingId) {
 async function storeFeedCache(listingId, feedId, label, events, errorText) {
   const eventsJson = JSON.stringify(events || []);
   const now = new Date().toISOString();
-  if (!usePostgres) {
-    const store = readListingsStore();
-    const idx = store.cached_events.findIndex(
-      (c) => Number(c.listing_id) === Number(listingId) && Number(c.feed_id) === Number(feedId)
-    );
-    const entry = {
-      listing_id: Number(listingId),
-      feed_id: Number(feedId),
-      label,
-      events_json: eventsJson,
-      error_text: errorText || null,
-      fetched_at: now
-    };
-    if (idx === -1) {
-      store.cached_events.push(entry);
-    } else {
-      store.cached_events[idx] = entry;
-    }
-    writeListingsStore(store);
-    return;
-  }
+  
   await pool.query(
     `
       INSERT INTO cached_events (listing_id, feed_id, label, events_json, error_text, fetched_at)
@@ -5826,10 +4674,7 @@ async function storeFeedCache(listingId, feedId, label, events, errorText) {
 }
 
 async function getCachedEventsForListing(listingId) {
-  if (!usePostgres) {
-    const store = readListingsStore();
-    return store.cached_events.filter((c) => Number(c.listing_id) === Number(listingId));
-  }
+  
   const result = await pool.query(
     'SELECT feed_id, label, events_json, error_text, fetched_at FROM cached_events WHERE listing_id = $1 ORDER BY feed_id ASC',
     [listingId]
@@ -6036,9 +4881,7 @@ async function getClientOwnerUserId(clientAccountId) {
     return null;
   }
 
-  if (!usePostgres) {
-    return null;
-  }
+  
 
   const result = await pool.query(
     `
@@ -6065,7 +4908,7 @@ async function getManagerAssignmentScopeForContext(clientAccountId, userId, acti
     listingIdSet: new Set()
   };
 
-  if (!usePostgres || String(activeRole || '') !== 'Manager') {
+  if (String(activeRole || '') !== 'Manager') {
     return { managerMembershipId, assignmentScope };
   }
 
@@ -6360,7 +5203,7 @@ app.post('/api/signup', async (req, res) => {
     });
 
     // New client signups are also initialized as Manager + Staff in their own client account.
-    if (usePostgres && createdUser && Number(createdUser.id) > 0) {
+    if (createdUser && Number(createdUser.id) > 0) {
       const context = await getOrCreateAccessContextForUser(createdUser.id, null);
       const ownClientMembership = (context.memberships || []).find((membership) =>
         membership.role === 'Client' && membership.status === 'active'
