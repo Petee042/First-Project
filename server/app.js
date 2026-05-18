@@ -38,6 +38,10 @@ const usePostgres = Boolean(process.env.DATABASE_URL);
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const stripeClient = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 
+if (!usePostgres) {
+  throw new Error('DATABASE_URL is required. Legacy local JSON storage mode has been removed.');
+}
+
 const KAYAK_COMMON_QUERY_FIELDS = [
   { key: 'userTrackId', type: 'string', required: true, description: 'Unique user/session identifier.' },
   { key: 'onlyIfComplete', type: 'boolean', required: false, defaultValue: 'false', description: 'Return 202 until search is complete.' },
@@ -912,8 +916,6 @@ async function initializeUserStore() {
     ON booked_in_changes (cleaner_user_id)
   `);
 
-  await migrateUsersFromFile();
-
   await pool.query(`
     INSERT INTO properties (user_id, name)
     SELECT u.id, 'default'
@@ -1276,38 +1278,6 @@ async function initializeUserStore() {
   `);
 
   await runOneTimeSiteDataResetIfNeeded();
-}
-
-async function migrateUsersFromFile() {
-  if (!fs.existsSync(usersFile)) {
-    return;
-  }
-
-  const users = readUsersFromFile();
-  if (!Array.isArray(users) || users.length === 0) {
-    return;
-  }
-
-  for (const user of users) {
-    await pool.query(
-      `
-        INSERT INTO users (id, username, email, password_hash, created_at)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT DO NOTHING
-      `,
-      [user.id, user.username, user.email, user.password_hash, user.created_at]
-    );
-  }
-
-  const result = await pool.query('SELECT COALESCE(MAX(id), 0) AS max_id FROM users');
-  const maxId = Number(result.rows[0].max_id);
-
-  if (maxId > 0) {
-    await pool.query(
-      "SELECT setval(pg_get_serial_sequence('users', 'id'), $1)",
-      [maxId]
-    );
-  }
 }
 
 async function findUserByEmail(email) {
@@ -9303,7 +9273,7 @@ async function startServer() {
     await initializeUserStore();
     app.listen(PORT, () => {
       console.log(`Server running at http://localhost:${PORT}`);
-      console.log(`User storage: ${usePostgres ? 'Postgres' : 'local JSON file'}`);
+      console.log('User storage: Postgres');
     });
 
     // Run initial refresh 15 s after startup, then every 10 minutes
