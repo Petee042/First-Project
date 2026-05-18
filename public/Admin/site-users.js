@@ -1,5 +1,7 @@
 'use strict';
 
+let allSiteUsers = [];
+
 function setSiteUsersMessage(text, isError) {
   const el = document.getElementById('siteUsersMessage');
   if (!el) {
@@ -22,6 +24,35 @@ function formatCreatedAt(value) {
     return String(value);
   }
   return date.toLocaleString();
+}
+
+function getUserSearchText(user) {
+  const membershipsText = (user.memberships || [])
+    .map((membership) => [membership.client_display_name, membership.role, membership.status].filter(Boolean).join(' '))
+    .join(' ');
+
+  return [
+    user.id,
+    user.username,
+    user.first_name,
+    user.family_name,
+    user.email,
+    user.telephone,
+    user.is_validated === false ? 'no' : 'yes',
+    membershipsText,
+    user.created_at
+  ]
+    .map((value) => String(value || '').toLowerCase())
+    .join(' ');
+}
+
+function getFilteredSiteUsers() {
+  const searchInput = document.getElementById('siteUsersSearch');
+  const query = String(searchInput ? searchInput.value : '').trim().toLowerCase();
+  if (!query) {
+    return allSiteUsers.slice();
+  }
+  return allSiteUsers.filter((user) => getUserSearchText(user).includes(query));
 }
 
 function groupMemberships(memberships) {
@@ -108,9 +139,28 @@ async function loadSiteUsers() {
     return;
   }
 
-  const users = Array.isArray(data.users) ? data.users : [];
+  allSiteUsers = Array.isArray(data.users) ? data.users : [];
+  renderSiteUsers();
+}
+
+function renderSiteUsers() {
+  const tbody = document.getElementById('siteUsersTableBody');
+  const countEl = document.getElementById('siteUsersCount');
+  if (!tbody) {
+    return;
+  }
+
+  const users = getFilteredSiteUsers();
+  if (countEl) {
+    const total = allSiteUsers.length;
+    const shown = users.length;
+    countEl.textContent = total === shown
+      ? (total + ' site user' + (total === 1 ? '' : 's') + ' loaded.')
+      : (shown + ' of ' + total + ' site users shown.');
+  }
+
   if (!users.length) {
-    tbody.innerHTML = '<tr><td colspan="8">No users found.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8">No matching users found.</td></tr>';
     return;
   }
 
@@ -164,6 +214,10 @@ async function loadSiteUsers() {
     setSiteUsersMessage(err.message || 'Failed to initialize site users list.', true);
   }
 })();
+
+document.getElementById('siteUsersSearch').addEventListener('input', () => {
+  renderSiteUsers();
+});
 
 document.getElementById('adminLogoutBtn').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });

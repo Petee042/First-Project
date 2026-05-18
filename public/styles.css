@@ -449,6 +449,15 @@ textarea:focus {
   font-size: 0.86rem;
 }
 
+.admin-search-row {
+  margin-bottom: 0.75rem;
+}
+
+.admin-search-row input[type="search"] {
+  flex: 1;
+  min-width: 0;
+}
+
 .api-tester-card {
   max-width: 980px;
 }
