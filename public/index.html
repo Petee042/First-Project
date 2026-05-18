@@ -25,15 +25,45 @@
     <section id="signup" class="tab-panel" aria-label="Sign-up form">
       <form id="signupForm" novalidate>
         <div class="field">
-          <label for="su-username">Username</label>
-          <input type="text" id="su-username" name="username" autocomplete="username" required />
+          <label for="su-first-name">First Name</label>
+          <input type="text" id="su-first-name" name="firstName" autocomplete="given-name" required />
         </div>
         <div class="field">
-          <label for="su-email">Email</label>
+          <label for="su-family-name">Family Name</label>
+          <input type="text" id="su-family-name" name="familyName" autocomplete="family-name" required />
+        </div>
+        <div class="field">
+          <label for="su-country">Country Of Residence</label>
+          <select id="su-country" name="country" autocomplete="country-name" required>
+            <option value="">Select country</option>
+            <option value="Australia">Australia</option>
+            <option value="Austria">Austria</option>
+            <option value="Belgium">Belgium</option>
+            <option value="Canada">Canada</option>
+            <option value="Denmark">Denmark</option>
+            <option value="Finland">Finland</option>
+            <option value="France">France</option>
+            <option value="Germany">Germany</option>
+            <option value="Ireland">Ireland</option>
+            <option value="Italy">Italy</option>
+            <option value="Netherlands">Netherlands</option>
+            <option value="New Zealand">New Zealand</option>
+            <option value="Norway">Norway</option>
+            <option value="Portugal">Portugal</option>
+            <option value="Spain">Spain</option>
+            <option value="Sweden">Sweden</option>
+            <option value="Switzerland">Switzerland</option>
+            <option value="United Kingdom">United Kingdom</option>
+            <option value="United States">United States</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="su-email">Email Address</label>
           <input type="email" id="su-email" name="email" autocomplete="email" required />
         </div>
         <div class="field">
-          <label for="su-password">Password <span class="hint">(min 8 characters)</span></label>
+          <label for="su-password">Password <span class="hint">(min 8, 1 uppercase, 1 number, 1 special)</span></label>
           <input type="password" id="su-password" name="password" autocomplete="new-password" required minlength="8" />
         </div>
         <p id="signup-message" class="message" aria-live="polite"></p>

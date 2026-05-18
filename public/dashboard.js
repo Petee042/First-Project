@@ -64,6 +64,14 @@ function setStripeConnectStatus(text, isError) {
   el.className = isError ? 'hint error' : 'hint';
 }
 
+function isStrongPassword(password) {
+  const value = String(password || '');
+  return value.length >= 8
+    && /[A-Z]/.test(value)
+    && /[0-9]/.test(value)
+    && /[^A-Za-z0-9]/.test(value);
+}
+
 function canManageTeam() {
   return Boolean(currentAccessContext && currentAccessContext.activeRole === 'Client');
 }
@@ -204,7 +212,7 @@ function renderTeamMembers(team) {
           first_name: member.first_name || '',
           family_name: member.family_name || '',
           email: member.email || '',
-          telephone: member.telephone || '',
+          country_of_residence: member.country_of_residence || '',
           is_validated: member.is_validated !== false,
           statuses: new Set(),
           roles: new Set()
@@ -304,7 +312,7 @@ function openTeamMemberEditor(member) {
   document.getElementById('editTeamMemberUserId').value = String(member.user_id || '');
   document.getElementById('editTeamMemberName').value = fullName || (canUseUsernameFallback ? usernameFallback : 'Name not set');
   document.getElementById('editTeamMemberEmail').value = member.email || '';
-  document.getElementById('editTeamMemberTelephone').value = member.telephone || '';
+  document.getElementById('editTeamMemberCountry').value = member.country_of_residence || '';
 
   const managerBox = document.getElementById('editTeamMemberRoleManager');
   const staffBox = document.getElementById('editTeamMemberRoleStaff');
@@ -2014,14 +2022,15 @@ document.getElementById('addTeamMemberForm').addEventListener('submit', async (e
   const button = form.querySelector('button[type="submit"]');
   const firstName = document.getElementById('teamMemberFirstName').value.trim();
   const familyName = document.getElementById('teamMemberFamilyName').value.trim();
+  const country = document.getElementById('teamMemberCountry').value.trim();
   const email = document.getElementById('teamMemberEmail').value.trim();
-  const telephone = document.getElementById('teamMemberTelephone').value.trim();
+  const password = document.getElementById('teamMemberPassword').value;
   const roles = [];
   if (document.getElementById('teamInviteRoleManager').checked) roles.push('Manager');
   if (document.getElementById('teamInviteRoleStaff').checked) roles.push('Staff');
 
-  if (!firstName || !familyName || !email || !telephone) {
-    setMessage('First name, family name, email, and telephone are required.', true);
+  if (!firstName || !familyName || !country || !email || !password) {
+    setMessage('First name, family name, country, email, and password are required.', true);
     return;
   }
 
@@ -2030,13 +2039,19 @@ document.getElementById('addTeamMemberForm').addEventListener('submit', async (e
     return;
   }
 
+  if (!isStrongPassword(password)) {
+    setMessage('Password must be at least 8 characters and include one uppercase, one number, and one special character.', true);
+    return;
+  }
+
   button.disabled = true;
   try {
     const result = await inviteTeamMember({
       firstName,
       familyName,
+      country,
       email,
-      telephone,
+      password,
       roles
     });
 
@@ -2048,8 +2063,9 @@ document.getElementById('addTeamMemberForm').addEventListener('submit', async (e
     setMessage('Team member invitation saved.', false);
     document.getElementById('teamMemberFirstName').value = '';
     document.getElementById('teamMemberFamilyName').value = '';
+    document.getElementById('teamMemberCountry').value = '';
     document.getElementById('teamMemberEmail').value = '';
-    document.getElementById('teamMemberTelephone').value = '';
+    document.getElementById('teamMemberPassword').value = '';
     document.getElementById('teamInviteRoleManager').checked = false;
     document.getElementById('teamInviteRoleStaff').checked = false;
     await fetchTeamMembers();

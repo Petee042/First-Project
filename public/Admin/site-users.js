@@ -37,7 +37,7 @@ function getUserSearchText(user) {
     user.first_name,
     user.family_name,
     user.email,
-    user.telephone,
+    user.country_of_residence,
     user.is_validated === false ? 'no' : 'yes',
     membershipsText,
     user.created_at
@@ -180,8 +180,8 @@ function renderSiteUsers() {
     const emailCell = document.createElement('td');
     emailCell.textContent = user.email || '—';
 
-    const telephoneCell = document.createElement('td');
-    telephoneCell.textContent = user.telephone || '—';
+    const countryCell = document.createElement('td');
+    countryCell.textContent = user.country_of_residence || '—';
 
     const validatedCell = document.createElement('td');
     validatedCell.textContent = user.is_validated === false ? 'No' : 'Yes';
@@ -196,7 +196,7 @@ function renderSiteUsers() {
     row.appendChild(usernameCell);
     row.appendChild(nameCell);
     row.appendChild(emailCell);
-    row.appendChild(telephoneCell);
+    row.appendChild(countryCell);
     row.appendChild(validatedCell);
     row.appendChild(membershipsCell);
     row.appendChild(createdCell);

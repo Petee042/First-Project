@@ -59,12 +59,39 @@
               <input id="teamMemberFamilyName" type="text" maxlength="120" required />
             </div>
             <div class="calendar-source-row">
-              <label for="teamMemberEmail">Email</label>
+              <label for="teamMemberCountry">Country Of Residence</label>
+              <select id="teamMemberCountry" required>
+                <option value="">Select country</option>
+                <option value="Australia">Australia</option>
+                <option value="Austria">Austria</option>
+                <option value="Belgium">Belgium</option>
+                <option value="Canada">Canada</option>
+                <option value="Denmark">Denmark</option>
+                <option value="Finland">Finland</option>
+                <option value="France">France</option>
+                <option value="Germany">Germany</option>
+                <option value="Ireland">Ireland</option>
+                <option value="Italy">Italy</option>
+                <option value="Netherlands">Netherlands</option>
+                <option value="New Zealand">New Zealand</option>
+                <option value="Norway">Norway</option>
+                <option value="Portugal">Portugal</option>
+                <option value="Spain">Spain</option>
+                <option value="Sweden">Sweden</option>
+                <option value="Switzerland">Switzerland</option>
+                <option value="United Kingdom">United Kingdom</option>
+                <option value="United States">United States</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="calendar-source-row">
+              <label for="teamMemberEmail">Email Address</label>
               <input id="teamMemberEmail" type="email" maxlength="160" required />
             </div>
             <div class="calendar-source-row">
-              <label for="teamMemberTelephone">Telephone</label>
-              <input id="teamMemberTelephone" type="text" maxlength="60" required />
+              <label for="teamMemberPassword">Password</label>
+              <input id="teamMemberPassword" type="password" minlength="8" required />
+              <p class="hint">At least 8 characters with one uppercase, one number, and one special character.</p>
             </div>
             <fieldset class="team-role-fieldset">
               <legend>Invite As Role</legend>
@@ -91,8 +118,8 @@
               <input id="editTeamMemberEmail" type="text" readonly />
             </div>
             <div class="calendar-source-row">
-              <label for="editTeamMemberTelephone">Telephone</label>
-              <input id="editTeamMemberTelephone" type="text" readonly />
+              <label for="editTeamMemberCountry">Country Of Residence</label>
+              <input id="editTeamMemberCountry" type="text" readonly />
             </div>
             <fieldset class="team-role-fieldset">
               <legend>Roles</legend>

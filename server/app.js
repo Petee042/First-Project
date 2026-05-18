@@ -29,6 +29,8 @@ const STRIPE_WEBHOOK_SECRET = String(process.env.STRIPE_WEBHOOK_SECRET || '').tr
 const STRIPE_CONNECT_DEFAULT_COUNTRY = String(process.env.STRIPE_CONNECT_DEFAULT_COUNTRY || 'GB').trim().toUpperCase();
 const usersFile = path.join(__dirname, 'users.json');
 const listingsFile = path.join(__dirname, 'listings.json');
+const DATA_RESET_MARKER_FILE = path.join(__dirname, '.minimal-profile-reset-v1');
+const DATA_RESET_FLAG_KEY = 'minimal-profile-reset-v1';
 const usePostgres = Boolean(process.env.DATABASE_URL);
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const stripeClient = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
@@ -204,6 +206,76 @@ function writeListingsStore(store) {
   fs.writeFileSync(listingsFile, JSON.stringify(store, null, 2), 'utf8');
 }
 
+async function runOneTimeSiteDataResetIfNeeded() {
+  if (!usePostgres) {
+    if (fs.existsSync(DATA_RESET_MARKER_FILE)) {
+      return;
+    }
+    writeUsersToFile([]);
+    writeListingsStore({
+      listings: [],
+      feeds: [],
+      source_colors: [],
+      properties: [],
+      cached_events: [],
+      cleaners: [],
+      booked_in_changes: [],
+      shared_resources: [],
+      shared_resource_reservations: []
+    });
+    fs.writeFileSync(DATA_RESET_MARKER_FILE, DATA_RESET_FLAG_KEY, 'utf8');
+    return;
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_runtime_flags (
+      key TEXT PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  const existingFlag = await pool.query(
+    'SELECT key FROM app_runtime_flags WHERE key = $1 LIMIT 1',
+    [DATA_RESET_FLAG_KEY]
+  );
+  if (existingFlag.rows[0]) {
+    return;
+  }
+
+  await pool.query('BEGIN');
+  try {
+    await pool.query(`
+      TRUNCATE TABLE
+        manager_listing_assignments,
+        manager_property_assignments,
+        guest_relationships,
+        booked_in_changes,
+        cached_events,
+        calendar_feeds,
+        feed_source_colors,
+        shared_resource_reservations,
+        shared_resources,
+        listings,
+        properties,
+        cleaners,
+        client_memberships,
+        client_accounts,
+        users
+      RESTART IDENTITY CASCADE
+    `);
+
+    await pool.query(
+      'INSERT INTO app_runtime_flags (key) VALUES ($1)',
+      [DATA_RESET_FLAG_KEY]
+    );
+
+    await pool.query('COMMIT');
+  } catch (err) {
+    await pool.query('ROLLBACK');
+    throw err;
+  }
+}
+
 function normaliseCalendarUrl(rawUrl) {
   const trimmed = String(rawUrl || '')
     .trim()
@@ -275,6 +347,7 @@ async function initializeUserStore() {
       fs.writeFileSync(usersFile, '[]', 'utf8');
     }
     ensureLocalListingsStore();
+    await runOneTimeSiteDataResetIfNeeded();
     return;
   }
 
@@ -321,6 +394,11 @@ async function initializeUserStore() {
   await pool.query(`
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS telephone TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS country_of_residence TEXT NOT NULL DEFAULT ''
   `);
 
   await pool.query(`
@@ -1193,6 +1271,8 @@ async function initializeUserStore() {
       last_seen_at = GREATEST(guest_relationships.last_seen_at, EXCLUDED.last_seen_at),
         updated_at = CURRENT_TIMESTAMP
   `);
+
+  await runOneTimeSiteDataResetIfNeeded();
 }
 
 async function migrateUsersFromFile() {
@@ -1245,7 +1325,11 @@ async function findUserByUsername(username) {
   return result.rows[0];
 }
 
-async function createUser(username, email, passwordHash) {
+async function createUser(username, email, passwordHash, profile = {}) {
+  const firstName = String(profile.firstName || '').trim();
+  const familyName = String(profile.familyName || '').trim();
+  const countryOfResidence = normaliseCountryOfResidence(profile.country) || '';
+
   if (!usePostgres) {
     const users = readUsersFromFile();
     const nextId = users.length ? Math.max(...users.map((user) => user.id)) + 1 : 1;
@@ -1255,6 +1339,9 @@ async function createUser(username, email, passwordHash) {
       username,
       email,
       password_hash: passwordHash,
+      first_name: firstName,
+      family_name: familyName,
+      country_of_residence: countryOfResidence,
       stripe_account_id: null,
       stripe_onboarding_complete: false,
       stripe_charges_enabled: false,
@@ -1271,19 +1358,60 @@ async function createUser(username, email, passwordHash) {
 
   const result = await pool.query(
     `
-      INSERT INTO users (username, email, password_hash)
-      VALUES ($1, $2, $3)
+      INSERT INTO users (username, email, password_hash, first_name, family_name, country_of_residence)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id, username, email, password_hash,
+                first_name, family_name, country_of_residence,
                 stripe_account_id, stripe_onboarding_complete,
                 stripe_charges_enabled, stripe_payouts_enabled,
                 created_at
     `,
-    [username, email, passwordHash]
+    [username, email, passwordHash, firstName, familyName, countryOfResidence]
   );
 
   await ensureDefaultPropertyForUser(result.rows[0].id);
   await ensureClientAccountForUser(result.rows[0].id, result.rows[0].username);
   return result.rows[0];
+}
+
+function normaliseCountryOfResidence(value) {
+  const country = String(value || '').trim();
+  if (!country) {
+    return null;
+  }
+  return country.slice(0, 120);
+}
+
+function validateStrongPassword(password) {
+  const value = String(password || '');
+  if (value.length < 8) {
+    return { ok: false, error: 'Password must be at least 8 characters.' };
+  }
+  if (!/[A-Z]/.test(value)) {
+    return { ok: false, error: 'Password must include at least one uppercase character.' };
+  }
+  if (!/[0-9]/.test(value)) {
+    return { ok: false, error: 'Password must include at least one number.' };
+  }
+  if (!/[^A-Za-z0-9]/.test(value)) {
+    return { ok: false, error: 'Password must include at least one special character.' };
+  }
+  return { ok: true };
+}
+
+async function generateUniqueUsernameFromEmail(email) {
+  const localPart = String(email || '').split('@')[0].replace(/[^a-z0-9._-]/gi, '').toLowerCase();
+  const base = (localPart || 'user').slice(0, 40);
+  let username = base;
+  let attempt = 0;
+  while (await findUserByUsername(username)) {
+    attempt += 1;
+    username = (base + '-' + String(randomUUID()).slice(0, 8)).slice(0, 60);
+    if (attempt > 10) {
+      throw new Error('Could not generate unique username.');
+    }
+  }
+  return username;
 }
 
 function normaliseOptionalEmail(value) {
@@ -2084,7 +2212,7 @@ async function getUserById(userId) {
   const result = await pool.query(
     `
         SELECT id, username, email, password_hash,
-          first_name, family_name, telephone, is_validated,
+          first_name, family_name, country_of_residence, telephone, is_validated,
              stripe_account_id, stripe_onboarding_complete,
              stripe_charges_enabled, stripe_payouts_enabled,
              created_at
@@ -2279,7 +2407,7 @@ async function getTeamMembershipsForClientAccount(clientAccountId) {
              u.email,
              u.first_name,
              u.family_name,
-             u.telephone,
+             u.country_of_residence,
              u.is_validated
       FROM client_memberships cm
       JOIN users u ON u.id = cm.user_id
@@ -2310,32 +2438,33 @@ async function createUnvalidatedSiteUserForInvite(input) {
   const email = normaliseOptionalEmail(input.email);
   const firstName = String(input.firstName || '').trim();
   const familyName = String(input.familyName || '').trim();
-  const telephone = normaliseTelephone(input.telephone);
+  const country = normaliseCountryOfResidence(input.country);
+  const password = String(input.password || '');
 
-  if (!email || !firstName || !familyName || !telephone) {
-    return { error: 'First name, family name, email, and telephone are required.' };
+  if (!email || !firstName || !familyName || !country || !password) {
+    return { error: 'First name, family name, country, email, and password are required.' };
   }
 
-  const baseUsernameRaw = (firstName + '.' + familyName).toLowerCase();
-  const baseUsername = baseUsernameRaw.replace(/[^a-z0-9._-]/g, '').slice(0, 40) || ('user' + String(Date.now()));
-  let username = baseUsername;
-  let attempt = 0;
-  while (await findUserByUsername(username)) {
-    attempt += 1;
-    username = (baseUsername + '-' + String(randomUUID()).slice(0, 8)).slice(0, 60);
-    if (attempt > 8) {
-      return { error: 'Could not generate unique username for invited user.' };
-    }
+  const passwordCheck = validateStrongPassword(password);
+  if (!passwordCheck.ok) {
+    return { error: passwordCheck.error };
   }
 
-  const passwordHash = await bcrypt.hash(randomUUID() + randomUUID(), SALT_ROUNDS);
+  let username;
+  try {
+    username = await generateUniqueUsernameFromEmail(email);
+  } catch {
+    return { error: 'Could not generate unique username for invited user.' };
+  }
+
+  const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
   const result = await pool.query(
     `
-      INSERT INTO users (username, email, password_hash, first_name, family_name, telephone, is_validated)
+      INSERT INTO users (username, email, password_hash, first_name, family_name, country_of_residence, is_validated)
       VALUES ($1, $2, $3, $4, $5, $6, FALSE)
-      RETURNING id, username, email, first_name, family_name, telephone, is_validated, created_at
+      RETURNING id, username, email, first_name, family_name, country_of_residence, is_validated, created_at
     `,
-    [username, email, passwordHash, firstName, familyName, telephone]
+    [username, email, passwordHash, firstName, familyName, country]
   );
 
   return { user: result.rows[0] };
@@ -2590,8 +2719,8 @@ async function updateUserInviteProfileIfMissing(userId, input) {
 
   const firstName = String(input.firstName || '').trim();
   const familyName = String(input.familyName || '').trim();
-  const telephone = normaliseTelephone(input.telephone) || '';
-  if (!firstName && !familyName && !telephone) {
+  const country = normaliseCountryOfResidence(input.country) || '';
+  if (!firstName && !familyName && !country) {
     return;
   }
 
@@ -2606,13 +2735,13 @@ async function updateUserInviteProfileIfMissing(userId, input) {
             WHEN NULLIF(TRIM(COALESCE(family_name, '')), '') IS NULL AND $3 <> '' THEN $3
             ELSE family_name
           END,
-          telephone = CASE
-            WHEN NULLIF(TRIM(COALESCE(telephone, '')), '') IS NULL AND $4 <> '' THEN $4
-            ELSE telephone
+          country_of_residence = CASE
+            WHEN NULLIF(TRIM(COALESCE(country_of_residence, '')), '') IS NULL AND $4 <> '' THEN $4
+            ELSE country_of_residence
           END
       WHERE id = $1
     `,
-    [Number(userId), firstName, familyName, telephone]
+    [Number(userId), firstName, familyName, country]
   );
 }
 
@@ -4261,7 +4390,7 @@ async function getAllSiteUsersWithMemberships() {
         email: user.email,
         first_name: user.first_name || '',
         family_name: user.family_name || '',
-        telephone: user.telephone || '',
+        country_of_residence: user.country_of_residence || '',
         is_validated: user.is_validated !== false,
         created_at: user.created_at || null,
         memberships: []
@@ -4275,7 +4404,7 @@ async function getAllSiteUsersWithMemberships() {
              u.email,
              u.first_name,
              u.family_name,
-             u.telephone,
+             u.country_of_residence,
              u.is_validated,
              u.created_at,
              COALESCE(
@@ -4296,7 +4425,7 @@ async function getAllSiteUsersWithMemberships() {
        AND cm.status IN ('active', 'invited')
       LEFT JOIN client_accounts ca
         ON ca.id = cm.client_account_id
-      GROUP BY u.id, u.username, u.email, u.first_name, u.family_name, u.telephone, u.is_validated, u.created_at
+      GROUP BY u.id, u.username, u.email, u.first_name, u.family_name, u.country_of_residence, u.is_validated, u.created_at
       ORDER BY u.username ASC
     `
   );
@@ -6296,14 +6425,19 @@ function formatStripeConnectStatus(user) {
 
 // POST /api/signup
 app.post('/api/signup', async (req, res) => {
-  const { username, email, password } = req.body;
+  const firstName = String(req.body.firstName || '').trim();
+  const familyName = String(req.body.familyName || '').trim();
+  const country = normaliseCountryOfResidence(req.body.country);
+  const email = String(req.body.email || '').trim();
+  const password = String(req.body.password || '');
 
-  if (!username || !email || !password) {
-    return res.status(400).json({ error: 'All fields are required.' });
+  if (!firstName || !familyName || !country || !email || !password) {
+    return res.status(400).json({ error: 'First name, family name, country, email, and password are required.' });
   }
 
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  const passwordCheck = validateStrongPassword(password);
+  if (!passwordCheck.ok) {
+    return res.status(400).json({ error: passwordCheck.error });
   }
 
   // Basic email format check
@@ -6313,15 +6447,20 @@ app.post('/api/signup', async (req, res) => {
   }
 
   try {
-    const normalisedUsername = username.trim();
     const normalisedEmail = email.trim().toLowerCase();
+    const normalisedCountry = normaliseCountryOfResidence(country);
 
-    if (await findUserByUsername(normalisedUsername) || await findUserByEmail(normalisedEmail)) {
-      return res.status(409).json({ error: 'Username or email already in use.' });
+    if (await findUserByEmail(normalisedEmail)) {
+      return res.status(409).json({ error: 'Email address already in use.' });
     }
 
+    const normalisedUsername = await generateUniqueUsernameFromEmail(normalisedEmail);
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
-    const createdUser = await createUser(normalisedUsername, normalisedEmail, passwordHash);
+    const createdUser = await createUser(normalisedUsername, normalisedEmail, passwordHash, {
+      firstName,
+      familyName,
+      country: normalisedCountry
+    });
 
     // New client signups are also initialized as Manager + Staff in their own client account.
     if (usePostgres && createdUser && Number(createdUser.id) > 0) {
@@ -6709,16 +6848,22 @@ app.get('/api/access/team', requireScopedRole('Manager'), async (req, res) => {
 app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
   const firstName = String(req.body.firstName || '').trim();
   const familyName = String(req.body.familyName || '').trim();
+  const country = normaliseCountryOfResidence(req.body.country);
   const email = String(req.body.email || '').trim();
-  const telephone = String(req.body.telephone || '').trim();
+  const password = String(req.body.password || '');
   const roles = normaliseClientTeamRoles(req.body.roles);
   const confirmExisting = req.body.confirmExisting === true;
 
-  if (!firstName || !familyName || !email || !telephone) {
-    return res.status(400).json({ error: 'First name, family name, email, and telephone are required.' });
+  if (!firstName || !familyName || !country || !email || !password) {
+    return res.status(400).json({ error: 'First name, family name, country, email, and password are required.' });
   }
   if (!roles.length) {
     return res.status(400).json({ error: 'Select at least one role (Manager and/or Staff).' });
+  }
+
+  const passwordCheck = validateStrongPassword(password);
+  if (!passwordCheck.ok) {
+    return res.status(400).json({ error: passwordCheck.error });
   }
 
   try {
@@ -6740,8 +6885,9 @@ app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
       const created = await createUnvalidatedSiteUserForInvite({
         firstName,
         familyName,
+        country,
         email: normalizedEmail,
-        telephone
+        password
       });
       if (created.error) {
         return res.status(400).json({ error: created.error });
@@ -6751,7 +6897,7 @@ app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
       await updateUserInviteProfileIfMissing(siteUser.id, {
         firstName,
         familyName,
-        telephone
+        country
       });
     }
 
