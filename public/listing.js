@@ -2,6 +2,7 @@
 
 const params = new URLSearchParams(window.location.search);
 const listingId = Number(params.get('id'));
+let canEditListing = false;
 let currentFeeds = [];
 let currentEvents = [];
 let currentMonthDate = new Date();
@@ -820,6 +821,37 @@ function setCalendarMessage(text, isError) {
   el.className = text ? 'message ' + (isError ? 'error' : 'success') : 'message';
 }
 
+function applyListingAccess(role) {
+  canEditListing = role === 'Manager' || role === 'Client';
+
+  const renameForm = document.getElementById('renameListingForm');
+  const feedForm = document.getElementById('feedForm');
+  const updateCalendarsBtn = document.getElementById('updateCalendarsBtn');
+
+  if (renameForm) {
+    Array.from(renameForm.querySelectorAll('input, select, button')).forEach((el) => {
+      if (el.id === 'listingPublicId') {
+        return;
+      }
+      el.disabled = !canEditListing;
+    });
+  }
+
+  if (feedForm) {
+    Array.from(feedForm.querySelectorAll('input, button')).forEach((el) => {
+      el.disabled = !canEditListing;
+    });
+  }
+
+  if (updateCalendarsBtn) {
+    updateCalendarsBtn.disabled = !canEditListing;
+  }
+
+  if (!canEditListing) {
+    setListingMessage('Read-only access: your current role can view this listing but cannot edit it.', false);
+  }
+}
+
 function renderFeeds(feeds) {
   currentFeeds = feeds;
   const tbody = document.getElementById('feedsTableBody');
@@ -857,6 +889,7 @@ function renderFeeds(feeds) {
       document.getElementById('cancelFeedEditBtn').classList.remove('hidden');
       setListingMessage('Editing feed: ' + feed.label, false);
     });
+    editBtn.disabled = !canEditListing;
 
     actionCell.appendChild(editBtn);
     row.appendChild(labelCell);
@@ -973,6 +1006,11 @@ async function loadCachedCalendar() {
 }
 
 async function updateCalendars() {
+  if (!canEditListing) {
+    setCalendarMessage('Read-only access: refreshing is not allowed for your role.', true);
+    return;
+  }
+
   const button = document.getElementById('updateCalendarsBtn');
   button.disabled = true;
   setCalendarMessage('Refreshing...', false);
@@ -1007,6 +1045,10 @@ async function updateCalendars() {
       window.location.href = '/';
       return;
     }
+
+    const meData = await meRes.json();
+    const activeRole = String((meData && meData.accessContext && meData.accessContext.activeRole) || '');
+    applyListingAccess(activeRole);
 
     await loadListing();
     await loadCachedCalendar();
@@ -1050,6 +1092,10 @@ function populateUsualCleanerSelect(cleaners, selectedId) {
 
 document.getElementById('renameListingForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (!canEditListing) {
+    setListingMessage('Read-only access: editing is not allowed for your role.', true);
+    return;
+  }
   const button = e.target.querySelector('button[type="submit"]');
   const name = document.getElementById('listingName').value.trim();
   const propertyId = Number(document.getElementById('listingPropertyId').value);
@@ -1092,6 +1138,11 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
 
 document.getElementById('feedForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+
+  if (!canEditListing) {
+    setListingMessage('Read-only access: editing feeds is not allowed for your role.', true);
+    return;
+  }
 
   const feedId = document.getElementById('feedId').value.trim();
   const label = document.getElementById('feedLabel').value.trim();

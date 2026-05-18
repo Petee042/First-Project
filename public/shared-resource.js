@@ -2,6 +2,7 @@
 
 const params = new URLSearchParams(window.location.search);
 const resourceId = Number(params.get('id'));
+let canEditSharedResource = false;
 let currentProperties = [];
 let currentListings = [];
 let activePaymentMessageKey = 'free_of_charge';
@@ -24,6 +25,30 @@ function setSharedResourceMessage(text, isError) {
   const el = document.getElementById('sharedResourceMessage');
   el.textContent = text;
   el.className = text ? 'message ' + (isError ? 'error' : 'success') : 'message';
+}
+
+function applySharedResourceAccess(role) {
+  canEditSharedResource = role === 'Manager' || role === 'Client';
+
+  const form = document.getElementById('sharedResourceForm');
+  if (form) {
+    Array.from(form.querySelectorAll('input, select, textarea, button, [contenteditable="true"]')).forEach((el) => {
+      if (el.id === 'bookingPageUrl' || el.id === 'copyBookingPageUrlBtn') {
+        return;
+      }
+
+      if (el.id === 'fullDescriptionEditor' || el.id === 'paymentMessageEditor') {
+        el.contentEditable = canEditSharedResource ? 'true' : 'false';
+        return;
+      }
+
+      el.disabled = !canEditSharedResource;
+    });
+  }
+
+  if (!canEditSharedResource) {
+    setSharedResourceMessage('Read-only access: your current role can view this resource but cannot edit it.', false);
+  }
 }
 
 function getEditorHtml() {
@@ -578,7 +603,7 @@ function renderAdminReservationsTable(reservations) {
       + '<td>' + formatAdminDateTime(row.requested_end_at) + '</td>'
       + '<td>' + escapeHtml(familyName) + '</td>'
       + '<td>' + escapeHtml(String(row.status || '')) + '</td>'
-      + '<td><button type="button" class="btn secondary" data-edit-reservation-id="' + String(row.id || '') + '">Edit Reservation</button></td>'
+      + '<td><button type="button" class="btn secondary" data-edit-reservation-id="' + String(row.id || '') + '"' + (canEditSharedResource ? '' : ' disabled') + '>Edit Reservation</button></td>'
       + '</tr>';
   }).join('');
 }
@@ -618,6 +643,10 @@ async function loadAdminReservations() {
       window.location.href = '/';
       return;
     }
+
+    const meData = await meRes.json();
+    const activeRole = String((meData && meData.accessContext && meData.accessContext.activeRole) || '');
+    applySharedResourceAccess(activeRole);
 
     const loaded = await loadPropertiesAndListings();
     if (!loaded) {
@@ -771,6 +800,11 @@ document.querySelectorAll('.resource-payment-tab').forEach((tab) => {
 document.getElementById('sharedResourceForm').addEventListener('submit', async (e) => {
   e.preventDefault();
 
+  if (!canEditSharedResource) {
+    setSharedResourceMessage('Read-only access: editing is not allowed for your role.', true);
+    return;
+  }
+
   const button = e.target.querySelector('button[type="submit"]');
   const shortDescription = document.getElementById('shortDescription').value.trim();
   const resourceType = document.getElementById('resourceType').value === 'parking' ? 'parking' : 'undefined';
@@ -887,6 +921,11 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
 });
 
 document.getElementById('deleteSharedResourceBtn').addEventListener('click', async () => {
+  if (!canEditSharedResource) {
+    setSharedResourceMessage('Read-only access: deleting is not allowed for your role.', true);
+    return;
+  }
+
   const shortDescription = document.getElementById('shortDescription').value.trim() || 'this shared resource';
   const confirmed = window.confirm(
     'Are you sure you want to delete shared resource: ' + shortDescription + '?\n\nAll reservation data for this resource will be irrevocably lost.'

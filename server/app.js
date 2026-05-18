@@ -5397,6 +5397,92 @@ async function getClientOwnerUserId(clientAccountId) {
   return Number.isInteger(ownerUserId) && ownerUserId > 0 ? ownerUserId : null;
 }
 
+async function getManagerAssignmentScopeForContext(clientAccountId, userId, activeRole) {
+  let managerMembershipId = null;
+  let assignmentScope = {
+    hasAssignments: false,
+    propertyIdSet: new Set(),
+    listingIdSet: new Set()
+  };
+
+  if (!usePostgres || String(activeRole || '') !== 'Manager') {
+    return { managerMembershipId, assignmentScope };
+  }
+
+  const managerMembership = await pool.query(
+    `
+      SELECT id
+      FROM client_memberships
+      WHERE client_account_id = $1
+        AND user_id = $2
+        AND role = 'Manager'
+        AND status = 'active'
+      ORDER BY id ASC
+      LIMIT 1
+    `,
+    [Number(clientAccountId), Number(userId)]
+  );
+  managerMembershipId = managerMembership.rows[0] ? Number(managerMembership.rows[0].id) : null;
+
+  if (Number.isInteger(managerMembershipId) && managerMembershipId > 0) {
+    const [propertyResult, listingResult] = await Promise.all([
+      pool.query(
+        'SELECT property_id FROM manager_property_assignments WHERE manager_membership_id = $1',
+        [managerMembershipId]
+      ),
+      pool.query(
+        'SELECT listing_id FROM manager_listing_assignments WHERE manager_membership_id = $1',
+        [managerMembershipId]
+      )
+    ]);
+
+    const propertyIdSet = new Set(
+      propertyResult.rows
+        .map((row) => Number(row.property_id))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    );
+    const listingIdSet = new Set(
+      listingResult.rows
+        .map((row) => Number(row.listing_id))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    );
+
+    assignmentScope = {
+      hasAssignments: propertyIdSet.size > 0 || listingIdSet.size > 0,
+      propertyIdSet,
+      listingIdSet
+    };
+  }
+
+  return { managerMembershipId, assignmentScope };
+}
+
+async function resolveAccessContextForUser(userId, requestedClientAccountId, minimumRole) {
+  const context = await getOrCreateAccessContextForUser(userId, requestedClientAccountId);
+  const active = context.active || null;
+  if (!active) {
+    return { errorStatus: 403, error: 'No active client access context found.' };
+  }
+
+  if (minimumRole && !hasRequiredRole(active.role, minimumRole)) {
+    return { errorStatus: 403, error: 'Insufficient role for this action.' };
+  }
+
+  const ownerUserId = await getClientOwnerUserId(active.client_account_id);
+  const scopeState = await getManagerAssignmentScopeForContext(active.client_account_id, userId, active.role);
+
+  return {
+    accessContext: {
+      activeClientAccountId: Number(active.client_account_id),
+      activeRole: String(active.role || ''),
+      effectiveOwnerUserId: ownerUserId || Number(userId),
+      managerMembershipId: scopeState.managerMembershipId,
+      assignmentScope: scopeState.assignmentScope
+    },
+    memberships: context.memberships || []
+  };
+}
+
 function requireScopedRole(minimumRole) {
   return async (req, res, next) => {
     if (!(req.session && req.session.userId)) {
@@ -5404,71 +5490,13 @@ function requireScopedRole(minimumRole) {
     }
 
     try {
-      const context = await getOrCreateAccessContextForUser(req.session.userId, req.session.activeClientAccountId);
-      const active = context.active || null;
-      if (!active) {
-        return res.status(403).json({ error: 'No active client access context found.' });
+      const resolved = await resolveAccessContextForUser(req.session.userId, req.session.activeClientAccountId, minimumRole);
+      if (resolved.errorStatus) {
+        return res.status(resolved.errorStatus).json({ error: resolved.error });
       }
 
-      if (!hasRequiredRole(active.role, minimumRole)) {
-        return res.status(403).json({ error: 'Insufficient role for this action.' });
-      }
-
-      req.session.activeClientAccountId = Number(active.client_account_id);
-      const ownerUserId = await getClientOwnerUserId(active.client_account_id);
-
-      let managerMembershipId = null;
-      let assignmentScope = {
-        hasAssignments: false,
-        propertyIdSet: new Set(),
-        listingIdSet: new Set()
-      };
-
-      if (usePostgres && String(active.role || '') === 'Manager') {
-        const managerMembership = await pool.query(
-          `
-            SELECT id
-            FROM client_memberships
-            WHERE client_account_id = $1
-              AND user_id = $2
-              AND role = 'Manager'
-              AND status = 'active'
-            ORDER BY id ASC
-            LIMIT 1
-          `,
-          [Number(active.client_account_id), Number(req.session.userId)]
-        );
-        managerMembershipId = managerMembership.rows[0] ? Number(managerMembership.rows[0].id) : null;
-
-        if (Number.isInteger(managerMembershipId) && managerMembershipId > 0) {
-          const [propertyResult, listingResult] = await Promise.all([
-            pool.query(
-              'SELECT property_id FROM manager_property_assignments WHERE manager_membership_id = $1',
-              [managerMembershipId]
-            ),
-            pool.query(
-              'SELECT listing_id FROM manager_listing_assignments WHERE manager_membership_id = $1',
-              [managerMembershipId]
-            )
-          ]);
-
-          const propertyIdSet = new Set(propertyResult.rows.map((row) => Number(row.property_id)).filter((id) => Number.isInteger(id) && id > 0));
-          const listingIdSet = new Set(listingResult.rows.map((row) => Number(row.listing_id)).filter((id) => Number.isInteger(id) && id > 0));
-          assignmentScope = {
-            hasAssignments: propertyIdSet.size > 0 || listingIdSet.size > 0,
-            propertyIdSet,
-            listingIdSet
-          };
-        }
-      }
-
-      req.accessContext = {
-        activeClientAccountId: Number(active.client_account_id),
-        activeRole: String(active.role || ''),
-        effectiveOwnerUserId: ownerUserId || Number(req.session.userId),
-        managerMembershipId,
-        assignmentScope
-      };
+      req.accessContext = resolved.accessContext;
+      req.session.activeClientAccountId = Number(resolved.accessContext.activeClientAccountId);
 
       return next();
     } catch (err) {
@@ -7485,7 +7513,26 @@ app.get('/api/listings/:listingId/feeds', requireScopedRole('Staff'), async (req
 // GET /api/feed-sources — all configured feed source labels + chosen colors
 app.get('/api/feed-sources', requireScopedRole('Staff'), async (req, res) => {
   try {
-    const sources = await getFeedSourcesForUser(req.accessContext.effectiveOwnerUserId);
+    let sources = await getFeedSourcesForUser(req.accessContext.effectiveOwnerUserId);
+
+    if (hasManagerAssignmentScope(req)) {
+      const listings = await getListingsForUser(req.accessContext.effectiveOwnerUserId);
+      const allowedListings = listings.filter((listing) => isListingAllowedByScope(req, listing));
+      const allowedLabels = new Set();
+
+      for (const listing of allowedListings) {
+        const feeds = await getFeedsForListing(listing.id, req.accessContext.effectiveOwnerUserId);
+        (feeds || []).forEach((feed) => {
+          const label = String(feed && feed.label ? feed.label : '').trim().toLowerCase();
+          if (label) {
+            allowedLabels.add(label);
+          }
+        });
+      }
+
+      sources = sources.filter((source) => allowedLabels.has(String(source.label || '').trim().toLowerCase()));
+    }
+
     return res.json({ sources });
   } catch (err) {
     console.error(err);
@@ -7506,7 +7553,26 @@ app.put('/api/feed-sources/color', requireScopedRole('Manager'), async (req, res
   }
 
   try {
-    const sources = await getFeedSourcesForUser(req.accessContext.effectiveOwnerUserId);
+    let sources = await getFeedSourcesForUser(req.accessContext.effectiveOwnerUserId);
+
+    if (hasManagerAssignmentScope(req)) {
+      const listings = await getListingsForUser(req.accessContext.effectiveOwnerUserId);
+      const allowedListings = listings.filter((listing) => isListingAllowedByScope(req, listing));
+      const allowedLabels = new Set();
+
+      for (const listing of allowedListings) {
+        const feeds = await getFeedsForListing(listing.id, req.accessContext.effectiveOwnerUserId);
+        (feeds || []).forEach((feed) => {
+          const feedLabel = String(feed && feed.label ? feed.label : '').trim().toLowerCase();
+          if (feedLabel) {
+            allowedLabels.add(feedLabel);
+          }
+        });
+      }
+
+      sources = sources.filter((source) => allowedLabels.has(String(source.label || '').trim().toLowerCase()));
+    }
+
     const exists = sources.some((source) => source.label.toLowerCase() === label.toLowerCase());
     if (!exists) {
       return res.status(404).json({ error: 'Feed source not found.' });
@@ -7814,7 +7880,14 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
   try {
     let listing = null;
     if (req.session && Number.isInteger(req.session.userId)) {
-      listing = await getListingByIdForUser(listingId, req.session.userId);
+      const resolved = await resolveAccessContextForUser(req.session.userId, req.session.activeClientAccountId, 'Staff');
+      if (resolved.accessContext) {
+        req.session.activeClientAccountId = Number(resolved.accessContext.activeClientAccountId);
+        listing = await getListingByIdForUser(listingId, resolved.accessContext.effectiveOwnerUserId);
+        if (listing && !isListingAllowedByScope({ accessContext: resolved.accessContext }, listing)) {
+          listing = null;
+        }
+      }
     }
 
     if (!listing) {
@@ -7850,9 +7923,17 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
 // GET /api/calendar.ics — export consolidated calendar across all listings
 app.get('/api/calendar.ics', async (req, res) => {
   try {
-    let userId = req.session && Number.isInteger(req.session.userId)
-      ? req.session.userId
-      : null;
+    let userId = null;
+    let resolvedAccess = null;
+
+    if (req.session && Number.isInteger(req.session.userId)) {
+      const resolved = await resolveAccessContextForUser(req.session.userId, req.session.activeClientAccountId, 'Staff');
+      if (resolved.accessContext) {
+        resolvedAccess = resolved.accessContext;
+        req.session.activeClientAccountId = Number(resolvedAccess.activeClientAccountId);
+        userId = resolvedAccess.effectiveOwnerUserId;
+      }
+    }
 
     if (!userId) {
       const token = String(req.query.token || '').trim();
@@ -7862,7 +7943,10 @@ app.get('/api/calendar.ics', async (req, res) => {
       }
     }
 
-    const listings = await getListingsForUser(userId);
+    let listings = await getListingsForUser(userId);
+    if (resolvedAccess && hasManagerAssignmentScope({ accessContext: resolvedAccess })) {
+      listings = listings.filter((listing) => isListingAllowedByScope({ accessContext: resolvedAccess }, listing));
+    }
 
     const combinedEvents = [];
     for (const listing of listings) {

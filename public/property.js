@@ -2,6 +2,7 @@
 
 const params = new URLSearchParams(window.location.search);
 const propertyId = Number(params.get('id'));
+let canEditProperty = false;
 
 function setPropertyMessage(text, isError) {
   const el = document.getElementById('propertyMessage');
@@ -15,6 +16,35 @@ function formatEntityId(value) {
     return '';
   }
   return String(numeric).padStart(8, '0');
+}
+
+function applyPropertyAccess(role) {
+  canEditProperty = role === 'Manager' || role === 'Client';
+
+  const form = document.getElementById('propertyForm');
+  const deleteBtn = document.getElementById('deletePropertyBtn');
+  if (!form) {
+    return;
+  }
+
+  const fields = Array.from(form.querySelectorAll('input, textarea, select, button'));
+  fields.forEach((field) => {
+    if (field.id === 'propertyPublicId') {
+      return;
+    }
+    if (field.id === 'deletePropertyBtn') {
+      return;
+    }
+    field.disabled = !canEditProperty;
+  });
+
+  if (deleteBtn) {
+    deleteBtn.disabled = !canEditProperty;
+  }
+
+  if (!canEditProperty) {
+    setPropertyMessage('Read-only access: your current role can view this property but cannot edit it.', false);
+  }
 }
 
 async function loadProperty() {
@@ -40,7 +70,7 @@ async function loadProperty() {
   document.getElementById('postalAddress').value = property.postal_address || '';
   document.getElementById('managerName').value = property.manager_name || '';
   document.getElementById('managerEmail').value = property.manager_email || '';
-  document.getElementById('deletePropertyBtn').disabled = property.is_default === true;
+  document.getElementById('deletePropertyBtn').disabled = !canEditProperty || property.is_default === true;
 }
 
 (async () => {
@@ -56,6 +86,10 @@ async function loadProperty() {
       return;
     }
 
+    const meData = await meRes.json();
+    const activeRole = String((meData && meData.accessContext && meData.accessContext.activeRole) || '');
+    applyPropertyAccess(activeRole);
+
     await loadProperty();
   } catch (err) {
     setPropertyMessage(err.message || 'Failed to load property page.', true);
@@ -64,6 +98,11 @@ async function loadProperty() {
 
 document.getElementById('propertyForm').addEventListener('submit', async (e) => {
   e.preventDefault();
+
+  if (!canEditProperty) {
+    setPropertyMessage('Read-only access: editing is not allowed for your role.', true);
+    return;
+  }
 
   const button = e.target.querySelector('button[type="submit"]');
   const name = document.getElementById('propertyName').value.trim();
@@ -100,6 +139,11 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
 });
 
 document.getElementById('deletePropertyBtn').addEventListener('click', async () => {
+  if (!canEditProperty) {
+    setPropertyMessage('Read-only access: deleting is not allowed for your role.', true);
+    return;
+  }
+
   const propertyName = document.getElementById('propertyName').value.trim() || 'this property';
   const confirmed = window.confirm(
     'Confirm delete property: ' + propertyName + '? This will only work if no listings are assigned to it.'
