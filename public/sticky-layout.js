@@ -11,10 +11,6 @@
     return;
   }
 
-  function isVisible(el) {
-    return Boolean(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
-  }
-
   function classify(el) {
     const cls = String((el && el.className) || '');
     if (/\berror\b/i.test(cls)) {
@@ -36,21 +32,21 @@
     stickyBar.className = 'sticky-message-bar' + (tone ? (' ' + tone) : '');
   }
 
-  function refreshFromVisibleMessages() {
-    const visibleNonEmpty = sources.filter((el) => isVisible(el) && cleanText(el));
-    if (!visibleNonEmpty.length) {
+  function refreshFromMessages() {
+    const nonEmpty = sources.filter((el) => cleanText(el));
+    if (!nonEmpty.length) {
       writeBar('', 'info');
       return;
     }
 
-    const active = visibleNonEmpty[visibleNonEmpty.length - 1];
+    const active = nonEmpty[nonEmpty.length - 1];
     writeBar(cleanText(active), classify(active));
   }
 
-  refreshFromVisibleMessages();
+  refreshFromMessages();
 
   const observer = new MutationObserver(() => {
-    refreshFromVisibleMessages();
+    refreshFromMessages();
   });
 
   sources.forEach((el) => {

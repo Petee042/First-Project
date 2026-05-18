@@ -9,22 +9,15 @@
 <body class="logged-page">
   <div class="sticky-page-chrome">
     <div class="sticky-page-inner">
-      <header class="top-bar">
-        <div class="header-left">
-          <button id="backBtn" class="btn secondary">Back</button>
-          <a class="top-brand-link" href="/dashboard.html" aria-label="AutomaticPeople home">
-            <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
-          </a>
-        </div>
-        <button id="logoutBtn" class="btn secondary">Log Out</button>
-      </header>
-
       <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
     </div>
   </div>
 
   <main class="dashboard">
     <div class="card-container wide">
+      <div class="feed-actions" style="margin-bottom: 0.7rem;">
+        <button id="backBtn" type="button" class="btn secondary">Back</button>
+      </div>
       <h2 id="sharedResourceTitle">Shared Resource</h2>
       <p id="sharedResourceMessage" class="message"></p>
 

@@ -9,13 +9,6 @@
 <body class="logged-page">
   <div class="sticky-page-chrome">
     <div class="sticky-page-inner">
-      <header class="top-bar">
-        <a class="top-brand-link" href="/dashboard.html" aria-label="AutomaticPeople home">
-          <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
-        </a>
-        <button id="logoutBtn" class="btn secondary">Log Out</button>
-      </header>
-
       <nav class="dashboard-tab-bar" role="tablist" aria-label="Main sections">
         <button class="dashboard-tab-btn active" data-panel="panel-dashboard" role="tab" aria-selected="true" aria-controls="panel-dashboard">Dashboard</button>
         <button class="dashboard-tab-btn" data-panel="panel-config" role="tab" aria-selected="false" aria-controls="panel-config">Config</button>
@@ -405,6 +398,7 @@
           <p id="stripeConnectStatus" class="hint">Checking Stripe connection status...</p>
           <div class="feed-actions">
             <button type="button" id="startStripeConnectBtn" class="btn secondary">Connect Stripe Account</button>
+            <button type="button" id="logoutBtn" class="btn secondary">Log Out</button>
           </div>
         </section>
 

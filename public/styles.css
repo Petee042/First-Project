@@ -12,7 +12,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 1200;
-  padding: 0 1rem;
+  padding: 0.35rem 1rem 0;
   background: linear-gradient(180deg, rgba(240, 242, 245, 0.98) 0%, rgba(240, 242, 245, 0.9) 100%);
   backdrop-filter: blur(2px);
 }
@@ -51,6 +51,11 @@ body {
   background: #fbe8ea;
   color: #9d1f2a;
   border-color: #f1c7ce;
+}
+
+.logged-page main .message,
+.logged-page main .schedule-email-message {
+  display: none !important;
 }
 
 /* ── Layout ───────────────────────────────────────────────── */
