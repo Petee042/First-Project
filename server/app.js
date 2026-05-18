@@ -750,6 +750,8 @@ async function initializeUserStore() {
       guest_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
       guest_email TEXT NOT NULL DEFAULT '',
       guest_phone TEXT NOT NULL DEFAULT '',
+      guest_first_name TEXT NOT NULL DEFAULT '',
+      guest_family_name TEXT NOT NULL DEFAULT '',
       source_type TEXT NOT NULL DEFAULT 'reservation',
       source_id TEXT,
       first_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -762,6 +764,16 @@ async function initializeUserStore() {
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_guest_relationship_unique_contact
     ON guest_relationships (client_account_id, guest_email, guest_phone)
+  `);
+
+  await pool.query(`
+    ALTER TABLE guest_relationships
+    ADD COLUMN IF NOT EXISTS guest_first_name TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE guest_relationships
+    ADD COLUMN IF NOT EXISTS guest_family_name TEXT NOT NULL DEFAULT ''
   `);
 
   await pool.query(`
@@ -1010,6 +1022,31 @@ async function initializeUserStore() {
       AND LOWER(u.email) = LOWER(c.email)
   `);
 
+  const usersMissingNames = await pool.query(
+    `
+      SELECT id, username
+      FROM users
+      WHERE NULLIF(TRIM(COALESCE(first_name, '')), '') IS NULL
+        AND NULLIF(TRIM(COALESCE(family_name, '')), '') IS NULL
+      ORDER BY id ASC
+    `
+  );
+  for (const userRow of usersMissingNames.rows) {
+    const derived = deriveNamesFromUsername(userRow.username);
+    if (!derived.firstName && !derived.familyName) {
+      continue;
+    }
+    await pool.query(
+      `
+        UPDATE users
+        SET first_name = $1,
+            family_name = $2
+        WHERE id = $3
+      `,
+      [derived.firstName, derived.familyName, userRow.id]
+    );
+  }
+
   const defaultCleanerPasswordHash = await bcrypt.hash('letmein1', SALT_ROUNDS);
   const cleanersResult = await pool.query(
     `
@@ -1128,6 +1165,8 @@ async function initializeUserStore() {
       client_account_id,
       guest_email,
       guest_phone,
+      guest_first_name,
+      guest_family_name,
       source_type,
       source_id,
       first_seen_at,
@@ -1137,6 +1176,8 @@ async function initializeUserStore() {
       rr.client_account_id,
       LOWER(TRIM(rr.email_address)) AS guest_email,
       TRIM(COALESCE(rr.telephone, '')) AS guest_phone,
+      COALESCE(MAX(NULLIF(TRIM(COALESCE(rr.first_name, '')), '')), '') AS guest_first_name,
+      COALESCE(MAX(NULLIF(TRIM(COALESCE(rr.family_name, '')), '')), '') AS guest_family_name,
       'reservation',
       COALESCE(rr.reservation_identifier, rr.id::text),
       MIN(rr.created_at),
@@ -1147,7 +1188,9 @@ async function initializeUserStore() {
     GROUP BY rr.client_account_id, LOWER(TRIM(rr.email_address)), TRIM(COALESCE(rr.telephone, '')), COALESCE(rr.reservation_identifier, rr.id::text)
     ON CONFLICT (client_account_id, guest_email, guest_phone)
     DO UPDATE
-    SET last_seen_at = GREATEST(guest_relationships.last_seen_at, EXCLUDED.last_seen_at),
+    SET guest_first_name = COALESCE(NULLIF(EXCLUDED.guest_first_name, ''), guest_relationships.guest_first_name),
+      guest_family_name = COALESCE(NULLIF(EXCLUDED.guest_family_name, ''), guest_relationships.guest_family_name),
+      last_seen_at = GREATEST(guest_relationships.last_seen_at, EXCLUDED.last_seen_at),
         updated_at = CURRENT_TIMESTAMP
   `);
 }
@@ -2195,6 +2238,24 @@ function normaliseClientTeamRole(value) {
   return role === 'Manager' || role === 'Staff' ? role : '';
 }
 
+function deriveNamesFromUsername(username) {
+  const raw = String(username || '').trim();
+  if (!raw || raw.includes('@') || raw.toLowerCase().startsWith('staff-')) {
+    return { firstName: '', familyName: '' };
+  }
+
+  const cleaned = raw.replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!cleaned) {
+    return { firstName: '', familyName: '' };
+  }
+
+  const words = cleaned.split(' ').filter(Boolean);
+  const toNameCase = (text) => text ? (text.charAt(0).toUpperCase() + text.slice(1).toLowerCase()) : '';
+  const firstName = toNameCase(words[0] || '');
+  const familyName = words.length > 1 ? toNameCase(words.slice(1).join(' ')) : '';
+  return { firstName, familyName };
+}
+
 function normaliseClientTeamRoles(values) {
   const list = Array.isArray(values) ? values : [values];
   return Array.from(new Set(
@@ -2629,6 +2690,8 @@ async function getGuestsForClientAccount(clientAccountId) {
              guest_user_id,
              guest_email,
              guest_phone,
+              guest_first_name,
+              guest_family_name,
              source_type,
              source_id,
              first_seen_at,

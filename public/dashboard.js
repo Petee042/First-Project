@@ -250,7 +250,9 @@ function renderTeamMembers(team) {
 
     const nameCell = document.createElement('td');
     const fullName = [member.first_name, member.family_name].filter(Boolean).join(' ').trim();
-    nameCell.textContent = fullName || 'Name not set';
+    const usernameFallback = String(member.username || '').trim();
+    const canUseUsernameFallback = usernameFallback && !usernameFallback.includes('@') && !usernameFallback.toLowerCase().startsWith('staff-');
+    nameCell.textContent = fullName || (canUseUsernameFallback ? usernameFallback : 'Name not set');
 
     const emailCell = document.createElement('td');
     emailCell.textContent = member.email || '';
@@ -346,7 +348,8 @@ function renderGuests(guests) {
     const row = document.createElement('tr');
 
     const nameCell = document.createElement('td');
-    nameCell.textContent = guest.guest_email || guest.guest_phone || 'Guest';
+    const guestName = [guest.guest_first_name, guest.guest_family_name].filter(Boolean).join(' ').trim();
+    nameCell.textContent = guestName || 'Guest';
 
     const emailCell = document.createElement('td');
     emailCell.textContent = guest.guest_email || '';
