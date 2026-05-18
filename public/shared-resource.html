@@ -6,16 +6,22 @@
   <title>Shared Resource - AutomaticPeople</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
-  <header class="top-bar">
-    <div class="header-left">
-      <button id="backBtn" class="btn secondary">Back</button>
-      <a class="top-brand-link" href="/dashboard.html" aria-label="AutomaticPeople home">
-        <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
-      </a>
+<body class="logged-page">
+  <div class="sticky-page-chrome">
+    <div class="sticky-page-inner">
+      <header class="top-bar">
+        <div class="header-left">
+          <button id="backBtn" class="btn secondary">Back</button>
+          <a class="top-brand-link" href="/dashboard.html" aria-label="AutomaticPeople home">
+            <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
+          </a>
+        </div>
+        <button id="logoutBtn" class="btn secondary">Log Out</button>
+      </header>
+
+      <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
     </div>
-    <button id="logoutBtn" class="btn secondary">Log Out</button>
-  </header>
+  </div>
 
   <main class="dashboard">
     <div class="card-container wide">
@@ -231,6 +237,7 @@
     </form>
   </dialog>
 
+  <script src="sticky-layout.js"></script>
   <script src="shared-resource.js"></script>
 </body>
 </html>

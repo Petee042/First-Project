@@ -6,20 +6,26 @@
   <title>Dashboard - AutomaticPeople</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
-  <header class="top-bar">
-    <a class="top-brand-link" href="/dashboard.html" aria-label="AutomaticPeople home">
-      <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
-    </a>
-    <button id="logoutBtn" class="btn secondary">Log Out</button>
-  </header>
+<body class="logged-page">
+  <div class="sticky-page-chrome">
+    <div class="sticky-page-inner">
+      <header class="top-bar">
+        <a class="top-brand-link" href="/dashboard.html" aria-label="AutomaticPeople home">
+          <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
+        </a>
+        <button id="logoutBtn" class="btn secondary">Log Out</button>
+      </header>
 
-  <nav class="dashboard-tab-bar" role="tablist" aria-label="Main sections">
-    <button class="dashboard-tab-btn active" data-panel="panel-dashboard" role="tab" aria-selected="true" aria-controls="panel-dashboard">Dashboard</button>
-    <button class="dashboard-tab-btn" data-panel="panel-config" role="tab" aria-selected="false" aria-controls="panel-config">Config</button>
-    <button class="dashboard-tab-btn" data-panel="panel-ops" role="tab" aria-selected="false" aria-controls="panel-ops">Ops</button>
-    <button class="dashboard-tab-btn" data-panel="panel-account" role="tab" aria-selected="false" aria-controls="panel-account">Account</button>
-  </nav>
+      <nav class="dashboard-tab-bar" role="tablist" aria-label="Main sections">
+        <button class="dashboard-tab-btn active" data-panel="panel-dashboard" role="tab" aria-selected="true" aria-controls="panel-dashboard">Dashboard</button>
+        <button class="dashboard-tab-btn" data-panel="panel-config" role="tab" aria-selected="false" aria-controls="panel-config">Config</button>
+        <button class="dashboard-tab-btn" data-panel="panel-ops" role="tab" aria-selected="false" aria-controls="panel-ops">Ops</button>
+        <button class="dashboard-tab-btn" data-panel="panel-account" role="tab" aria-selected="false" aria-controls="panel-account">Account</button>
+      </nav>
+
+      <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
+    </div>
+  </div>
 
   <main class="dashboard">
     <div class="card-container wide">
@@ -407,6 +413,7 @@
     </div>
   </main>
 
+  <script src="sticky-layout.js"></script>
   <script src="dashboard.js"></script>
 </body>
 </html>

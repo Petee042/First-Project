@@ -6,7 +6,22 @@
   <title>Edit Reservation</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
+<body class="logged-page">
+  <div class="sticky-page-chrome">
+    <div class="sticky-page-inner">
+      <header class="top-bar">
+        <div class="header-left">
+          <button id="backToResourceBtn" class="btn secondary">Back</button>
+          <a class="top-brand-link" href="/dashboard.html" aria-label="AutomaticPeople home">
+            <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
+          </a>
+        </div>
+      </header>
+
+      <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
+    </div>
+  </div>
+
   <main class="dashboard">
     <div class="card-container wide">
       <h2>Edit Reservation</h2>
@@ -70,12 +85,12 @@
       </section>
 
       <div class="feed-actions">
-        <button type="button" id="backToResourceBtn" class="btn secondary">Back to Shared Resource</button>
         <button type="button" id="saveReservationBtn" class="btn primary">Save Reservation</button>
       </div>
     </div>
   </main>
 
+  <script src="sticky-layout.js"></script>
   <script src="shared-resource-reservation-edit.js"></script>
 </body>
 </html>
