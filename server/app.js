@@ -6555,12 +6555,16 @@ app.use('/api', async (req, res, next) => {
     return next();
   }
 
+  const pathValue = String(req.path || '');
+  if (pathValue.startsWith('/admin/')) {
+    return next();
+  }
+
   const method = String(req.method || 'GET').toUpperCase();
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
     return next();
   }
 
-  const pathValue = String(req.path || '');
   if (pathValue === '/logout' || pathValue === '/account/validation-email/resend') {
     return next();
   }
@@ -6788,6 +6792,13 @@ app.post('/api/login', async (req, res) => {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) {
       return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    if (user.is_validated === false) {
+      return res.status(403).json({
+        code: 'ACCOUNT_NOT_VALIDATED',
+        error: 'Your account is not validated yet. Please click the validation link sent to your email before logging in.'
+      });
     }
 
     // Regenerate session on login to prevent session fixation
