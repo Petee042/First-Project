@@ -20,6 +20,7 @@ const SESSION_SECRET = String(process.env.SESSION_SECRET || '').trim();
 const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || '').trim();
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '').trim();
 const ADMIN_AUTH_CONFIGURED = Boolean(ADMIN_USERNAME && ADMIN_PASSWORD);
+const ENABLE_INVITE_AUTO_VALIDATION = String(process.env.ENABLE_INVITE_AUTO_VALIDATION || '').trim().toLowerCase() === 'true';
 const KAYAK_API_BASE_URL = process.env.KAYAK_API_BASE_URL || 'https://sandbox-en-us.kayakaffiliates.com';
 const KAYAK_API_KEY = process.env.KAYAK_API_KEY || '';
 const STAY_API_KEY = process.env.STAY_API_KEY || '';
@@ -5420,6 +5421,13 @@ app.post('/api/login', loginRateLimiter, async (req, res) => {
     let authenticatedUser = user;
 
     if (authenticatedUser.is_validated === false) {
+      if (!ENABLE_INVITE_AUTO_VALIDATION) {
+        return res.status(403).json({
+          code: 'ACCOUNT_NOT_VALIDATED',
+          error: 'Your account is not validated yet. Please click the validation link sent to your email before logging in.'
+        });
+      }
+
       const isInvitedClientUser = await hasPendingClientInviteForUser(authenticatedUser.id);
       if (!isInvitedClientUser) {
         return res.status(403).json({
@@ -8288,6 +8296,9 @@ async function startServer() {
       console.log('User storage: Postgres');
       if (!ADMIN_AUTH_CONFIGURED) {
         console.warn('Admin authentication is disabled because ADMIN_USERNAME/ADMIN_PASSWORD are not set.');
+      }
+      if (!ENABLE_INVITE_AUTO_VALIDATION) {
+        console.log('Invite auto-validation is disabled. Unvalidated users cannot log in until they validate by email.');
       }
     });
 
