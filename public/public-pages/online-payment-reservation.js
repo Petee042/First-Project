@@ -272,12 +272,18 @@ document.getElementById('submitReservationBtn').addEventListener('click', async 
 
     setReservationMessage('Confirming payment...', false);
     const status = await confirmPreparedPayment();
+    
+    // Redirect to confirmation page after successful payment
     const reference = preparedPayment.reservationIdentifier || '';
+    if (reference) {
+      window.location.href = 'online-payment-confirmation.html?reference=' + encodeURIComponent(reference);
+      return;
+    }
+    
+    // Fallback if reference is missing (shouldn't happen)
     const statusSuffix = status ? (' Status: ' + status + '.') : '';
     setReservationMessage(
-      reference
-        ? ('Payment submitted. Reservation reference: ' + reference + '.' + statusSuffix)
-        : ('Payment submitted.' + statusSuffix),
+      'Payment submitted.' + statusSuffix,
       false
     );
     setSubmitButtonState('Payment Submitted', true);

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reservation Confirmation</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="dashboard">
+    <div class="card-container wide public-booking-card">
+      <h2>Reservation Confirmed</h2>
+      <p id="confirmationMessage" class="message success"></p>
+
+      <section class="listing-form-section">
+        <h3>Reservation Details</h3>
+        <dl class="public-reservation-details">
+          <dt>Reference Number</dt>
+          <dd id="reservationReference">-</dd>
+          <dt>Reservation starts</dt>
+          <dd id="reservationStart">-</dd>
+          <dt>Reservation ends</dt>
+          <dd id="reservationEnd">-</dd>
+          <dt>Duration</dt>
+          <dd id="reservationDuration">-</dd>
+          <dt>Reservation price</dt>
+          <dd id="reservationPrice">-</dd>
+          <dt>Payment status</dt>
+          <dd id="paymentStatus">-</dd>
+        </dl>
+      </section>
+
+      <section class="listing-form-section">
+        <h3>Guest Details</h3>
+        <dl class="public-reservation-details">
+          <dt>Name</dt>
+          <dd id="guestName">-</dd>
+          <dt>Email address</dt>
+          <dd id="guestEmail">-</dd>
+          <dt>Telephone</dt>
+          <dd id="guestPhone">-</dd>
+          <dt id="vehicleLabel" class="hidden">Vehicle Registration</dt>
+          <dd id="guestVehicle" class="hidden">-</dd>
+        </dl>
+      </section>
+
+      <section class="listing-form-section">
+        <h3>Next Steps</h3>
+        <p>A confirmation email has been sent to your email address with all reservation details. Please keep this reference number for your records.</p>
+      </section>
+
+      <div class="feed-actions">
+        <button type="button" id="backHomeBtn" class="btn primary">Back to Home</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="online-payment-confirmation.js"></script>
+</body>
+</html>

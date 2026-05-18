@@ -2352,6 +2352,37 @@ async function getSharedResourceReservationByPaymentIntentId(paymentIntentId) {
   return result.rows[0] || null;
 }
 
+async function getSharedResourceReservationByIdentifier(reservationIdentifier) {
+  const id = String(reservationIdentifier || '').trim();
+  if (!id) {
+    return null;
+  }
+
+  if (!usePostgres) {
+    const store = readListingsStore();
+    return (store.shared_resource_reservations || []).find((row) => String(row.reservation_identifier || '') === id) || null;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id, user_id, shared_resource_id, reservation_identifier, listing_id,
+             reservation_checkin_date::text AS reservation_checkin_date,
+             reservation_checkout_date::text AS reservation_checkout_date,
+             requested_start_at, requested_end_at, spaces_required,
+             first_name, family_name, email_address, telephone, vehicle_registration, reservation_amount,
+             payment_provider, payment_intent_id, payment_status, payment_currency,
+             payment_amount_minor, application_fee_minor, payment_last_error, paid_at,
+             status, created_at, updated_at
+      FROM shared_resource_reservations
+      WHERE reservation_identifier = $1
+      LIMIT 1
+    `,
+    [id]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function updateSharedResourceReservationStatusForUser(reservationId, resourceId, userId, status) {
   const nextStatus = normaliseSharedResourceReservationStatus(status);
   if (!nextStatus) {
@@ -5586,6 +5617,25 @@ app.post('/api/public/shared-resources/:resourceId/online-payment/prepare', asyn
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to prepare online payment.' });
+  }
+});
+
+// GET /api/public/reservations/by-identifier/:identifier — fetch a reservation by its identifier
+app.get('/api/public/reservations/by-identifier/:identifier', async (req, res) => {
+  const identifier = String(req.params.identifier || '').trim();
+  if (!identifier) {
+    return res.status(400).json({ error: 'Reservation identifier is required.' });
+  }
+
+  try {
+    const reservation = await getSharedResourceReservationByIdentifier(identifier);
+    if (!reservation) {
+      return res.status(404).json({ error: 'Reservation not found.' });
+    }
+    return res.json({ reservation });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load reservation.' });
   }
 });
 
