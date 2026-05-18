@@ -2469,6 +2469,8 @@ async function hasPendingClientInviteForUser(userId) {
       WHERE user_id = $1
         AND role IN ('Manager', 'Staff')
         AND status = 'invited'
+        AND invited_by_user_id IS NOT NULL
+        AND invited_by_user_id <> user_id
       ORDER BY id ASC
       LIMIT 1
     `,
