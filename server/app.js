@@ -1019,6 +1019,7 @@ async function initializeUserStore() {
              c.cleaner_user_id,
              c.first_name,
              c.last_name,
+             c.telephone,
              LOWER(TRIM(c.email)) AS email
       FROM cleaners c
       WHERE NULLIF(TRIM(c.email), '') IS NOT NULL
@@ -1053,6 +1054,26 @@ async function initializeUserStore() {
     }
 
     if (linkedUserId) {
+      await pool.query(
+        `
+          UPDATE users
+          SET first_name = CASE
+                WHEN NULLIF(TRIM(COALESCE(first_name, '')), '') IS NULL THEN $1
+                ELSE first_name
+              END,
+              family_name = CASE
+                WHEN NULLIF(TRIM(COALESCE(family_name, '')), '') IS NULL THEN $2
+                ELSE family_name
+              END,
+              telephone = CASE
+                WHEN NULLIF(TRIM(COALESCE(telephone, '')), '') IS NULL THEN $3
+                ELSE telephone
+              END
+          WHERE id = $4
+        `,
+        [String(cleaner.first_name || '').trim(), String(cleaner.last_name || '').trim(), String(cleaner.telephone || '').trim(), linkedUserId]
+      );
+
       // Requested default staff password for currently configured cleaner-linked users.
       await pool.query(
         'UPDATE users SET password_hash = $1 WHERE id = $2',
@@ -2380,6 +2401,39 @@ async function setClientTeamRolesForUser(clientAccountId, invitedByUserId, targe
     },
     memberships: membershipsResult.rows
   };
+}
+
+async function updateUserInviteProfileIfMissing(userId, input) {
+  if (!usePostgres) {
+    return;
+  }
+
+  const firstName = String(input.firstName || '').trim();
+  const familyName = String(input.familyName || '').trim();
+  const telephone = normaliseTelephone(input.telephone) || '';
+  if (!firstName && !familyName && !telephone) {
+    return;
+  }
+
+  await pool.query(
+    `
+      UPDATE users
+      SET first_name = CASE
+            WHEN NULLIF(TRIM(COALESCE(first_name, '')), '') IS NULL AND $2 <> '' THEN $2
+            ELSE first_name
+          END,
+          family_name = CASE
+            WHEN NULLIF(TRIM(COALESCE(family_name, '')), '') IS NULL AND $3 <> '' THEN $3
+            ELSE family_name
+          END,
+          telephone = CASE
+            WHEN NULLIF(TRIM(COALESCE(telephone, '')), '') IS NULL AND $4 <> '' THEN $4
+            ELSE telephone
+          END
+      WHERE id = $1
+    `,
+    [Number(userId), firstName, familyName, telephone]
+  );
 }
 
 async function addClientMembershipByEmail(clientAccountId, invitedByUserId, email, role) {
@@ -6447,6 +6501,12 @@ app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
         return res.status(400).json({ error: created.error });
       }
       siteUser = created.user;
+    } else {
+      await updateUserInviteProfileIfMissing(siteUser.id, {
+        firstName,
+        familyName,
+        telephone
+      });
     }
 
     const result = await setClientTeamRolesForUser(

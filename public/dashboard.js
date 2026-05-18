@@ -250,7 +250,7 @@ function renderTeamMembers(team) {
 
     const nameCell = document.createElement('td');
     const fullName = [member.first_name, member.family_name].filter(Boolean).join(' ').trim();
-    nameCell.textContent = fullName || member.username || member.email || 'Unknown';
+    nameCell.textContent = fullName || 'Name not set';
 
     const emailCell = document.createElement('td');
     emailCell.textContent = member.email || '';
