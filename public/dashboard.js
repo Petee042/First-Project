@@ -148,32 +148,13 @@ function renderAccessContext(context) {
   currentAccessContext = context || null;
 
   const summary = document.getElementById('accessContextSummary');
-  const select = document.getElementById('activeClientContextSelect');
-  if (!summary || !select) {
+  if (!summary) {
     return;
   }
 
   const memberships = (context && Array.isArray(context.memberships)) ? context.memberships : [];
   const activeClientAccountId = context ? Number(context.activeClientAccountId) : null;
   const activeRole = context ? String(context.activeRole || '') : '';
-
-  select.innerHTML = '';
-  memberships.forEach((membership) => {
-    const option = document.createElement('option');
-    option.value = String(membership.client_account_id);
-    option.textContent = (membership.account_name || ('Client #' + membership.client_account_id)) + ' (' + membership.role + ')';
-    if (Number(membership.client_account_id) === activeClientAccountId) {
-      option.selected = true;
-    }
-    select.appendChild(option);
-  });
-
-  if (!memberships.length) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = 'No memberships found';
-    select.appendChild(option);
-  }
 
   const activeMembership = memberships.find((membership) => Number(membership.client_account_id) === activeClientAccountId) || null;
   if (!activeMembership) {
@@ -523,23 +504,6 @@ async function fetchAccessContext() {
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.error || 'Failed to load access context.');
-  }
-  renderAccessContext(data);
-}
-
-async function switchAccessContext(clientAccountId) {
-  const response = await fetch('/api/access/context/switch', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientAccountId })
-  });
-  if (response.status === 401) {
-    window.location.href = '/';
-    return;
-  }
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || 'Failed to switch context.');
   }
   renderAccessContext(data);
 }
@@ -1928,29 +1892,6 @@ document.getElementById('addSharedResourceForm').addEventListener('submit', asyn
     window.location.href = '/shared-resource.html?id=' + encodeURIComponent(data.resource.id);
   } catch {
     setMessage('Network error creating shared resource.', true);
-  } finally {
-    button.disabled = false;
-  }
-});
-
-document.getElementById('switchClientContextBtn').addEventListener('click', async () => {
-  const button = document.getElementById('switchClientContextBtn');
-  const select = document.getElementById('activeClientContextSelect');
-  const clientAccountId = Number(select.value);
-
-  if (!Number.isInteger(clientAccountId) || clientAccountId <= 0) {
-    setMessage('Please select a valid client context.', true);
-    return;
-  }
-
-  button.disabled = true;
-  setMessage('Switching client context...', false);
-  try {
-    await switchAccessContext(clientAccountId);
-    await loadDashboardData();
-    setMessage('Client context switched.', false);
-  } catch (err) {
-    setMessage(err.message || 'Failed to switch client context.', true);
   } finally {
     button.disabled = false;
   }

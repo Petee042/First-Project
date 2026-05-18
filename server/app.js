@@ -2195,16 +2195,7 @@ function chooseAccessContextForUser(memberships, requestedClientAccountId) {
     return null;
   }
 
-  const requested = Number(requestedClientAccountId);
-  if (Number.isInteger(requested) && requested > 0) {
-    const exact = list
-      .filter((entry) => Number(entry.client_account_id) === requested)
-      .sort((a, b) => (ACCESS_ROLE_PRIORITY[b.role] || 0) - (ACCESS_ROLE_PRIORITY[a.role] || 0))[0];
-    if (exact) {
-      return exact;
-    }
-  }
-
+  // Access context is automatic by hierarchy only (Client > Manager > Staff > Guest).
   const sorted = list.slice().sort((a, b) => {
     const roleDelta = (ACCESS_ROLE_PRIORITY[b.role] || 0) - (ACCESS_ROLE_PRIORITY[a.role] || 0);
     if (roleDelta !== 0) return roleDelta;
@@ -6485,30 +6476,9 @@ app.get('/api/access/context', requireAuth, async (req, res) => {
   }
 });
 
-// POST /api/access/context/switch — switch active client context for current user
+// POST /api/access/context/switch — manual switching removed (automatic hierarchy applies)
 app.post('/api/access/context/switch', requireAuth, async (req, res) => {
-  const nextClientAccountId = Number(req.body.clientAccountId);
-  if (!Number.isInteger(nextClientAccountId) || nextClientAccountId <= 0) {
-    return res.status(400).json({ error: 'A valid client account id is required.' });
-  }
-
-  try {
-    const context = await getOrCreateAccessContextForUser(req.session.userId, nextClientAccountId);
-    const active = context.active || null;
-    if (!active || Number(active.client_account_id) !== nextClientAccountId) {
-      return res.status(403).json({ error: 'You do not have access to this client account.' });
-    }
-
-    req.session.activeClientAccountId = Number(active.client_account_id);
-    return res.json({
-      activeClientAccountId: Number(active.client_account_id),
-      activeRole: String(active.role || ''),
-      memberships: context.memberships || []
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Failed to switch access context.' });
-  }
+  return res.status(410).json({ error: 'Manual access context switching is disabled. Access is selected automatically by role hierarchy.' });
 });
 
 // GET /api/access/team — list team memberships for the active client account
