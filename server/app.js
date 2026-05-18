@@ -31,6 +31,9 @@ const usersFile = path.join(__dirname, 'users.json');
 const listingsFile = path.join(__dirname, 'listings.json');
 const DATA_RESET_MARKER_FILE = path.join(__dirname, '.minimal-profile-reset-v1');
 const DATA_RESET_FLAG_KEY = 'minimal-profile-reset-v1';
+const APP_BASE_URL = String(process.env.APP_BASE_URL || '').trim();
+const ACCOUNT_VALIDATION_TOKEN_VERSION = 'v1';
+const ACCOUNT_VALIDATION_TOKEN_TTL_MS = Number(process.env.ACCOUNT_VALIDATION_TOKEN_TTL_MS || (1000 * 60 * 60 * 24 * 7));
 const usePostgres = Boolean(process.env.DATABASE_URL);
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const stripeClient = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
@@ -1329,6 +1332,7 @@ async function createUser(username, email, passwordHash, profile = {}) {
   const firstName = String(profile.firstName || '').trim();
   const familyName = String(profile.familyName || '').trim();
   const countryOfResidence = normaliseCountryOfResidence(profile.country) || '';
+  const isValidated = profile.isValidated === true;
 
   if (!usePostgres) {
     const users = readUsersFromFile();
@@ -1342,6 +1346,7 @@ async function createUser(username, email, passwordHash, profile = {}) {
       first_name: firstName,
       family_name: familyName,
       country_of_residence: countryOfResidence,
+      is_validated: isValidated,
       stripe_account_id: null,
       stripe_onboarding_complete: false,
       stripe_charges_enabled: false,
@@ -1358,15 +1363,15 @@ async function createUser(username, email, passwordHash, profile = {}) {
 
   const result = await pool.query(
     `
-      INSERT INTO users (username, email, password_hash, first_name, family_name, country_of_residence)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO users (username, email, password_hash, first_name, family_name, country_of_residence, is_validated)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING id, username, email, password_hash,
-                first_name, family_name, country_of_residence,
+                first_name, family_name, country_of_residence, is_validated,
                 stripe_account_id, stripe_onboarding_complete,
                 stripe_charges_enabled, stripe_payouts_enabled,
                 created_at
     `,
-    [username, email, passwordHash, firstName, familyName, countryOfResidence]
+    [username, email, passwordHash, firstName, familyName, countryOfResidence, isValidated]
   );
 
   await ensureDefaultPropertyForUser(result.rows[0].id);
@@ -1821,6 +1826,227 @@ function getPostmarkErrorMessage(errorPayload, statusCode) {
     text += ' [Postmark code ' + code + ']';
   }
   return text;
+}
+
+function getPreferredAppBaseUrl(req) {
+  const requestBase = getRequestBaseUrl(req);
+  if (requestBase) {
+    return requestBase;
+  }
+  return APP_BASE_URL || null;
+}
+
+function buildAccountValidationSignature(userId, email, issuedAtMs) {
+  const payload = [
+    'account-validation',
+    ACCOUNT_VALIDATION_TOKEN_VERSION,
+    String(userId),
+    String(email || '').trim().toLowerCase(),
+    String(issuedAtMs)
+  ].join(':');
+  return createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+}
+
+function buildAccountValidationToken(user, issuedAtMs) {
+  const userId = Number(user && user.id);
+  const email = String(user && user.email || '').trim().toLowerCase();
+  const issued = Number(issuedAtMs || Date.now());
+  if (!Number.isInteger(userId) || userId <= 0 || !email || !Number.isFinite(issued) || issued <= 0) {
+    return null;
+  }
+  const signature = buildAccountValidationSignature(userId, email, issued);
+  return [ACCOUNT_VALIDATION_TOKEN_VERSION, String(userId), String(issued), signature].join('.');
+}
+
+function parseAccountValidationToken(token) {
+  const raw = String(token || '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  const parts = raw.split('.');
+  if (parts.length !== 4) {
+    return null;
+  }
+
+  const version = String(parts[0] || '').trim();
+  const userId = Number(parts[1]);
+  const issuedAtMs = Number(parts[2]);
+  const signature = String(parts[3] || '').trim();
+  if (version !== ACCOUNT_VALIDATION_TOKEN_VERSION) {
+    return null;
+  }
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return null;
+  }
+  if (!Number.isFinite(issuedAtMs) || issuedAtMs <= 0) {
+    return null;
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(signature)) {
+    return null;
+  }
+
+  return { userId, issuedAtMs, signature, raw };
+}
+
+async function validateAccountValidationToken(token) {
+  const parsed = parseAccountValidationToken(token);
+  if (!parsed) {
+    return { error: 'Validation link is invalid.' };
+  }
+
+  const now = Date.now();
+  if ((now - parsed.issuedAtMs) > ACCOUNT_VALIDATION_TOKEN_TTL_MS) {
+    return { error: 'Validation link has expired. Request a new validation email.' };
+  }
+
+  const user = await getUserById(parsed.userId);
+  if (!user || !user.email) {
+    return { error: 'Validation link is invalid.' };
+  }
+
+  const expectedToken = buildAccountValidationToken(user, parsed.issuedAtMs);
+  if (!expectedToken) {
+    return { error: 'Validation link is invalid.' };
+  }
+
+  const expectedBuffer = Buffer.from(expectedToken);
+  const providedBuffer = Buffer.from(parsed.raw);
+  if (expectedBuffer.length !== providedBuffer.length || !timingSafeEqual(expectedBuffer, providedBuffer)) {
+    return { error: 'Validation link is invalid.' };
+  }
+
+  return { user };
+}
+
+async function markUserValidated(userId) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return null;
+  }
+
+  if (!usePostgres) {
+    const users = readUsersFromFile();
+    const index = users.findIndex((user) => Number(user.id) === id);
+    if (index < 0) {
+      return null;
+    }
+    users[index].is_validated = true;
+    writeUsersToFile(users);
+    return users[index];
+  }
+
+  await pool.query(
+    `
+      UPDATE users
+      SET is_validated = TRUE
+      WHERE id = $1
+    `,
+    [id]
+  );
+
+  await pool.query(
+    `
+      UPDATE client_memberships
+      SET status = 'active',
+          updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = $1
+        AND status = 'invited'
+        AND role IN ('Manager', 'Staff')
+    `,
+    [id]
+  );
+
+  return getUserById(id);
+}
+
+async function sendAppEmail(input) {
+  const to = normaliseOptionalEmail(input && input.to);
+  const subject = String(input && input.subject || '').trim();
+  const textBody = String(input && input.textBody || '').trim();
+  if (!to || !subject || !textBody) {
+    return { ok: false, error: 'Email payload is incomplete.' };
+  }
+
+  if (POSTMARK_SERVER_TOKEN && POSTMARK_FROM) {
+    try {
+      const postmarkRes = await fetch('https://api.postmarkapp.com/email', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'X-Postmark-Server-Token': POSTMARK_SERVER_TOKEN
+        },
+        body: JSON.stringify({
+          From: POSTMARK_FROM,
+          To: to,
+          Subject: subject,
+          TextBody: textBody,
+          MessageStream: POSTMARK_MESSAGE_STREAM
+        })
+      });
+
+      const result = await postmarkRes.json().catch(() => ({}));
+      if (!postmarkRes.ok) {
+        return { ok: false, error: getPostmarkErrorMessage(result, postmarkRes.status) };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: 'Failed to send email via Postmark.' };
+    }
+  }
+
+  const transportResult = getScheduleEmailTransporter();
+  if (transportResult.error) {
+    return { ok: false, error: 'Email delivery is not configured on the server.' };
+  }
+
+  try {
+    await transportResult.transporter.sendMail({
+      from: transportResult.from,
+      to,
+      subject,
+      text: textBody
+    });
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Failed to send email.' };
+  }
+}
+
+async function sendSiteUserValidationEmail(req, user) {
+  if (!user || !user.email) {
+    return { ok: false, error: 'Cannot send validation email without a user email.' };
+  }
+
+  const baseUrl = getPreferredAppBaseUrl(req);
+  if (!baseUrl) {
+    return { ok: false, error: 'Cannot build validation URL because APP_BASE_URL is not configured.' };
+  }
+
+  const token = buildAccountValidationToken(user);
+  if (!token) {
+    return { ok: false, error: 'Could not generate validation token.' };
+  }
+
+  const validationUrl = baseUrl + '/validate-account.html?token=' + encodeURIComponent(token);
+  const subject = 'Validate your site user account';
+  const textBody = [
+    'Welcome to Automatic People.',
+    '',
+    'Please validate your account by clicking this link:',
+    validationUrl,
+    '',
+    'After validation, return to the login page and sign in.',
+    '',
+    'If you did not expect this email, you can ignore it.'
+  ].join('\n');
+
+  return sendAppEmail({
+    to: user.email,
+    subject,
+    textBody
+  });
 }
 
 async function getCleanersForUser(userId) {
@@ -2577,7 +2803,7 @@ async function setClientTeamRolesForUser(clientAccountId, invitedByUserId, targe
       email: user.email,
       first_name: user.first_name || '',
       family_name: user.family_name || '',
-      telephone: user.telephone || '',
+      country_of_residence: user.country_of_residence || '',
       is_validated: user.is_validated !== false
     },
     memberships: membershipsResult.rows
@@ -6157,6 +6383,14 @@ function requireAuth(req, res, next) {
   res.status(401).json({ error: 'Unauthorised' });
 }
 
+async function getValidatedSessionUser(req) {
+  if (!(req.session && req.session.userId)) {
+    return null;
+  }
+  const user = await getUserById(req.session.userId);
+  return user || null;
+}
+
 function requireAdminAuth(req, res, next) {
   if (req.session && req.session.isAdmin === true) {
     return next();
@@ -6313,6 +6547,45 @@ function requireScopedRole(minimumRole) {
   };
 }
 
+app.use('/api', async (req, res, next) => {
+  if (!(req.session && req.session.userId)) {
+    return next();
+  }
+  if (req.session.isAdmin === true) {
+    return next();
+  }
+
+  const method = String(req.method || 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    return next();
+  }
+
+  const pathValue = String(req.path || '');
+  if (pathValue === '/logout' || pathValue === '/account/validation-email/resend') {
+    return next();
+  }
+  if (pathValue.startsWith('/public/')) {
+    return next();
+  }
+
+  try {
+    const user = await getValidatedSessionUser(req);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorised' });
+    }
+    if (user.is_validated === false) {
+      return res.status(403).json({
+        code: 'ACCOUNT_NOT_VALIDATED',
+        error: 'Your account must be validated by email before you can change configuration.'
+      });
+    }
+    return next();
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to validate user status.' });
+  }
+});
+
 function hasManagerAssignmentScope(req) {
   return Boolean(
     req
@@ -6459,7 +6732,8 @@ app.post('/api/signup', async (req, res) => {
     const createdUser = await createUser(normalisedUsername, normalisedEmail, passwordHash, {
       firstName,
       familyName,
-      country: normalisedCountry
+      country: normalisedCountry,
+      isValidated: false
     });
 
     // New client signups are also initialized as Manager + Staff in their own client account.
@@ -6477,7 +6751,18 @@ app.post('/api/signup', async (req, res) => {
       }
     }
 
-    return res.status(201).json({ message: 'Account created. You can now log in.' });
+    const validationEmailResult = await sendSiteUserValidationEmail(req, createdUser);
+    if (!validationEmailResult.ok) {
+      return res.status(201).json({
+        message: 'Account created, but validation email could not be sent automatically. Please contact support to validate your account.',
+        validationEmailSent: false
+      });
+    }
+
+    return res.status(201).json({
+      message: 'Account created. Please check your email and click the validation link before logging in.',
+      validationEmailSent: true
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Server error. Please try again.' });
@@ -6881,6 +7166,8 @@ app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
       });
     }
 
+    let shouldSendValidationEmail = false;
+
     if (!siteUser) {
       const created = await createUnvalidatedSiteUserForInvite({
         firstName,
@@ -6893,12 +7180,16 @@ app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
         return res.status(400).json({ error: created.error });
       }
       siteUser = created.user;
+      shouldSendValidationEmail = true;
     } else {
       await updateUserInviteProfileIfMissing(siteUser.id, {
         firstName,
         familyName,
         country
       });
+      if (siteUser.is_validated === false) {
+        shouldSendValidationEmail = true;
+      }
     }
 
     const result = await setClientTeamRolesForUser(
@@ -6910,11 +7201,18 @@ app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
     if (result.error) {
       return res.status(400).json({ error: result.error });
     }
+    let validationEmailSent = false;
+    if (shouldSendValidationEmail) {
+      const emailResult = await sendSiteUserValidationEmail(req, siteUser);
+      validationEmailSent = emailResult.ok;
+    }
+
     return res.status(201).json({
       invited: true,
       existingUser: Boolean(confirmExisting),
       user: result.user,
-      memberships: result.memberships
+      memberships: result.memberships,
+      validationEmailSent
     });
   } catch (err) {
     console.error(err);
@@ -7062,6 +7360,7 @@ app.get('/api/me', requireAuth, async (req, res) => {
     return res.json({
       username: user.username || req.session.username,
       email: user.email || req.session.email,
+      isValidated: user.is_validated !== false,
       consolidated_ics_token: buildConsolidatedIcsToken(req.session.userId),
       stripeConnect: formatStripeConnectStatus(user),
       accessContext: {
@@ -7073,6 +7372,67 @@ app.get('/api/me', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load current user profile.' });
+  }
+});
+
+// GET /api/account/validate — mark account as validated via signed email link token
+app.get('/api/account/validate', async (req, res) => {
+  const token = String(req.query && req.query.token || '').trim();
+  if (!token) {
+    return res.status(400).json({ error: 'Validation token is required.' });
+  }
+
+  try {
+    const validatedToken = await validateAccountValidationToken(token);
+    if (validatedToken.error) {
+      return res.status(400).json({ error: validatedToken.error });
+    }
+
+    const user = validatedToken.user;
+    if (!user) {
+      return res.status(400).json({ error: 'Validation link is invalid.' });
+    }
+
+    if (user.is_validated === true) {
+      return res.json({
+        validated: true,
+        alreadyValidated: true,
+        message: 'Your account is already validated. You can now log in.'
+      });
+    }
+
+    await markUserValidated(user.id);
+    return res.json({
+      validated: true,
+      alreadyValidated: false,
+      message: 'Your account is now validated. You can now log in.'
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to validate account.' });
+  }
+});
+
+// POST /api/account/validation-email/resend — resend validation link for logged-in unvalidated user
+app.post('/api/account/validation-email/resend', requireAuth, async (req, res) => {
+  try {
+    const user = await getUserById(req.session.userId);
+    if (!user) {
+      return res.status(401).json({ error: 'Unauthorised' });
+    }
+    if (user.is_validated === true) {
+      return res.json({ message: 'Your account is already validated.' });
+    }
+
+    const sendResult = await sendSiteUserValidationEmail(req, user);
+    if (!sendResult.ok) {
+      return res.status(503).json({ error: sendResult.error || 'Failed to resend validation email.' });
+    }
+
+    return res.json({ message: 'Validation email sent. Please check your inbox.' });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to resend validation email.' });
   }
 });
 
