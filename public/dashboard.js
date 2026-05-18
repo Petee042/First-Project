@@ -150,24 +150,22 @@ function renderAccessContext(context) {
   currentAccessContext = context || null;
 
   const summary = document.getElementById('accessContextSummary');
-  if (!summary) {
-    return;
-  }
-
   const memberships = (context && Array.isArray(context.memberships)) ? context.memberships : [];
   const activeClientAccountId = context ? Number(context.activeClientAccountId) : null;
   const activeRole = context ? String(context.activeRole || '') : '';
 
-  const activeMembership = memberships.find((membership) => Number(membership.client_account_id) === activeClientAccountId) || null;
-  if (!activeMembership) {
-    summary.textContent = 'No active client access context.';
-  } else {
-    let nextText = 'Active: ' + (activeMembership.account_name || ('Client #' + activeClientAccountId)) + ' as ' + (activeRole || activeMembership.role);
-    const scopeState = getCurrentManagerScopeState();
-    if (activeRole === 'Manager' && scopeState.hasAssignments) {
-      nextText += ' | Assignment scope active (' + scopeState.propertyIdSet.size + ' properties, ' + scopeState.listingIdSet.size + ' listings).';
+  if (summary) {
+    const activeMembership = memberships.find((membership) => Number(membership.client_account_id) === activeClientAccountId) || null;
+    if (!activeMembership) {
+      summary.textContent = 'No active client access context.';
+    } else {
+      let nextText = 'Active: ' + (activeMembership.account_name || ('Client #' + activeClientAccountId)) + ' as ' + (activeRole || activeMembership.role);
+      const scopeState = getCurrentManagerScopeState();
+      if (activeRole === 'Manager' && scopeState.hasAssignments) {
+        nextText += ' | Assignment scope active (' + scopeState.propertyIdSet.size + ' properties, ' + scopeState.listingIdSet.size + ' listings).';
+      }
+      summary.textContent = nextText;
     }
-    summary.textContent = nextText;
   }
 
   applyAccessRoleVisibility();
@@ -264,7 +262,9 @@ function renderTeamMembers(team) {
       const actionBtn = document.createElement('button');
       actionBtn.type = 'button';
       actionBtn.className = 'btn secondary';
-      actionBtn.textContent = 'View/Update/Delete';
+      actionBtn.textContent = '✎';
+      actionBtn.title = 'View/Update/Delete';
+      actionBtn.setAttribute('aria-label', 'View/Update/Delete');
       actionBtn.addEventListener('click', () => {
         openTeamMemberEditor(member);
       });
@@ -833,7 +833,9 @@ function renderListings(listings) {
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
     openBtn.className = 'btn secondary';
-    openBtn.textContent = 'View / Edit';
+    openBtn.textContent = '✎';
+    openBtn.title = 'View/Edit';
+    openBtn.setAttribute('aria-label', 'View/Edit');
     openBtn.addEventListener('click', () => {
       window.location.href = '/listing.html?id=' + encodeURIComponent(listing.id);
     });
@@ -882,7 +884,9 @@ function renderProperties(properties) {
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
       openBtn.className = 'btn secondary';
-      openBtn.textContent = 'View / Edit';
+      openBtn.textContent = '✎';
+      openBtn.title = 'View/Edit';
+      openBtn.setAttribute('aria-label', 'View/Edit');
       openBtn.addEventListener('click', () => {
         window.location.href = '/property.html?id=' + encodeURIComponent(property.id);
       });
@@ -968,7 +972,9 @@ function renderCleaners(cleaners) {
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
     editBtn.className = 'btn secondary';
-    editBtn.textContent = 'View Details/Edit';
+    editBtn.textContent = '✎';
+    editBtn.title = 'View Details/Edit';
+    editBtn.setAttribute('aria-label', 'View Details/Edit');
     editBtn.addEventListener('click', () => {
       startCleanerEdit(cleaner.id);
     });
@@ -1036,7 +1042,9 @@ function renderSharedResources(resources) {
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
     editBtn.className = 'btn secondary';
-    editBtn.textContent = 'View / Edit';
+    editBtn.textContent = '✎';
+    editBtn.title = 'View/Edit';
+    editBtn.setAttribute('aria-label', 'View/Edit');
     editBtn.addEventListener('click', () => {
       window.location.href = '/shared-resource.html?id=' + encodeURIComponent(resource.id);
     });
@@ -2530,7 +2538,9 @@ async function loadAllReservations() {
       const editLink = document.createElement('a');
       editLink.href = '/shared-resource.html?id=' + encodeURIComponent(row.shared_resource_id);
       editLink.className = 'btn secondary';
-      editLink.textContent = 'View Resource';
+      editLink.textContent = '✎';
+      editLink.title = 'View Resource';
+      editLink.setAttribute('aria-label', 'View Resource');
       actionCell.appendChild(editLink);
 
       tr.appendChild(resourceCell);

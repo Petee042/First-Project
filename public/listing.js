@@ -942,7 +942,9 @@ function renderFeeds(feeds) {
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
     editBtn.className = 'btn secondary';
-    editBtn.textContent = 'Edit';
+    editBtn.textContent = '✎';
+    editBtn.title = 'Edit';
+    editBtn.setAttribute('aria-label', 'Edit');
     editBtn.addEventListener('click', () => {
       document.getElementById('feedId').value = String(feed.id);
       document.getElementById('feedLabel').value = feed.label;
