@@ -19,6 +19,7 @@ const SALT_ROUNDS = 12;
 const SESSION_SECRET = String(process.env.SESSION_SECRET || '').trim();
 const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || '').trim();
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '').trim();
+const ADMIN_AUTH_CONFIGURED = Boolean(ADMIN_USERNAME && ADMIN_PASSWORD);
 const KAYAK_API_BASE_URL = process.env.KAYAK_API_BASE_URL || 'https://sandbox-en-us.kayakaffiliates.com';
 const KAYAK_API_KEY = process.env.KAYAK_API_KEY || '';
 const STAY_API_KEY = process.env.STAY_API_KEY || '';
@@ -45,12 +46,6 @@ if (!DATABASE_URL) {
 if (!SESSION_SECRET || SESSION_SECRET === 'replace-this-secret-in-production' || SESSION_SECRET.length < 32) {
   throw new Error('SESSION_SECRET must be set to a strong value (minimum 32 characters).');
 }
-
-if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
-  throw new Error('ADMIN_USERNAME and ADMIN_PASSWORD must both be configured.');
-}
-
-
 
 const KAYAK_COMMON_QUERY_FIELDS = [
   { key: 'userTrackId', type: 'string', required: true, description: 'Unique user/session identifier.' },
@@ -4995,6 +4990,9 @@ async function getValidatedSessionUser(req) {
 }
 
 function requireAdminAuth(req, res, next) {
+  if (!ADMIN_AUTH_CONFIGURED) {
+    return res.status(503).json({ error: 'Admin authentication is not configured on the server.' });
+  }
   if (req.session && req.session.isAdmin === true) {
     return next();
   }
@@ -5454,6 +5452,10 @@ app.post('/api/login', loginRateLimiter, async (req, res) => {
 
 // POST /api/admin/login
 app.post('/api/admin/login', adminLoginRateLimiter, (req, res) => {
+  if (!ADMIN_AUTH_CONFIGURED) {
+    return res.status(503).json({ error: 'Admin authentication is not configured on the server.' });
+  }
+
   const username = String(req.body.username || '').trim();
   const password = String(req.body.password || '');
 
@@ -5478,6 +5480,10 @@ app.post('/api/admin/login', adminLoginRateLimiter, (req, res) => {
 
 // GET /api/admin/me
 app.get('/api/admin/me', (req, res) => {
+  if (!ADMIN_AUTH_CONFIGURED) {
+    return res.status(503).json({ error: 'Admin authentication is not configured on the server.' });
+  }
+
   if (req.session && req.session.isAdmin === true) {
     return res.json({ username: req.session.adminUsername || ADMIN_USERNAME });
   }
@@ -8280,6 +8286,9 @@ async function startServer() {
     app.listen(PORT, () => {
       console.log(`Server running at http://localhost:${PORT}`);
       console.log('User storage: Postgres');
+      if (!ADMIN_AUTH_CONFIGURED) {
+        console.warn('Admin authentication is disabled because ADMIN_USERNAME/ADMIN_PASSWORD are not set.');
+      }
     });
 
     // Run initial refresh 15 s after startup, then every 10 minutes
