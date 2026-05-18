@@ -207,31 +207,112 @@ function renderTeamMembers(team) {
     return;
   }
 
-  currentTeamMembers.forEach((member) => {
+  const groupedByUser = new Map();
+  currentTeamMembers
+    .filter((member) => member && (member.status === 'active' || member.status === 'invited'))
+    .forEach((member) => {
+      const userId = Number(member.user_id);
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return;
+      }
+      if (!groupedByUser.has(userId)) {
+        groupedByUser.set(userId, {
+          user_id: userId,
+          username: member.username || '',
+          first_name: member.first_name || '',
+          family_name: member.family_name || '',
+          email: member.email || '',
+          telephone: member.telephone || '',
+          is_validated: member.is_validated !== false,
+          statuses: new Set(),
+          roles: new Set()
+        });
+      }
+      const grouped = groupedByUser.get(userId);
+      grouped.statuses.add(String(member.status || ''));
+      if (member.role === 'Manager' || member.role === 'Staff') {
+        grouped.roles.add(member.role);
+      }
+    });
+
+  if (!groupedByUser.size) {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 5;
+    cell.textContent = 'No team members found.';
+    row.appendChild(cell);
+    tbody.appendChild(row);
+    return;
+  }
+
+  Array.from(groupedByUser.values()).forEach((member) => {
     const row = document.createElement('tr');
 
     const nameCell = document.createElement('td');
-    nameCell.textContent = member.username || 'Unknown';
+    const fullName = [member.first_name, member.family_name].filter(Boolean).join(' ').trim();
+    nameCell.textContent = fullName || member.username || member.email || 'Unknown';
 
     const emailCell = document.createElement('td');
     emailCell.textContent = member.email || '';
 
     const roleCell = document.createElement('td');
-    roleCell.textContent = member.role || '';
+    const rolesWrap = document.createElement('div');
+    rolesWrap.className = 'team-role-checkboxes';
+
+    const managerLabel = document.createElement('label');
+    managerLabel.className = 'team-role-option';
+    const managerBox = document.createElement('input');
+    managerBox.type = 'checkbox';
+    managerBox.checked = member.roles.has('Manager');
+    managerBox.disabled = !canManageTeam();
+    managerLabel.appendChild(managerBox);
+    managerLabel.appendChild(document.createTextNode(' Manager'));
+
+    const staffLabel = document.createElement('label');
+    staffLabel.className = 'team-role-option';
+    const staffBox = document.createElement('input');
+    staffBox.type = 'checkbox';
+    staffBox.checked = member.roles.has('Staff');
+    staffBox.disabled = !canManageTeam();
+    staffLabel.appendChild(staffBox);
+    staffLabel.appendChild(document.createTextNode(' Staff'));
+
+    rolesWrap.appendChild(managerLabel);
+    rolesWrap.appendChild(staffLabel);
+    roleCell.appendChild(rolesWrap);
 
     const statusCell = document.createElement('td');
-    statusCell.textContent = member.status || '';
+    if (member.is_validated === false) {
+      statusCell.textContent = 'unvalidated';
+    } else if (member.statuses.has('invited') && !member.statuses.has('active')) {
+      statusCell.textContent = 'invited';
+    } else {
+      statusCell.textContent = 'active';
+    }
 
     const actionCell = document.createElement('td');
-    if (canManageTeam() && (member.role === 'Manager' || member.role === 'Staff') && member.status === 'active') {
-      const revokeBtn = document.createElement('button');
-      revokeBtn.type = 'button';
-      revokeBtn.className = 'btn secondary';
-      revokeBtn.textContent = 'Revoke';
-      revokeBtn.addEventListener('click', () => {
-        revokeTeamMembership(member.id);
+    if (canManageTeam()) {
+      const updateBtn = document.createElement('button');
+      updateBtn.type = 'button';
+      updateBtn.className = 'btn secondary';
+      updateBtn.textContent = 'Update';
+      updateBtn.addEventListener('click', async () => {
+        updateBtn.disabled = true;
+        try {
+          const roles = [];
+          if (managerBox.checked) roles.push('Manager');
+          if (staffBox.checked) roles.push('Staff');
+          await updateTeamMemberRoles(member.user_id, roles);
+          setMessage('Team member roles updated.', false);
+          await fetchTeamMembers();
+          await fetchManagerAssignments();
+        } catch (err) {
+          setMessage(err.message || 'Failed to update team member roles.', true);
+        } finally {
+          updateBtn.disabled = false;
+        }
       });
-      actionCell.appendChild(revokeBtn);
+      actionCell.appendChild(updateBtn);
     } else {
       actionCell.textContent = '-';
     }
@@ -484,11 +565,11 @@ async function fetchTeamMembers() {
   renderTeamMembers(data.team || []);
 }
 
-async function addTeamMembership(email, role) {
+async function inviteTeamMember(payload) {
   const response = await fetch('/api/access/team', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, role })
+    body: JSON.stringify(payload)
   });
 
   if (response.status === 401) {
@@ -498,40 +579,61 @@ async function addTeamMembership(email, role) {
 
   const data = await response.json();
   if (!response.ok) {
+    if (response.status === 409 && data.code === 'EXISTING_USER_CONFIRMATION_REQUIRED') {
+      const accepted = window.confirm('Site user already exists, send invitation?');
+      if (!accepted) {
+        return { cancelled: true };
+      }
+
+      const retryResponse = await fetch('/api/access/team', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...payload,
+          confirmExisting: true
+        })
+      });
+
+      if (retryResponse.status === 401) {
+        window.location.href = '/';
+        return;
+      }
+
+      const retryData = await retryResponse.json();
+      if (!retryResponse.ok) {
+        throw new Error(retryData.error || 'Failed to add existing site user to client.');
+      }
+      return retryData;
+    }
     throw new Error(data.error || 'Failed to add team member.');
   }
 
   return data;
 }
 
-async function revokeTeamMembership(membershipId) {
-  const id = Number(membershipId);
+async function updateTeamMemberRoles(userId, roles) {
+  const id = Number(userId);
   if (!Number.isInteger(id) || id <= 0) {
-    setMessage('Invalid membership id.', true);
+    throw new Error('Invalid user id.');
+  }
+
+  const response = await fetch('/api/access/team/' + encodeURIComponent(id), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ roles })
+  });
+
+  if (response.status === 401) {
+    window.location.href = '/';
     return;
   }
 
-  try {
-    const response = await fetch('/api/access/team/' + encodeURIComponent(id), {
-      method: 'DELETE'
-    });
-
-    if (response.status === 401) {
-      window.location.href = '/';
-      return;
-    }
-
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || 'Failed to revoke team membership.');
-    }
-
-    setMessage('Team membership revoked.', false);
-    await fetchTeamMembers();
-    await fetchManagerAssignments();
-  } catch (err) {
-    setMessage(err.message || 'Failed to revoke team membership.', true);
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Failed to update team member roles.');
   }
+
+  return data;
 }
 
 async function fetchManagerAssignments() {
@@ -1855,19 +1957,46 @@ document.getElementById('addTeamMemberForm').addEventListener('submit', async (e
   e.preventDefault();
   const form = e.target;
   const button = form.querySelector('button[type="submit"]');
+  const firstName = document.getElementById('teamMemberFirstName').value.trim();
+  const familyName = document.getElementById('teamMemberFamilyName').value.trim();
   const email = document.getElementById('teamMemberEmail').value.trim();
-  const role = document.getElementById('teamMemberRole').value;
+  const telephone = document.getElementById('teamMemberTelephone').value.trim();
+  const roles = [];
+  if (document.getElementById('teamInviteRoleManager').checked) roles.push('Manager');
+  if (document.getElementById('teamInviteRoleStaff').checked) roles.push('Staff');
 
-  if (!email) {
-    setMessage('Team member email is required.', true);
+  if (!firstName || !familyName || !email || !telephone) {
+    setMessage('First name, family name, email, and telephone are required.', true);
+    return;
+  }
+
+  if (!roles.length) {
+    setMessage('Select at least one role (Manager and/or Staff).', true);
     return;
   }
 
   button.disabled = true;
   try {
-    await addTeamMembership(email, role);
-    setMessage('Team member added.', false);
+    const result = await inviteTeamMember({
+      firstName,
+      familyName,
+      email,
+      telephone,
+      roles
+    });
+
+    if (result && result.cancelled) {
+      setMessage('Invitation cancelled.', false);
+      return;
+    }
+
+    setMessage('Team member invitation saved.', false);
+    document.getElementById('teamMemberFirstName').value = '';
+    document.getElementById('teamMemberFamilyName').value = '';
     document.getElementById('teamMemberEmail').value = '';
+    document.getElementById('teamMemberTelephone').value = '';
+    document.getElementById('teamInviteRoleManager').checked = false;
+    document.getElementById('teamInviteRoleStaff').checked = false;
     await fetchTeamMembers();
     await fetchManagerAssignments();
   } catch (err) {

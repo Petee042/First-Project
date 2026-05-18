@@ -309,6 +309,26 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS family_name TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS telephone TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS is_validated BOOLEAN NOT NULL DEFAULT TRUE
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS listings (
       id BIGSERIAL PRIMARY KEY,
       user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1999,7 +2019,8 @@ async function getUserById(userId) {
 
   const result = await pool.query(
     `
-      SELECT id, username, email, password_hash,
+        SELECT id, username, email, password_hash,
+          first_name, family_name, telephone, is_validated,
              stripe_account_id, stripe_onboarding_complete,
              stripe_charges_enabled, stripe_payouts_enabled,
              created_at
@@ -2153,6 +2174,15 @@ function normaliseClientTeamRole(value) {
   return role === 'Manager' || role === 'Staff' ? role : '';
 }
 
+function normaliseClientTeamRoles(values) {
+  const list = Array.isArray(values) ? values : [values];
+  return Array.from(new Set(
+    list
+      .map((value) => normaliseClientTeamRole(value))
+      .filter(Boolean)
+  ));
+}
+
 async function getTeamMembershipsForClientAccount(clientAccountId) {
   const id = Number(clientAccountId);
   if (!Number.isInteger(id) || id <= 0) {
@@ -2173,10 +2203,16 @@ async function getTeamMembershipsForClientAccount(clientAccountId) {
              cm.created_at,
              cm.updated_at,
              u.username,
-             u.email
+             u.email,
+             u.first_name,
+             u.family_name,
+             u.telephone,
+             u.is_validated
       FROM client_memberships cm
       JOIN users u ON u.id = cm.user_id
       WHERE cm.client_account_id = $1
+        AND cm.role IN ('Manager', 'Staff')
+        AND cm.status IN ('active', 'invited')
       ORDER BY cm.role ASC, u.email ASC, cm.id ASC
     `,
     [id]
@@ -2191,6 +2227,159 @@ async function getUserByEmailStrict(email) {
     return null;
   }
   return findUserByEmail(normalized);
+}
+
+async function createUnvalidatedSiteUserForInvite(input) {
+  if (!usePostgres) {
+    return { error: 'Team invitations require database mode.' };
+  }
+
+  const email = normaliseOptionalEmail(input.email);
+  const firstName = String(input.firstName || '').trim();
+  const familyName = String(input.familyName || '').trim();
+  const telephone = normaliseTelephone(input.telephone);
+
+  if (!email || !firstName || !familyName || !telephone) {
+    return { error: 'First name, family name, email, and telephone are required.' };
+  }
+
+  const baseUsernameRaw = (firstName + '.' + familyName).toLowerCase();
+  const baseUsername = baseUsernameRaw.replace(/[^a-z0-9._-]/g, '').slice(0, 40) || ('user' + String(Date.now()));
+  let username = baseUsername;
+  let attempt = 0;
+  while (await findUserByUsername(username)) {
+    attempt += 1;
+    username = (baseUsername + '-' + String(randomUUID()).slice(0, 8)).slice(0, 60);
+    if (attempt > 8) {
+      return { error: 'Could not generate unique username for invited user.' };
+    }
+  }
+
+  const passwordHash = await bcrypt.hash(randomUUID() + randomUUID(), SALT_ROUNDS);
+  const result = await pool.query(
+    `
+      INSERT INTO users (username, email, password_hash, first_name, family_name, telephone, is_validated)
+      VALUES ($1, $2, $3, $4, $5, $6, FALSE)
+      RETURNING id, username, email, first_name, family_name, telephone, is_validated, created_at
+    `,
+    [username, email, passwordHash, firstName, familyName, telephone]
+  );
+
+  return { user: result.rows[0] };
+}
+
+async function setClientTeamRolesForUser(clientAccountId, invitedByUserId, targetUserId, rolesInput) {
+  if (!usePostgres) {
+    return { error: 'Membership management requires database mode.' };
+  }
+
+  const roles = normaliseClientTeamRoles(rolesInput);
+  const user = await getUserById(targetUserId);
+  if (!user) {
+    return { error: 'Site user not found.' };
+  }
+
+  const desiredStatus = user.is_validated === false ? 'invited' : 'active';
+  const managerSelected = roles.includes('Manager');
+  const staffSelected = roles.includes('Staff');
+  const revokedManagerMembershipIds = [];
+
+  if (managerSelected) {
+    await pool.query(
+      `
+        INSERT INTO client_memberships (client_account_id, user_id, role, status, invited_by_user_id)
+        VALUES ($1, $2, 'Manager', $3, $4)
+        ON CONFLICT (client_account_id, user_id, role)
+        DO UPDATE
+        SET status = EXCLUDED.status,
+            invited_by_user_id = EXCLUDED.invited_by_user_id,
+            updated_at = CURRENT_TIMESTAMP
+      `,
+      [clientAccountId, targetUserId, desiredStatus, invitedByUserId]
+    );
+  } else {
+    const managerRevoke = await pool.query(
+      `
+        UPDATE client_memberships
+        SET status = 'revoked', updated_at = CURRENT_TIMESTAMP
+        WHERE client_account_id = $1
+          AND user_id = $2
+          AND role = 'Manager'
+          AND status IN ('active', 'invited')
+        RETURNING id
+      `,
+      [clientAccountId, targetUserId]
+    );
+    managerRevoke.rows.forEach((row) => {
+      const id = Number(row.id);
+      if (Number.isInteger(id) && id > 0) {
+        revokedManagerMembershipIds.push(id);
+      }
+    });
+  }
+
+  if (staffSelected) {
+    await pool.query(
+      `
+        INSERT INTO client_memberships (client_account_id, user_id, role, status, invited_by_user_id)
+        VALUES ($1, $2, 'Staff', $3, $4)
+        ON CONFLICT (client_account_id, user_id, role)
+        DO UPDATE
+        SET status = EXCLUDED.status,
+            invited_by_user_id = EXCLUDED.invited_by_user_id,
+            updated_at = CURRENT_TIMESTAMP
+      `,
+      [clientAccountId, targetUserId, desiredStatus, invitedByUserId]
+    );
+  } else {
+    await pool.query(
+      `
+        UPDATE client_memberships
+        SET status = 'revoked', updated_at = CURRENT_TIMESTAMP
+        WHERE client_account_id = $1
+          AND user_id = $2
+          AND role = 'Staff'
+          AND status IN ('active', 'invited')
+      `,
+      [clientAccountId, targetUserId]
+    );
+  }
+
+  if (revokedManagerMembershipIds.length) {
+    await pool.query(
+      'DELETE FROM manager_property_assignments WHERE manager_membership_id = ANY($1::bigint[])',
+      [revokedManagerMembershipIds]
+    );
+    await pool.query(
+      'DELETE FROM manager_listing_assignments WHERE manager_membership_id = ANY($1::bigint[])',
+      [revokedManagerMembershipIds]
+    );
+  }
+
+  const membershipsResult = await pool.query(
+    `
+      SELECT id, client_account_id, user_id, role, status, created_at, updated_at
+      FROM client_memberships
+      WHERE client_account_id = $1
+        AND user_id = $2
+        AND role IN ('Manager', 'Staff')
+      ORDER BY role ASC
+    `,
+    [clientAccountId, targetUserId]
+  );
+
+  return {
+    user: {
+      id: Number(user.id),
+      username: user.username,
+      email: user.email,
+      first_name: user.first_name || '',
+      family_name: user.family_name || '',
+      telephone: user.telephone || '',
+      is_validated: user.is_validated !== false
+    },
+    memberships: membershipsResult.rows
+  };
 }
 
 async function addClientMembershipByEmail(clientAccountId, invitedByUserId, email, role) {
@@ -6218,45 +6407,91 @@ app.get('/api/access/team', requireScopedRole('Manager'), async (req, res) => {
 
 // POST /api/access/team — add Manager/Staff membership to active client account
 app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
+  const firstName = String(req.body.firstName || '').trim();
+  const familyName = String(req.body.familyName || '').trim();
   const email = String(req.body.email || '').trim();
-  const role = String(req.body.role || '').trim();
-  if (!email) {
-    return res.status(400).json({ error: 'Team member email is required.' });
+  const telephone = String(req.body.telephone || '').trim();
+  const roles = normaliseClientTeamRoles(req.body.roles);
+  const confirmExisting = req.body.confirmExisting === true;
+
+  if (!firstName || !familyName || !email || !telephone) {
+    return res.status(400).json({ error: 'First name, family name, email, and telephone are required.' });
+  }
+  if (!roles.length) {
+    return res.status(400).json({ error: 'Select at least one role (Manager and/or Staff).' });
   }
 
   try {
-    const result = await addClientMembershipByEmail(
+    const normalizedEmail = normaliseOptionalEmail(email);
+    if (!normalizedEmail) {
+      return res.status(400).json({ error: 'A valid email address is required.' });
+    }
+
+    let siteUser = await getUserByEmailStrict(normalizedEmail);
+
+    if (siteUser && !confirmExisting) {
+      return res.status(409).json({
+        code: 'EXISTING_USER_CONFIRMATION_REQUIRED',
+        error: 'Site user already exists, send invitation?'
+      });
+    }
+
+    if (!siteUser) {
+      const created = await createUnvalidatedSiteUserForInvite({
+        firstName,
+        familyName,
+        email: normalizedEmail,
+        telephone
+      });
+      if (created.error) {
+        return res.status(400).json({ error: created.error });
+      }
+      siteUser = created.user;
+    }
+
+    const result = await setClientTeamRolesForUser(
       req.accessContext.activeClientAccountId,
       req.session.userId,
-      email,
-      role
+      siteUser.id,
+      roles
     );
     if (result.error) {
       return res.status(400).json({ error: result.error });
     }
-    return res.status(201).json(result);
+    return res.status(201).json({
+      invited: true,
+      existingUser: Boolean(confirmExisting),
+      user: result.user,
+      memberships: result.memberships
+    });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: 'Failed to add team member.' });
+    return res.status(500).json({ error: 'Failed to invite team member.' });
   }
 });
 
-// DELETE /api/access/team/:membershipId — revoke a Manager/Staff membership
-app.delete('/api/access/team/:membershipId', requireScopedRole('Client'), async (req, res) => {
-  const membershipId = Number(req.params.membershipId);
-  if (!Number.isInteger(membershipId) || membershipId <= 0) {
-    return res.status(400).json({ error: 'Invalid membership id.' });
+// PUT /api/access/team/:userId — update Manager/Staff roles for a site user in active client account
+app.put('/api/access/team/:userId', requireScopedRole('Client'), async (req, res) => {
+  const userId = Number(req.params.userId);
+  const roles = normaliseClientTeamRoles(req.body.roles);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'Invalid user id.' });
   }
 
   try {
-    const result = await revokeClientMembership(req.accessContext.activeClientAccountId, membershipId);
+    const result = await setClientTeamRolesForUser(
+      req.accessContext.activeClientAccountId,
+      req.session.userId,
+      userId,
+      roles
+    );
     if (result.error) {
-      return res.status(404).json({ error: result.error });
+      return res.status(400).json({ error: result.error });
     }
     return res.json(result);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: 'Failed to revoke membership.' });
+    return res.status(500).json({ error: 'Failed to update team member roles.' });
   }
 });
 

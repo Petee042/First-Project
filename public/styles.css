@@ -261,6 +261,10 @@ textarea:focus {
 .dashboard-tab-bar {
   display: flex;
   background: #ffffff;
+/* ── Dashboard tab bar ────────────────────────────────────── */
+.dashboard-tab-bar {
+  display: flex;
+  background: #ffffff;
   border-bottom: 2px solid #e0e4f0;
   box-shadow: 0 2px 6px rgba(18, 33, 70, 0.06);
   overflow-x: auto;
@@ -297,6 +301,13 @@ textarea:focus {
   border-bottom-color: #4361ee;
 }
 
+.dashboard-tab-btn:focus-visible {
+  outline: 2px solid #4361ee;
+  outline-offset: -2px;
+}
+
+.dashboard-tab-panel {
+  /* panels just use hidden class to toggle; no extra wrapper style needed */
 .dashboard-tab-btn:focus-visible {
   outline: 2px solid #4361ee;
   outline-offset: -2px;
@@ -425,6 +436,32 @@ textarea:focus {
 .calendar-source-row select {
   flex: 1;
   min-width: 0;
+}
+
+.team-role-fieldset {
+  margin: 0.5rem 0 0.8rem;
+  border: 1px solid #d8dfef;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+}
+
+.team-role-fieldset legend {
+  font-size: 0.85rem;
+  color: #4a5674;
+  padding: 0 0.25rem;
+}
+
+.team-role-checkboxes {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.team-role-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.88rem;
 }
 
 .property-textarea-row {
@@ -1092,16 +1129,10 @@ textarea:focus {
   }
 
   .reservation-calendar {
-    grid-template-columns: minmax(72px, 0.85fr) repeat(7, minmax(0, 1fr));
-  }
-
-  .calendar-channel-label-text {
-    font-size: 0.6rem;
-  }
-
-  .dashboard-tab-btn {
+   dashboard-tab-btn {
     font-size: 0.82rem;
     padding: 0.75rem 0.4rem;
+    min-width: 72px;
     min-width: 72px;
   }
 }

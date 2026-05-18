@@ -48,7 +48,7 @@
                 <tr>
                   <th>Name</th>
                   <th>Email</th>
-                  <th>Role</th>
+                  <th>Roles</th>
                   <th>Status</th>
                   <th>Action</th>
                 </tr>
@@ -64,16 +64,32 @@
           <h4>Invite Team Member</h4>
           <form id="addTeamMemberForm" novalidate>
             <div class="calendar-source-row">
+              <label for="teamMemberFirstName">First Name</label>
+              <input id="teamMemberFirstName" type="text" maxlength="120" required />
+            </div>
+            <div class="calendar-source-row">
+              <label for="teamMemberFamilyName">Family Name</label>
+              <input id="teamMemberFamilyName" type="text" maxlength="120" required />
+            </div>
+            <div class="calendar-source-row">
               <label for="teamMemberEmail">Email</label>
               <input id="teamMemberEmail" type="email" maxlength="160" required />
             </div>
             <div class="calendar-source-row">
-              <label for="teamMemberRole">Role</label>
-              <select id="teamMemberRole" required>
-                <option value="Manager">Manager</option>
-                <option value="Staff">Staff</option>
-              </select>
+              <label for="teamMemberTelephone">Telephone</label>
+              <input id="teamMemberTelephone" type="text" maxlength="60" required />
             </div>
+            <fieldset class="team-role-fieldset">
+              <legend>Invite As Role</legend>
+              <label class="team-role-option">
+                <input id="teamInviteRoleManager" type="checkbox" value="Manager" />
+                <span>Manager</span>
+              </label>
+              <label class="team-role-option">
+                <input id="teamInviteRoleStaff" type="checkbox" value="Staff" />
+                <span>Staff</span>
+              </label>
+            </fieldset>
             <button type="submit" class="btn primary calendar-btn">Add Team Member</button>
           </form>
         </section>
