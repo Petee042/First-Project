@@ -4,7 +4,8 @@
   "description": "Two-page website with signup and password-protected second page",
   "main": "app.js",
   "scripts": {
-    "start": "node app.js"
+    "start": "node app.js",
+    "test:auth-validation": "node auth-validation-regression-test.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
