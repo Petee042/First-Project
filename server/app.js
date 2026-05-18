@@ -2,19 +2,23 @@
 
 const express = require('express');
 const session = require('express-session');
+const rateLimit = require('express-rate-limit');
 const bcrypt = require('bcrypt');
 const nodemailer = require('nodemailer');
+const sanitizeHtml = require('sanitize-html');
 const Stripe = require('stripe');
 const path = require('path');
+const dns = require('dns').promises;
+const net = require('net');
 const { randomUUID, createHmac, timingSafeEqual } = require('crypto');
 const { Pool } = require('pg');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const SALT_ROUNDS = 12;
-const SESSION_SECRET = process.env.SESSION_SECRET || 'replace-this-secret-in-production';
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'Peterku';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Quiblick!3';
+const SESSION_SECRET = String(process.env.SESSION_SECRET || '').trim();
+const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || '').trim();
+const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '').trim();
 const KAYAK_API_BASE_URL = process.env.KAYAK_API_BASE_URL || 'https://sandbox-en-us.kayakaffiliates.com';
 const KAYAK_API_KEY = process.env.KAYAK_API_KEY || '';
 const STAY_API_KEY = process.env.STAY_API_KEY || '';
@@ -36,6 +40,14 @@ const stripeClient = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 
 if (!DATABASE_URL) {
   throw new Error('DATABASE_URL is required. Legacy local JSON storage mode has been removed.');
+}
+
+if (!SESSION_SECRET || SESSION_SECRET === 'replace-this-secret-in-production' || SESSION_SECRET.length < 32) {
+  throw new Error('SESSION_SECRET must be set to a strong value (minimum 32 characters).');
+}
+
+if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
+  throw new Error('ADMIN_USERNAME and ADMIN_PASSWORD must both be configured.');
 }
 
 
@@ -205,6 +217,114 @@ function normaliseCalendarUrl(rawUrl) {
 
   // Preserve the original URL string to avoid mutating signed feed query parameters.
   return trimmed;
+}
+
+function isPrivateIpv4Address(address) {
+  const parts = String(address || '').split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return true;
+  }
+
+  const [a, b] = parts;
+  if (a === 10 || a === 127 || a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  return false;
+}
+
+function isPrivateIpv6Address(address) {
+  const value = String(address || '').toLowerCase();
+  if (!value) return true;
+  if (value === '::1' || value === '::') return true;
+  if (value.startsWith('fc') || value.startsWith('fd')) return true;
+  if (value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb')) return true;
+
+  if (value.startsWith('::ffff:')) {
+    const mappedV4 = value.slice('::ffff:'.length);
+    if (net.isIP(mappedV4) === 4) {
+      return isPrivateIpv4Address(mappedV4);
+    }
+  }
+
+  return false;
+}
+
+function isPrivateIpAddress(address) {
+  const family = net.isIP(String(address || ''));
+  if (family === 4) return isPrivateIpv4Address(address);
+  if (family === 6) return isPrivateIpv6Address(address);
+  return true;
+}
+
+function isBlockedCalendarHostname(hostname) {
+  const value = String(hostname || '').trim().toLowerCase();
+  if (!value) return true;
+  if (value === 'localhost' || value.endsWith('.localhost')) return true;
+  if (value.endsWith('.local')) return true;
+  return false;
+}
+
+async function isSafeCalendarFetchTarget(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(String(rawUrl || ''));
+  } catch {
+    return false;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return false;
+  }
+
+  const hostname = String(parsed.hostname || '').trim();
+  if (isBlockedCalendarHostname(hostname)) {
+    return false;
+  }
+
+  if (net.isIP(hostname)) {
+    return !isPrivateIpAddress(hostname);
+  }
+
+  try {
+    const records = await dns.lookup(hostname, { all: true, verbatim: true });
+    if (!Array.isArray(records) || records.length === 0) {
+      return false;
+    }
+    return records.every((record) => !isPrivateIpAddress(record.address));
+  } catch {
+    return false;
+  }
+}
+
+async function fetchCalendarUrlSafely(initialUrl, options) {
+  let currentUrl = String(initialUrl || '').trim();
+
+  for (let redirectCount = 0; redirectCount < 5; redirectCount += 1) {
+    const safe = await isSafeCalendarFetchTarget(currentUrl);
+    if (!safe) {
+      return { error: 'Calendar URL target is blocked for security reasons.' };
+    }
+
+    const response = await fetch(currentUrl, {
+      ...options,
+      redirect: 'manual'
+    });
+
+    if (response.status >= 300 && response.status < 400) {
+      const locationHeader = response.headers.get('location');
+      if (!locationHeader) {
+        return response;
+      }
+      currentUrl = new URL(locationHeader, currentUrl).toString();
+      continue;
+    }
+
+    return response;
+  }
+
+  return { error: 'Calendar request exceeded redirect limit.' };
 }
 
 function decodeHtmlEntitiesForUrl(value) {
@@ -1559,15 +1679,24 @@ function validateSharedResourceChargeConfig(paymentOptions, chargeConfig) {
 }
 
 function sanitiseRichTextHtml(value) {
-  let html = String(value || '');
-  // Drop script/style blocks and inline handlers/JS URLs.
-  html = html.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '');
-  html = html.replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '');
-  html = html.replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, '');
-  html = html.replace(/\son[a-z]+\s*=\s*'[^']*'/gi, '');
-  html = html.replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '');
-  html = html.replace(/javascript:/gi, '');
-  return html.trim();
+  return sanitizeHtml(String(value || ''), {
+    allowedTags: [
+      'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'ul', 'ol', 'li',
+      'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'a', 'span'
+    ],
+    allowedAttributes: {
+      a: ['href', 'name', 'target', 'rel']
+    },
+    allowedSchemes: ['http', 'https', 'mailto'],
+    allowedSchemesByTag: {},
+    allowProtocolRelative: false,
+    transformTags: {
+      a: sanitizeHtml.simpleTransform('a', {
+        target: '_blank',
+        rel: 'noopener noreferrer'
+      })
+    }
+  }).trim();
 }
 
 let scheduleEmailTransporter = null;
@@ -1661,11 +1790,14 @@ function getPostmarkErrorMessage(errorPayload, statusCode) {
 }
 
 function getPreferredAppBaseUrl(req) {
+  if (APP_BASE_URL) {
+    return APP_BASE_URL;
+  }
   const requestBase = getRequestBaseUrl(req);
   if (requestBase) {
     return requestBase;
   }
-  return APP_BASE_URL || null;
+  return null;
 }
 
 function buildAccountValidationSignature(userId, email, issuedAtMs) {
@@ -4726,15 +4858,13 @@ async function fetchEventsFromCalendarUrl(calendarUrl) {
   try {
     const standardOptions = {
       signal: controller.signal,
-      redirect: 'follow',
       headers: {
         Accept: 'text/calendar,text/plain,*/*',
         'User-Agent': 'Mozilla/5.0 (compatible; CalendarSync/1.0; +https://render.com)'
       }
     };
     const minimalOptions = {
-      signal: controller.signal,
-      redirect: 'follow'
+      signal: controller.signal
     };
 
     const candidateUrls = [];
@@ -4756,7 +4886,14 @@ async function fetchEventsFromCalendarUrl(calendarUrl) {
     for (const candidateUrl of candidateUrls) {
       const variants = [standardOptions, minimalOptions];
       for (const options of variants) {
-        const upstream = await fetch(candidateUrl, options);
+        const upstreamResult = await fetchCalendarUrlSafely(candidateUrl, options);
+        if (upstreamResult && upstreamResult.error) {
+          lastStatus = null;
+          lastPreview = String(upstreamResult.error);
+          continue;
+        }
+
+        const upstream = upstreamResult;
 
         if (!upstream.ok) {
           lastStatus = upstream.status;
@@ -5145,7 +5282,7 @@ function maskKeyForDiagnostics(secret) {
 function getRequestBaseUrl(req) {
   const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
   const host = String(req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
-  if (!host) {
+  if (!host || /[\s\/\\]/.test(host)) {
     return null;
   }
   return proto + '://' + host;
@@ -5159,6 +5296,30 @@ function formatStripeConnectStatus(user) {
     payoutsEnabled: Boolean(user && user.stripe_payouts_enabled === true)
   };
 }
+
+const loginRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Please try again later.' }
+});
+
+const adminLoginRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many admin login attempts. Please try again later.' }
+});
+
+const validationEmailResendRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many validation email requests. Please try again later.' }
+});
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
@@ -5236,7 +5397,7 @@ app.post('/api/signup', async (req, res) => {
 });
 
 // POST /api/login
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', loginRateLimiter, async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
@@ -5290,7 +5451,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 // POST /api/admin/login
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', adminLoginRateLimiter, (req, res) => {
   const username = String(req.body.username || '').trim();
   const password = String(req.body.password || '');
 
@@ -5884,7 +6045,7 @@ app.get('/api/account/validate', async (req, res) => {
 });
 
 // POST /api/account/validation-email/resend — resend validation link for logged-in unvalidated user
-app.post('/api/account/validation-email/resend', requireAuth, async (req, res) => {
+app.post('/api/account/validation-email/resend', validationEmailResendRateLimiter, requireAuth, async (req, res) => {
   try {
     const user = await getUserById(req.session.userId);
     if (!user) {
@@ -5974,7 +6135,7 @@ app.post('/api/stripe/connect/start', requireAuth, async (req, res) => {
       });
     }
 
-    const baseUrl = getRequestBaseUrl(req);
+    const baseUrl = getPreferredAppBaseUrl(req);
     if (!baseUrl) {
       return res.status(400).json({ error: 'Unable to determine application URL for Stripe onboarding.' });
     }
