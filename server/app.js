@@ -770,6 +770,11 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    ALTER TABLE booked_in_changes
+    ADD COLUMN IF NOT EXISTS cleaner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL
+  `);
+
+  await pool.query(`
     ALTER TABLE feed_source_colors
     ADD COLUMN IF NOT EXISTS client_account_id BIGINT REFERENCES client_accounts(id) ON DELETE SET NULL
   `);
@@ -787,6 +792,11 @@ async function initializeUserStore() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_cleaners_cleaner_user_id
     ON cleaners (cleaner_user_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_booked_in_changes_cleaner_user_id
+    ON booked_in_changes (cleaner_user_id)
   `);
 
   await migrateUsersFromFile();
@@ -978,6 +988,78 @@ async function initializeUserStore() {
     WHERE c.cleaner_user_id IS NULL
       AND NULLIF(TRIM(c.email), '') IS NOT NULL
       AND LOWER(u.email) = LOWER(c.email)
+  `);
+
+  const defaultCleanerPasswordHash = await bcrypt.hash('letmein1', SALT_ROUNDS);
+  const cleanersResult = await pool.query(
+    `
+      SELECT c.id,
+             c.user_id,
+             c.client_account_id,
+             c.cleaner_user_id,
+             c.first_name,
+             c.last_name,
+             LOWER(TRIM(c.email)) AS email
+      FROM cleaners c
+      WHERE NULLIF(TRIM(c.email), '') IS NOT NULL
+      ORDER BY c.id ASC
+    `
+  );
+
+  for (const cleaner of cleanersResult.rows) {
+    let linkedUserId = Number(cleaner.cleaner_user_id) || null;
+    let linkedUser = linkedUserId ? await getUserById(linkedUserId) : null;
+
+    if (!linkedUser) {
+      linkedUser = await findUserByEmail(cleaner.email);
+      if (!linkedUser) {
+        const emailLocalPart = String(cleaner.email || '').split('@')[0].replace(/[^a-z0-9._-]/gi, '').toLowerCase();
+        const username = ('staff-' + (emailLocalPart || 'user') + '-' + String(cleaner.id)).slice(0, 60);
+        linkedUser = await createUser(username, cleaner.email, defaultCleanerPasswordHash);
+      }
+
+      linkedUserId = Number(linkedUser.id) || null;
+      if (linkedUserId) {
+        await pool.query(
+          `
+            UPDATE cleaners
+            SET cleaner_user_id = $1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $2
+          `,
+          [linkedUserId, cleaner.id]
+        );
+      }
+    }
+
+    if (linkedUserId) {
+      // Requested default staff password for currently configured cleaner-linked users.
+      await pool.query(
+        'UPDATE users SET password_hash = $1 WHERE id = $2',
+        [defaultCleanerPasswordHash, linkedUserId]
+      );
+
+      if (cleaner.client_account_id) {
+        await pool.query(
+          `
+            INSERT INTO client_memberships (client_account_id, user_id, role, status, invited_by_user_id)
+            VALUES ($1, $2, 'Staff', 'active', $3)
+            ON CONFLICT (client_account_id, user_id, role) DO NOTHING
+          `,
+          [cleaner.client_account_id, linkedUserId, cleaner.user_id]
+        );
+      }
+    }
+  }
+
+  await pool.query(`
+    UPDATE booked_in_changes bic
+    SET cleaner_user_id = c.cleaner_user_id,
+        updated_at = CURRENT_TIMESTAMP
+    FROM cleaners c
+    WHERE bic.cleaner_user_id IS NULL
+      AND bic.cleaner_id = c.id
+      AND c.cleaner_user_id IS NOT NULL
   `);
 
   await pool.query(`
@@ -1542,6 +1624,7 @@ async function getCleanersForUser(userId) {
       .map((cleaner) => ({
         id: cleaner.id,
         user_id: cleaner.user_id,
+        cleaner_user_id: cleaner.cleaner_user_id || null,
         first_name: cleaner.first_name,
         last_name: cleaner.last_name,
         email: cleaner.email,
@@ -1553,7 +1636,7 @@ async function getCleanersForUser(userId) {
 
   const result = await pool.query(
     `
-      SELECT id, user_id, first_name, last_name, email, telephone, created_at, updated_at
+      SELECT id, user_id, cleaner_user_id, first_name, last_name, email, telephone, created_at, updated_at
       FROM cleaners
       WHERE user_id = $1
       ORDER BY last_name ASC, first_name ASC
@@ -1610,6 +1693,7 @@ async function createCleanerForUser(userId, input) {
       cleaner: {
         id: cleaner.id,
         user_id: cleaner.user_id,
+        cleaner_user_id: cleaner.cleaner_user_id || null,
         first_name: cleaner.first_name,
         last_name: cleaner.last_name,
         email: cleaner.email,
@@ -1621,13 +1705,47 @@ async function createCleanerForUser(userId, input) {
   }
 
   try {
+    const ownerContext = await getOrCreateAccessContextForUser(userId, null);
+    const ownerClientAccountId = ownerContext && ownerContext.active
+      ? Number(ownerContext.active.client_account_id)
+      : null;
+
+    let linkedUser = await findUserByEmail(email);
+    if (!linkedUser) {
+      const emailLocalPart = String(email || '').split('@')[0].replace(/[^a-z0-9._-]/gi, '').toLowerCase();
+      const username = ('staff-' + (emailLocalPart || 'user') + '-' + String(Date.now())).slice(0, 60);
+      linkedUser = await createUser(username, email, passwordHash);
+    } else {
+      await pool.query(
+        `
+          UPDATE users
+          SET password_hash = $1
+          WHERE id = $2
+        `,
+        [passwordHash, linkedUser.id]
+      );
+    }
+
+    if (ownerClientAccountId) {
+      await pool.query(
+        `
+          INSERT INTO client_memberships (client_account_id, user_id, role, status, invited_by_user_id)
+          VALUES ($1, $2, 'Staff', 'active', $3)
+          ON CONFLICT (client_account_id, user_id, role)
+          DO UPDATE
+          SET status = 'active', updated_at = CURRENT_TIMESTAMP, invited_by_user_id = EXCLUDED.invited_by_user_id
+        `,
+        [ownerClientAccountId, linkedUser.id, userId]
+      );
+    }
+
     const result = await pool.query(
       `
-        INSERT INTO cleaners (user_id, first_name, last_name, email, telephone, password_hash)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id, user_id, first_name, last_name, email, telephone, created_at, updated_at
+        INSERT INTO cleaners (user_id, client_account_id, cleaner_user_id, first_name, last_name, email, telephone, password_hash)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING id, user_id, cleaner_user_id, first_name, last_name, email, telephone, created_at, updated_at
       `,
-      [userId, firstName, lastName, email, telephone, passwordHash]
+      [userId, ownerClientAccountId, linkedUser.id, firstName, lastName, email, telephone, passwordHash]
     );
     return { cleaner: result.rows[0] };
   } catch (err) {
@@ -1684,6 +1802,7 @@ async function updateCleanerForUser(cleanerId, userId, input) {
       cleaner: {
         id: store.cleaners[idx].id,
         user_id: store.cleaners[idx].user_id,
+        cleaner_user_id: store.cleaners[idx].cleaner_user_id || null,
         first_name: store.cleaners[idx].first_name,
         last_name: store.cleaners[idx].last_name,
         email: store.cleaners[idx].email,
@@ -1695,7 +1814,12 @@ async function updateCleanerForUser(cleanerId, userId, input) {
   }
 
   const existing = await pool.query(
-    'SELECT id FROM cleaners WHERE id = $1 AND user_id = $2 LIMIT 1',
+    `
+      SELECT id, client_account_id, cleaner_user_id
+      FROM cleaners
+      WHERE id = $1 AND user_id = $2
+      LIMIT 1
+    `,
     [cleanerId, userId]
   );
   if (!existing.rows[0]) {
@@ -1705,6 +1829,39 @@ async function updateCleanerForUser(cleanerId, userId, input) {
   const passwordHash = password ? await bcrypt.hash(password, SALT_ROUNDS) : null;
 
   try {
+    let linkedUser = null;
+    if (existing.rows[0].cleaner_user_id) {
+      linkedUser = await getUserById(existing.rows[0].cleaner_user_id);
+    }
+    if (!linkedUser) {
+      linkedUser = await findUserByEmail(email);
+    }
+    if (!linkedUser) {
+      const emailLocalPart = String(email || '').split('@')[0].replace(/[^a-z0-9._-]/gi, '').toLowerCase();
+      const username = ('staff-' + (emailLocalPart || 'user') + '-' + String(cleanerId)).slice(0, 60);
+      linkedUser = await createUser(username, email, passwordHash || await bcrypt.hash('letmein1', SALT_ROUNDS));
+    }
+
+    if (passwordHash) {
+      await pool.query(
+        'UPDATE users SET password_hash = $1 WHERE id = $2',
+        [passwordHash, linkedUser.id]
+      );
+    }
+
+    if (existing.rows[0].client_account_id) {
+      await pool.query(
+        `
+          INSERT INTO client_memberships (client_account_id, user_id, role, status, invited_by_user_id)
+          VALUES ($1, $2, 'Staff', 'active', $3)
+          ON CONFLICT (client_account_id, user_id, role)
+          DO UPDATE
+          SET status = 'active', updated_at = CURRENT_TIMESTAMP, invited_by_user_id = EXCLUDED.invited_by_user_id
+        `,
+        [existing.rows[0].client_account_id, linkedUser.id, userId]
+      );
+    }
+
     const result = await pool.query(
       `
         UPDATE cleaners
@@ -1713,11 +1870,12 @@ async function updateCleanerForUser(cleanerId, userId, input) {
             email = $3,
             telephone = $4,
             password_hash = COALESCE($5, password_hash),
+            cleaner_user_id = $6,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = $6 AND user_id = $7
-        RETURNING id, user_id, first_name, last_name, email, telephone, created_at, updated_at
+        WHERE id = $7 AND user_id = $8
+        RETURNING id, user_id, cleaner_user_id, first_name, last_name, email, telephone, created_at, updated_at
       `,
-      [firstName, lastName, email, telephone, passwordHash, cleanerId, userId]
+      [firstName, lastName, email, telephone, passwordHash, linkedUser.id, cleanerId, userId]
     );
     return { cleaner: result.rows[0] };
   } catch (err) {
@@ -4561,6 +4719,7 @@ async function getBookedInChangesForUserByListings(userId, listingIds) {
         reservation_checkout_date: row.reservation_checkout_date,
         changeover_date: row.changeover_date,
         cleaner_id: row.cleaner_id || null,
+        cleaner_user_id: row.cleaner_user_id || null,
         created_at: row.created_at,
         updated_at: row.updated_at
       }));
@@ -4572,7 +4731,7 @@ async function getBookedInChangesForUserByListings(userId, listingIds) {
              reservation_checkin_date::text AS reservation_checkin_date,
              reservation_checkout_date::text AS reservation_checkout_date,
              changeover_date::text AS changeover_date,
-             cleaner_id, created_at, updated_at
+             cleaner_id, cleaner_user_id, created_at, updated_at
       FROM booked_in_changes
       WHERE user_id = $1
         AND listing_id = ANY($2::bigint[])
@@ -4591,7 +4750,16 @@ async function upsertBookedInChangesForUser(userId, changes) {
   const listings = await getListingsForUser(userId);
   const listingById = new Map((listings || []).map((listing) => [Number(listing.id), listing]));
   const cleaners = await getCleanersForUser(userId);
-  const cleanerIdSet = new Set((cleaners || []).map((cleaner) => Number(cleaner.id)));
+  const cleanerById = new Map(
+    (cleaners || [])
+      .filter((cleaner) => Number.isInteger(Number(cleaner.id)) && Number(cleaner.id) > 0)
+      .map((cleaner) => [Number(cleaner.id), cleaner])
+  );
+  const cleanerByUserId = new Map(
+    (cleaners || [])
+      .filter((cleaner) => Number.isInteger(Number(cleaner.cleaner_user_id)) && Number(cleaner.cleaner_user_id) > 0)
+      .map((cleaner) => [Number(cleaner.cleaner_user_id), cleaner])
+  );
 
   const normalised = [];
   payload.forEach((entry) => {
@@ -4607,10 +4775,31 @@ async function upsertBookedInChangesForUser(userId, changes) {
       return;
     }
 
-    const cleanerId = normaliseCleanerId(entry.cleanerId);
-    if (cleanerId && !cleanerIdSet.has(cleanerId)) {
-      return;
+    let cleanerUserId = normaliseCleanerId(entry.cleanerUserId);
+    let linkedCleaner = null;
+
+    if (cleanerUserId) {
+      linkedCleaner = cleanerByUserId.get(cleanerUserId) || null;
+      if (!linkedCleaner) {
+        return;
+      }
+    } else {
+      const legacyCleanerId = normaliseCleanerId(entry.cleanerId);
+      if (legacyCleanerId) {
+        const legacyCleaner = cleanerById.get(legacyCleanerId) || null;
+        if (!legacyCleaner) {
+          return;
+        }
+        const linkedUserId = Number(legacyCleaner.cleaner_user_id || 0);
+        if (!Number.isInteger(linkedUserId) || linkedUserId <= 0) {
+          return;
+        }
+        cleanerUserId = linkedUserId;
+        linkedCleaner = legacyCleaner;
+      }
     }
+
+    const cleanerId = linkedCleaner ? Number(linkedCleaner.id) : null;
 
     const listing = listingById.get(listingId);
     normalised.push({
@@ -4619,7 +4808,8 @@ async function upsertBookedInChangesForUser(userId, changes) {
       reservationCheckinDate,
       reservationCheckoutDate,
       changeoverDate,
-      cleanerId
+      cleanerId,
+      cleanerUserId
     });
   });
 
@@ -4647,6 +4837,7 @@ async function upsertBookedInChangesForUser(userId, changes) {
         store.booked_in_changes[idx].property_id = entry.propertyId;
         store.booked_in_changes[idx].changeover_date = entry.changeoverDate;
         store.booked_in_changes[idx].cleaner_id = entry.cleanerId;
+        store.booked_in_changes[idx].cleaner_user_id = entry.cleanerUserId;
         store.booked_in_changes[idx].updated_at = now;
       } else {
         store.booked_in_changes.push({
@@ -4658,6 +4849,7 @@ async function upsertBookedInChangesForUser(userId, changes) {
           reservation_checkout_date: entry.reservationCheckoutDate,
           changeover_date: entry.changeoverDate,
           cleaner_id: entry.cleanerId,
+          cleaner_user_id: entry.cleanerUserId,
           created_at: now,
           updated_at: now
         });
@@ -4679,14 +4871,16 @@ async function upsertBookedInChangesForUser(userId, changes) {
           reservation_checkin_date,
           reservation_checkout_date,
           changeover_date,
-          cleaner_id
+          cleaner_id,
+          cleaner_user_id
         )
-        VALUES ($1, $2, $3, $4::date, $5::date, $6::date, $7)
+        VALUES ($1, $2, $3, $4::date, $5::date, $6::date, $7, $8)
         ON CONFLICT (user_id, listing_id, reservation_checkin_date, reservation_checkout_date)
         DO UPDATE SET
           property_id = EXCLUDED.property_id,
           changeover_date = EXCLUDED.changeover_date,
           cleaner_id = EXCLUDED.cleaner_id,
+          cleaner_user_id = EXCLUDED.cleaner_user_id,
           updated_at = CURRENT_TIMESTAMP
       `,
       [
@@ -4696,7 +4890,8 @@ async function upsertBookedInChangesForUser(userId, changes) {
         entry.reservationCheckinDate,
         entry.reservationCheckoutDate,
         entry.changeoverDate,
-        entry.cleanerId
+        entry.cleanerId,
+        entry.cleanerUserId
       ]
     );
   }

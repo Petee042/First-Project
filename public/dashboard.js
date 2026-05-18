@@ -1157,13 +1157,21 @@ async function buildSchedule(selectedListings, days, startDateUtc) {
           return;
         }
 
-        const cleanerById = new Map((currentCleaners || []).map((c) => [Number(c.id), c]));
+        const cleanerByUserId = new Map(
+          (currentCleaners || [])
+            .filter((c) => Number.isInteger(Number(c.cleaner_user_id)) && Number(c.cleaner_user_id) > 0)
+            .map((c) => [Number(c.cleaner_user_id), c])
+        );
         const usualCleanerId = listing.usualCleanerId || null;
         let defaultCleanerId = null;
         let defaultCleanerName = 'Unallocated';
-        if (usualCleanerId && cleanerById.has(usualCleanerId)) {
-          const uc = cleanerById.get(usualCleanerId);
-          defaultCleanerId = usualCleanerId;
+        const listingCleaner = (currentCleaners || []).find((c) => Number(c.id) === Number(usualCleanerId));
+        const defaultCleanerUserId = listingCleaner && listingCleaner.cleaner_user_id
+          ? Number(listingCleaner.cleaner_user_id)
+          : null;
+        if (defaultCleanerUserId && cleanerByUserId.has(defaultCleanerUserId)) {
+          const uc = cleanerByUserId.get(defaultCleanerUserId);
+          defaultCleanerId = defaultCleanerUserId;
           defaultCleanerName = (uc.first_name || '') + ' ' + (uc.last_name || '');
         }
 
@@ -1219,16 +1227,24 @@ async function buildSchedule(selectedListings, days, startDateUtc) {
     bookedMap.set(key, row);
   });
 
-  const cleanerById = new Map((currentCleaners || []).map((cleaner) => [Number(cleaner.id), cleaner]));
+  const cleanerByUserId = new Map(
+    (currentCleaners || [])
+      .filter((cleaner) => Number.isInteger(Number(cleaner.cleaner_user_id)) && Number(cleaner.cleaner_user_id) > 0)
+      .map((cleaner) => [Number(cleaner.cleaner_user_id), cleaner])
+  );
   rows.forEach((row) => {
     const existing = bookedMap.get(row.reservationKey);
     if (!existing) {
       return;
     }
     row.changeDate = existing.changeover_date || row.changeDate;
-    row.cleanerId = existing.cleaner_id ? Number(existing.cleaner_id) : null;
-    if (row.cleanerId && cleanerById.has(row.cleanerId)) {
-      const cleaner = cleanerById.get(row.cleanerId);
+    row.cleanerId = existing.cleaner_user_id ? Number(existing.cleaner_user_id) : null;
+    if (!row.cleanerId && existing.cleaner_id) {
+      const fallbackCleaner = (currentCleaners || []).find((cleaner) => Number(cleaner.id) === Number(existing.cleaner_id));
+      row.cleanerId = fallbackCleaner && fallbackCleaner.cleaner_user_id ? Number(fallbackCleaner.cleaner_user_id) : null;
+    }
+    if (row.cleanerId && cleanerByUserId.has(row.cleanerId)) {
+      const cleaner = cleanerByUserId.get(row.cleanerId);
       row.cleanerName = (cleaner.first_name || '') + ' ' + (cleaner.last_name || '');
     }
   });
@@ -1377,8 +1393,12 @@ function renderSchedulePreviewTable(rows, errors, notifications) {
     cleanerSelect.appendChild(unallocatedOption);
 
     currentCleaners.forEach((cleaner) => {
+      const cleanerUserId = Number(cleaner.cleaner_user_id || 0);
+      if (!Number.isInteger(cleanerUserId) || cleanerUserId <= 0) {
+        return;
+      }
       const option = document.createElement('option');
-      option.value = cleaner.id;
+      option.value = String(cleanerUserId);
       option.textContent = (cleaner.first_name || '') + ' ' + (cleaner.last_name || '');
       cleanerSelect.appendChild(option);
     });
@@ -1635,7 +1655,7 @@ async function persistCurrentScheduleChanges() {
         reservationCheckinDate: row.checkinDate,
         reservationCheckoutDate: row.checkoutDate,
         changeoverDate: row.changeDate || row.date,
-        cleanerId: row.cleanerId
+        cleanerUserId: row.cleanerId
       }))
     })
   });
