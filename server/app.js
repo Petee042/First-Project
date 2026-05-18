@@ -1021,7 +1021,7 @@ async function initializeUserStore() {
     FROM shared_resource_reservations rr
     WHERE rr.client_account_id IS NOT NULL
       AND NULLIF(TRIM(rr.email_address), '') IS NOT NULL
-    GROUP BY rr.client_account_id, LOWER(TRIM(rr.email_address)), TRIM(COALESCE(rr.telephone, ''))
+    GROUP BY rr.client_account_id, LOWER(TRIM(rr.email_address)), TRIM(COALESCE(rr.telephone, '')), COALESCE(rr.reservation_identifier, rr.id::text)
     ON CONFLICT (client_account_id, guest_email, guest_phone)
     DO UPDATE
     SET last_seen_at = GREATEST(guest_relationships.last_seen_at, EXCLUDED.last_seen_at),
