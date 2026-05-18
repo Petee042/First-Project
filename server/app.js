@@ -4250,6 +4250,64 @@ async function getAllUsers() {
   return result.rows;
 }
 
+async function getAllSiteUsersWithMemberships() {
+  if (!usePostgres) {
+    return readUsersFromFile()
+      .slice()
+      .sort((a, b) => String(a.username).localeCompare(String(b.username)))
+      .map((user) => ({
+        id: Number(user.id),
+        username: user.username,
+        email: user.email,
+        first_name: user.first_name || '',
+        family_name: user.family_name || '',
+        telephone: user.telephone || '',
+        is_validated: user.is_validated !== false,
+        created_at: user.created_at || null,
+        memberships: []
+      }));
+  }
+
+  const result = await pool.query(
+    `
+      SELECT u.id,
+             u.username,
+             u.email,
+             u.first_name,
+             u.family_name,
+             u.telephone,
+             u.is_validated,
+             u.created_at,
+             COALESCE(
+               JSON_AGG(
+                 JSON_BUILD_OBJECT(
+                   'client_account_id', cm.client_account_id,
+                   'client_display_name', ca.display_name,
+                   'role', cm.role,
+                   'status', cm.status
+                 )
+                 ORDER BY ca.display_name ASC, cm.role ASC, cm.id ASC
+               ) FILTER (WHERE cm.id IS NOT NULL),
+               '[]'::json
+             ) AS memberships
+      FROM users u
+      LEFT JOIN client_memberships cm
+        ON cm.user_id = u.id
+       AND cm.status IN ('active', 'invited')
+      LEFT JOIN client_accounts ca
+        ON ca.id = cm.client_account_id
+      GROUP BY u.id, u.username, u.email, u.first_name, u.family_name, u.telephone, u.is_validated, u.created_at
+      ORDER BY u.username ASC
+    `
+  );
+
+  return result.rows.map((row) => ({
+    ...row,
+    id: Number(row.id),
+    memberships: Array.isArray(row.memberships) ? row.memberships : []
+  }));
+}
+
 async function deleteUserAndData(userId) {
   if (!usePostgres) {
     const users = readUsersFromFile();
@@ -6365,6 +6423,17 @@ app.get('/api/admin/users', requireAdminAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load users.' });
+  }
+});
+
+// GET /api/admin/site-users
+app.get('/api/admin/site-users', requireAdminAuth, async (req, res) => {
+  try {
+    const users = await getAllSiteUsersWithMemberships();
+    return res.json({ users });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load site users.' });
   }
 });
 

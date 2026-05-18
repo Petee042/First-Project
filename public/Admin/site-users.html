@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Site Users - AutomaticPeople</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <div class="header-left">
+      <a href="/Admin/index.html" class="btn secondary">Back to Admin</a>
+      <a class="top-brand-link" href="/Admin/index.html" aria-label="AutomaticPeople admin home">
+        <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
+      </a>
+    </div>
+    <button id="adminLogoutBtn" class="btn secondary">Log Out</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide admin-card">
+      <h2>Site Users</h2>
+      <p class="hint">All site users with their profile details, client associations, and roles.</p>
+      <p id="siteUsersMessage" class="message" aria-live="polite"></p>
+
+      <section class="listing-form-section">
+        <div class="table-wrap">
+          <table class="calendar-table site-users-table" aria-label="Site users">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Full Name</th>
+                <th>Email</th>
+                <th>Telephone</th>
+                <th>Validated</th>
+                <th>Clients / Roles</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="siteUsersTableBody">
+              <tr>
+                <td colspan="8">Loading users...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/Admin/site-users.js"></script>
+</body>
+</html>

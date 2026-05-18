@@ -421,6 +421,34 @@ textarea:focus {
 
 .user-table td { color: #1a1a2e; }
 
+.site-users-table td,
+.site-users-table th {
+  vertical-align: top;
+}
+
+.site-users-memberships {
+  display: grid;
+  gap: 0.4rem;
+  white-space: normal;
+}
+
+.site-users-membership-item {
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #e1e6f4;
+  border-radius: 8px;
+  background: #f8faff;
+}
+
+.site-users-membership-title {
+  font-weight: 600;
+  color: #22345f;
+}
+
+.site-users-membership-meta {
+  color: #5b6784;
+  font-size: 0.86rem;
+}
+
 .api-tester-card {
   max-width: 980px;
 }
