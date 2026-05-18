@@ -2656,6 +2656,28 @@ async function getUserByEmailStrict(email) {
   return findUserByEmail(normalized);
 }
 
+async function hasPendingClientInviteForUser(userId) {
+  const id = Number(userId);
+  if (!usePostgres || !Number.isInteger(id) || id <= 0) {
+    return false;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id
+      FROM client_memberships
+      WHERE user_id = $1
+        AND role IN ('Manager', 'Staff')
+        AND status = 'invited'
+      ORDER BY id ASC
+      LIMIT 1
+    `,
+    [id]
+  );
+
+  return Boolean(result.rows[0]);
+}
+
 async function createUnvalidatedSiteUserForInvite(input) {
   if (!usePostgres) {
     return { error: 'Team invitations require database mode.' };
@@ -6933,11 +6955,21 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password.' });
     }
 
-    if (user.is_validated === false) {
-      return res.status(403).json({
-        code: 'ACCOUNT_NOT_VALIDATED',
-        error: 'Your account is not validated yet. Please click the validation link sent to your email before logging in.'
-      });
+    let authenticatedUser = user;
+
+    if (authenticatedUser.is_validated === false) {
+      const isInvitedClientUser = await hasPendingClientInviteForUser(authenticatedUser.id);
+      if (!isInvitedClientUser) {
+        return res.status(403).json({
+          code: 'ACCOUNT_NOT_VALIDATED',
+          error: 'Your account is not validated yet. Please click the validation link sent to your email before logging in.'
+        });
+      }
+
+      const nowValidated = await markUserValidated(authenticatedUser.id);
+      if (nowValidated) {
+        authenticatedUser = nowValidated;
+      }
     }
 
     // Regenerate session on login to prevent session fixation
@@ -6946,9 +6978,9 @@ app.post('/api/login', async (req, res) => {
         console.error(err);
         return res.status(500).json({ error: 'Server error. Please try again.' });
       }
-      req.session.userId = user.id;
-      req.session.username = user.username;
-      req.session.email = user.email;
+      req.session.userId = authenticatedUser.id;
+      req.session.username = authenticatedUser.username;
+      req.session.email = authenticatedUser.email;
       return res.json({ message: 'Login successful.' });
     });
   } catch (err) {
@@ -7360,8 +7392,6 @@ app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
       });
     }
 
-    let shouldSendValidationEmail = false;
-
     if (!siteUser) {
       const created = await createUnvalidatedSiteUserForInvite({
         firstName,
@@ -7374,16 +7404,12 @@ app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
         return res.status(400).json({ error: created.error });
       }
       siteUser = created.user;
-      shouldSendValidationEmail = true;
     } else {
       await updateUserInviteProfileIfMissing(siteUser.id, {
         firstName,
         familyName,
         country
       });
-      if (siteUser.is_validated === false) {
-        shouldSendValidationEmail = true;
-      }
     }
 
     const result = await setClientTeamRolesForUser(
@@ -7395,18 +7421,11 @@ app.post('/api/access/team', requireScopedRole('Client'), async (req, res) => {
     if (result.error) {
       return res.status(400).json({ error: result.error });
     }
-    let validationEmailSent = false;
-    if (shouldSendValidationEmail) {
-      const emailResult = await sendSiteUserValidationEmail(req, siteUser);
-      validationEmailSent = emailResult.ok;
-    }
-
     return res.status(201).json({
       invited: true,
       existingUser: Boolean(confirmExisting),
       user: result.user,
-      memberships: result.memberships,
-      validationEmailSent
+      memberships: result.memberships
     });
   } catch (err) {
     console.error(err);
