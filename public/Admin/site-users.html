@@ -20,32 +20,28 @@
   <main class="dashboard">
     <div class="card-container wide admin-card">
       <h2>Site Users</h2>
-      <p class="hint">All site users with their profile details, client associations, and roles.</p>
+      <p class="hint">All site users with quick access to edit profile details.</p>
       <p id="siteUsersMessage" class="message" aria-live="polite"></p>
 
       <section class="listing-form-section">
         <div class="calendar-source-row admin-search-row">
           <label for="siteUsersSearch">Search</label>
-          <input id="siteUsersSearch" type="search" placeholder="Search users, emails, clients, or roles" />
+          <input id="siteUsersSearch" type="search" placeholder="Search by first name, family name, or email" />
         </div>
         <p id="siteUsersCount" class="hint">Loading users...</p>
         <div class="table-wrap">
           <table class="calendar-table site-users-table" aria-label="Site users">
             <thead>
               <tr>
-                <th>ID</th>
-                <th>Username</th>
-                <th>Full Name</th>
+                <th>First Name</th>
+                <th>Family Name</th>
                 <th>Email</th>
-                <th>Country</th>
-                <th>Validated</th>
-                <th>Clients / Roles</th>
-                <th>Created</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody id="siteUsersTableBody">
               <tr>
-                <td colspan="8">Loading users...</td>
+                <td colspan="4">Loading users...</td>
               </tr>
             </tbody>
           </table>

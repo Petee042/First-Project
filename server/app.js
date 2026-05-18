@@ -4663,6 +4663,145 @@ async function getAllSiteUsersWithMemberships() {
   }));
 }
 
+async function getSiteUserForAdmin(userId) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return null;
+  }
+
+  const users = await getAllSiteUsersWithMemberships();
+  const user = users.find((item) => Number(item.id) === id);
+  return user || null;
+}
+
+async function updateSiteUserForAdmin(userId, input) {
+  const id = Number(userId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return { error: 'Invalid user id.' };
+  }
+
+  const username = String(input.username || '').trim();
+  const firstName = String(input.firstName || '').trim();
+  const familyName = String(input.familyName || '').trim();
+  const country = normaliseCountryOfResidence(input.country) || '';
+  const email = normaliseOptionalEmail(input.email);
+  const isValidated = input.isValidated === true;
+  const newPassword = String(input.password || '');
+
+  if (!username) {
+    return { error: 'Username is required.' };
+  }
+  if (!firstName || !familyName || !country || !email) {
+    return { error: 'First name, family name, country, and email are required.' };
+  }
+
+  let passwordHash = null;
+  if (newPassword) {
+    const passwordCheck = validateStrongPassword(newPassword);
+    if (!passwordCheck.ok) {
+      return { error: passwordCheck.error };
+    }
+    passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+  }
+
+  if (!usePostgres) {
+    const users = readUsersFromFile();
+    const index = users.findIndex((user) => Number(user.id) === id);
+    if (index < 0) {
+      return { error: 'User not found.' };
+    }
+
+    const duplicateEmail = users.some((user) => Number(user.id) !== id && String(user.email || '').toLowerCase() === email);
+    if (duplicateEmail) {
+      return { error: 'Email address already in use.' };
+    }
+
+    const duplicateUsername = users.some((user) => Number(user.id) !== id && String(user.username || '').toLowerCase() === username.toLowerCase());
+    if (duplicateUsername) {
+      return { error: 'Username already in use.' };
+    }
+
+    users[index].username = username;
+    users[index].first_name = firstName;
+    users[index].family_name = familyName;
+    users[index].country_of_residence = country;
+    users[index].email = email;
+    users[index].is_validated = isValidated;
+    if (passwordHash) {
+      users[index].password_hash = passwordHash;
+    }
+
+    writeUsersToFile(users);
+    const updated = await getSiteUserForAdmin(id);
+    return { user: updated };
+  }
+
+  const emailConflict = await pool.query(
+    'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id <> $2 LIMIT 1',
+    [email, id]
+  );
+  if (emailConflict.rows[0]) {
+    return { error: 'Email address already in use.' };
+  }
+
+  const usernameConflict = await pool.query(
+    'SELECT id FROM users WHERE LOWER(username) = LOWER($1) AND id <> $2 LIMIT 1',
+    [username, id]
+  );
+  if (usernameConflict.rows[0]) {
+    return { error: 'Username already in use.' };
+  }
+
+  const updateResult = await pool.query(
+    `
+      UPDATE users
+      SET username = $1,
+          first_name = $2,
+          family_name = $3,
+          country_of_residence = $4,
+          email = $5,
+          is_validated = $6,
+          password_hash = COALESCE($7, password_hash)
+      WHERE id = $8
+      RETURNING id
+    `,
+    [username, firstName, familyName, country, email, isValidated, passwordHash, id]
+  );
+
+  if (!updateResult.rows[0]) {
+    return { error: 'User not found.' };
+  }
+
+  if (isValidated) {
+    await pool.query(
+      `
+        UPDATE client_memberships
+        SET status = 'active',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = $1
+          AND status = 'invited'
+          AND role IN ('Manager', 'Staff')
+      `,
+      [id]
+    );
+  } else {
+    await pool.query(
+      `
+        UPDATE client_memberships
+        SET status = 'invited',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = $1
+          AND status = 'active'
+          AND role IN ('Manager', 'Staff')
+      `,
+      [id]
+    );
+  }
+
+  const updated = await getSiteUserForAdmin(id);
+  return { user: updated };
+}
+
 async function deleteUserAndData(userId) {
   if (!usePostgres) {
     const users = readUsersFromFile();
@@ -6869,6 +7008,50 @@ app.get('/api/admin/site-users', requireAdminAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load site users.' });
+  }
+});
+
+// GET /api/admin/site-users/:userId
+app.get('/api/admin/site-users/:userId', requireAdminAuth, async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'Invalid user id.' });
+  }
+
+  try {
+    const user = await getSiteUserForAdmin(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'Site user not found.' });
+    }
+    return res.json({ user });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load site user.' });
+  }
+});
+
+// PUT /api/admin/site-users/:userId
+app.put('/api/admin/site-users/:userId', requireAdminAuth, async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'Invalid user id.' });
+  }
+
+  try {
+    const result = await updateSiteUserForAdmin(userId, req.body || {});
+    if (result.error === 'User not found.') {
+      return res.status(404).json({ error: result.error });
+    }
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json({
+      message: 'Site user updated.',
+      user: result.user
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to update site user.' });
   }
 });
 

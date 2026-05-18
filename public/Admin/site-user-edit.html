@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Edit Site User - AutomaticPeople</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <div class="header-left">
+      <a href="/Admin/site-users.html" class="btn secondary">Back to Site Users</a>
+      <a class="top-brand-link" href="/Admin/index.html" aria-label="AutomaticPeople admin home">
+        <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
+      </a>
+    </div>
+    <button id="adminLogoutBtn" class="btn secondary">Log Out</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide admin-card">
+      <h2>Edit Site User</h2>
+      <p id="editSiteUserMessage" class="message" aria-live="polite"></p>
+
+      <section class="listing-form-section">
+        <div class="calendar-source-row">
+          <label for="editUserId">User ID</label>
+          <input id="editUserId" type="text" readonly />
+        </div>
+        <div class="calendar-source-row">
+          <label for="editUsername">Username</label>
+          <input id="editUsername" type="text" maxlength="60" required />
+        </div>
+        <div class="calendar-source-row">
+          <label for="editFirstName">First Name</label>
+          <input id="editFirstName" type="text" maxlength="120" required />
+        </div>
+        <div class="calendar-source-row">
+          <label for="editFamilyName">Family Name</label>
+          <input id="editFamilyName" type="text" maxlength="120" required />
+        </div>
+        <div class="calendar-source-row">
+          <label for="editCountry">Country Of Residence</label>
+          <input id="editCountry" type="text" maxlength="120" required />
+        </div>
+        <div class="calendar-source-row">
+          <label for="editEmail">Email Address</label>
+          <input id="editEmail" type="email" maxlength="160" required />
+        </div>
+        <div class="calendar-source-row">
+          <label for="editPassword">Set New Password (optional)</label>
+          <input id="editPassword" type="password" minlength="8" />
+          <p class="hint">If set, must be at least 8 characters with one uppercase, one number, and one special character.</p>
+        </div>
+        <div class="calendar-source-row">
+          <label>
+            <input id="editIsValidated" type="checkbox" />
+            User is validated
+          </label>
+        </div>
+
+        <div class="manage-team-actions">
+          <button id="saveSiteUserBtn" class="btn primary inline-btn" type="button">Save</button>
+          <button id="deleteSiteUserBtn" class="btn secondary inline-btn" type="button">Delete</button>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/Admin/site-user-edit.js"></script>
+</body>
+</html>
