@@ -2,7 +2,7 @@
 
 const params = new URLSearchParams(window.location.search);
 const listingIdParam = Number(params.get('id'));
-const isCreateMode = String(params.get('new') || '').trim() === '1' || !(Number.isInteger(listingIdParam) && listingIdParam > 0);
+let isCreateMode = String(params.get('new') || '').trim() === '1' || !(Number.isInteger(listingIdParam) && listingIdParam > 0);
 let listingId = Number.isInteger(listingIdParam) && listingIdParam > 0 ? listingIdParam : null;
 let canEditListing = false;
 let currentAccessRole = '';
@@ -1403,9 +1403,16 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
       const nextListingId = Number(data && data.listing && data.listing.id);
       if (Number.isInteger(nextListingId) && nextListingId > 0) {
         listingId = nextListingId;
+        isCreateMode = false;
+        window.history.replaceState({}, '', '/listing.html?id=' + encodeURIComponent(String(listingId)));
+        document.getElementById('deleteListingBtn').classList.remove('hidden');
+        document.getElementById('listingFeedsSection').classList.remove('hidden');
+        document.getElementById('listingAssignmentEditor').classList.remove('hidden');
+        await loadListing();
         await saveListingManagerAssignments();
-        suppressBeforeunload = true;
-        goBackToConfig();
+        await fetchListingManagers();
+        initialListingFormState = getListingFormState();
+        setListingMessage('Listing created. You can now add feed sources.', false);
         return;
       }
       setListingMessage('Failed to resolve new listing id after create.', true);
