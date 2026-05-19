@@ -1182,7 +1182,7 @@ async function updateCalendars() {
 })();
 
 async function fetchListingManagers() {
-  if (isCreateMode || !listingId) {
+  if (!listingId && !isCreateMode) {
     applyListingAssignmentEditor(null);
     return;
   }
