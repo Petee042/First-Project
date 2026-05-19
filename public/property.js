@@ -151,7 +151,7 @@ async function loadProperty() {
   document.getElementById('propertyPublicId').value = formatEntityId(property.id);
   document.getElementById('propertyName').value = property.name || '';
   document.getElementById('postalAddress').value = property.postal_address || '';
-  document.getElementById('deletePropertyBtn').disabled = !canEditProperty || property.is_default === true;
+  document.getElementById('deletePropertyBtn').disabled = !canEditProperty;
 
   if (currentAccessRole === 'Manager') {
     if (!managerScopeState.hasAssignments) {
