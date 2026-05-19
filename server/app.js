@@ -3059,10 +3059,15 @@ async function getPropertyByIdForUser(propertyId, userId) {
   return result.rows[0];
 }
 
-async function createPropertyForUser(userId, name) {
+async function createPropertyForUser(userId, clientAccountId, name) {
   const trimmedName = String(name || '').trim();
   if (!trimmedName) {
     return { error: 'Property name is required.' };
+  }
+
+  const scopedClientAccountId = Number(clientAccountId);
+  if (!Number.isInteger(scopedClientAccountId) || scopedClientAccountId <= 0) {
+    return { error: 'Client account context is required.' };
   }
 
   
@@ -3070,11 +3075,11 @@ async function createPropertyForUser(userId, name) {
   try {
     const result = await pool.query(
       `
-        INSERT INTO properties (user_id, name)
-        VALUES ($1, $2)
-        RETURNING id, user_id, name, postal_address, manager_name, manager_email, is_default, created_at
+        INSERT INTO properties (user_id, client_account_id, name)
+        VALUES ($1, $2, $3)
+        RETURNING id, user_id, client_account_id, name, postal_address, manager_name, manager_email, is_default, created_at
       `,
-      [userId, trimmedName]
+      [userId, scopedClientAccountId, trimmedName]
     );
     return { property: result.rows[0] };
   } catch (err) {
@@ -3109,9 +3114,21 @@ async function updatePropertyForUser(propertyId, userId, input) {
     const result = await pool.query(
       `
         UPDATE properties
-        SET name = $1, postal_address = $2, manager_name = $3, manager_email = $4
+        SET name = $1,
+            postal_address = $2,
+            manager_name = $3,
+            manager_email = $4,
+            client_account_id = COALESCE(client_account_id, (
+              SELECT client_account_id
+              FROM client_memberships
+              WHERE user_id = $6
+                AND role = 'Client'
+                AND status = 'active'
+              ORDER BY id ASC
+              LIMIT 1
+            ))
         WHERE id = $5 AND user_id = $6
-        RETURNING id, user_id, name, postal_address, manager_name, manager_email, is_default, created_at
+        RETURNING id, user_id, client_account_id, name, postal_address, manager_name, manager_email, is_default, created_at
       `,
       [name, postalAddress, managerName, managerEmail, propertyId, userId]
     );
@@ -7407,9 +7424,14 @@ app.post('/api/properties', requireScopedRole('Manager'), async (req, res) => {
   }
 
   try {
-    const { property, error } = await createPropertyForUser(req.accessContext.effectiveOwnerUserId, name);
+    const { property, error } = await createPropertyForUser(
+      req.accessContext.effectiveOwnerUserId,
+      req.accessContext.activeClientAccountId,
+      name
+    );
     if (error) {
-      return res.status(409).json({ error });
+      const status = error === 'Client account context is required.' ? 400 : 409;
+      return res.status(status).json({ error });
     }
     return res.status(201).json({ property });
   } catch (err) {
