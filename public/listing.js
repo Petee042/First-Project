@@ -1263,6 +1263,10 @@ function applyListingAssignmentEditor(snapshot) {
 }
 
 async function saveListingManagerAssignments() {
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return;
+  }
+
   if (currentAccessRole !== 'Client') {
     setListingMessage('Only Client role can change manager assignments.', true);
     return;
@@ -1363,6 +1367,8 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
   const usualCleanerRaw = document.getElementById('listingUsualCleaner').value;
   const usualCleanerId = usualCleanerRaw ? Number(usualCleanerRaw) : null;
   const emptyExport = document.getElementById('listingEmptyExport').checked;
+  const hasValidListingId = Number.isInteger(listingId) && listingId > 0;
+  const shouldCreate = isCreateMode || !hasValidListingId;
 
   if (!name) {
     setListingMessage('Listing name is required.', true);
@@ -1376,8 +1382,8 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
 
   button.disabled = true;
   try {
-    const res = await fetch(isCreateMode ? '/api/listings' : ('/api/listings/' + listingId), {
-      method: isCreateMode ? 'POST' : 'PUT',
+    const res = await fetch(shouldCreate ? '/api/listings' : ('/api/listings/' + listingId), {
+      method: shouldCreate ? 'POST' : 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId, emptyExport })
     });
@@ -1388,7 +1394,7 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
       return;
     }
 
-    if (isCreateMode) {
+    if (shouldCreate) {
       const nextListingId = Number(data && data.listing && data.listing.id);
       if (Number.isInteger(nextListingId) && nextListingId > 0) {
         listingId = nextListingId;
@@ -1397,6 +1403,8 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
         goBackToConfig();
         return;
       }
+      setListingMessage('Failed to resolve new listing id after create.', true);
+      return;
     } else {
       await saveListingManagerAssignments();
     }
