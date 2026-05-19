@@ -21,6 +21,9 @@
 
   <main class="dashboard">
     <div class="card-container wide">
+      <div class="feed-actions back-row" style="margin-bottom: 0.7rem;">
+        <button type="button" id="backBtn" class="back-arrow-control" aria-label="Back"></button>
+      </div>
       <h2 id="chargeConfigTitle">Configure Charges</h2>
       <p id="chargeConfigMessage" class="message"></p>
       <p id="chargeConfigHelp" class="help-text"></p>
@@ -77,7 +80,6 @@
       </section>
 
       <div class="feed-actions resource-charge-actions floating-action-bar" style="margin-top: 1.5rem;">
-        <button type="button" id="backBtn" class="btn secondary">← Back</button>
         <button type="button" id="saveChargeConfigBtn" class="btn primary calendar-btn action-icon action-save" aria-label="Save Charge Logic">Save Charge Logic</button>
         <button type="button" id="cancelChargeConfigBtn" class="btn secondary action-icon action-cancel" aria-label="Cancel">Cancel</button>
       </div>
