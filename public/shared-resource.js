@@ -976,8 +976,6 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
     document.getElementById('sharedResourceTitle').textContent = 'Facility: ' + (data.resource.short_description || '');
     initialSharedResourceFormState = getSharedResourceFormState();
     setSharedResourceMessage('Facility saved.', false);
-    suppressBeforeunload = true;
-    goBackToConfig();
   } catch {
     setSharedResourceMessage('Network error saving facility.', true);
   } finally {
