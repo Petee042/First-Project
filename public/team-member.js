@@ -115,7 +115,15 @@ async function loadTeamMember() {
   document.getElementById('teamMemberTitle').textContent = 'Team Member: ' + ([member.first_name, member.family_name].filter(Boolean).join(' ') || member.email);
   document.getElementById('teamMemberFirstName').value = member.first_name || '';
   document.getElementById('teamMemberFamilyName').value = member.family_name || '';
-  document.getElementById('teamMemberCountry').value = member.country_of_residence || '';
+  const countrySelect = document.getElementById('teamMemberCountry');
+  const memberCountry = String(member.country_of_residence || '').trim();
+  if (memberCountry && !Array.from(countrySelect.options).some((opt) => opt.value === memberCountry)) {
+    const customOption = document.createElement('option');
+    customOption.value = memberCountry;
+    customOption.textContent = memberCountry;
+    countrySelect.appendChild(customOption);
+  }
+  countrySelect.value = memberCountry;
   document.getElementById('teamMemberEmail').value = member.email || '';
   document.getElementById('teamRoleManager').checked = member.roles.has('Manager');
   document.getElementById('teamRoleStaff').checked = member.roles.has('Staff');
