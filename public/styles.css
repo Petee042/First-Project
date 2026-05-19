@@ -1001,6 +1001,78 @@ textarea:focus {
   margin-top: 0.35rem;
 }
 
+.floating-action-bar {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 1300;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 0.35rem;
+  border: 1px solid #dbe1ef;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 10px 28px rgba(21, 34, 56, 0.22);
+}
+
+.floating-action-bar .btn {
+  margin-top: 0;
+}
+
+.floating-action-bar .action-icon {
+  width: 2.7rem;
+  height: 2.7rem;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.floating-action-bar .action-icon::before {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.floating-action-bar .action-delete {
+  order: 1;
+}
+
+.floating-action-bar .action-cancel {
+  order: 2;
+}
+
+.floating-action-bar .action-save {
+  order: 3;
+}
+
+.floating-action-bar .action-delete::before {
+  content: '\1F5D1';
+}
+
+.floating-action-bar .action-cancel::before {
+  content: '\2715';
+}
+
+.floating-action-bar .action-save::before {
+  content: '\2713';
+}
+
+.floating-action-bar .action-save.btn.primary {
+  width: 2.7rem;
+  margin-top: 0;
+}
+
+.floating-action-bar .action-save.btn.primary:hover {
+  background: #3451d1;
+}
+
+.floating-action-bar .btn:disabled {
+  opacity: 0.55;
+}
+
 .source-color-cell {
   display: flex;
   align-items: center;
@@ -1253,6 +1325,12 @@ textarea:focus {
 
   .feed-actions {
     flex-direction: column;
+  }
+
+  .floating-action-bar {
+    flex-direction: row;
+    right: 0.65rem;
+    bottom: 0.65rem;
   }
 
   .public-booking-action-row {
@@ -1551,6 +1629,10 @@ textarea:focus {
 
 .resource-charge-actions .btn.secondary {
   width: auto;
+  flex: 0 0 auto;
+}
+
+.floating-action-bar.resource-charge-actions .btn {
   flex: 0 0 auto;
 }
 
