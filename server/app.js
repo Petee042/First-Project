@@ -879,6 +879,11 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS empty_export BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
+  await pool.query(`
     ALTER TABLE shared_resources
     ADD COLUMN IF NOT EXISTS client_account_id BIGINT REFERENCES client_accounts(id) ON DELETE SET NULL
   `);
@@ -4219,7 +4224,7 @@ async function getListingByIdForUser(listingId, userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1 AND l.user_id = $2
@@ -4251,7 +4256,7 @@ async function getListingById(listingId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1
@@ -4369,7 +4374,7 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
   }
 }
 
-async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId) {
+async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId, emptyExport) {
   
 
   try {
@@ -4385,11 +4390,12 @@ async function updateListingForUser(listingId, userId, name, propertyId, dateBas
             property_id = $2,
             client_account_id = (SELECT client_account_id FROM properties WHERE id = $2),
             date_basis = $3,
-            usual_cleaner_id = $4
+            usual_cleaner_id = $4,
+            empty_export = $7
         WHERE id = $5 AND user_id = $6
-        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, created_at
+        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, empty_export, created_at
       `,
-      [name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId), listingId, userId]
+      [name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId), listingId, userId, emptyExport === true]
     );
 
     if (!result.rows[0]) {
@@ -7661,6 +7667,7 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
   const propertyId = Number(req.body.propertyId);
   const dateBasis = normaliseDateBasis(req.body.dateBasis);
   const usualCleanerId = req.body.usualCleanerId;
+  const emptyExport = req.body.emptyExport === true || req.body.emptyExport === 'true';
 
   if (!Number.isInteger(listingId) || listingId <= 0) {
     return res.status(400).json({ error: 'Invalid listing id.' });
@@ -7688,7 +7695,8 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
       name,
       Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null,
       dateBasis,
-      usualCleanerId
+      usualCleanerId,
+      emptyExport
     );
     if (error === 'Listing not found.') {
       return res.status(404).json({ error });
@@ -8227,7 +8235,7 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
       return res.status(404).send('Listing not found.');
     }
 
-    const events = await getIcsEventsForListing(listingId);
+    const events = listing.empty_export ? [] : await getIcsEventsForListing(listingId);
 
     const icsContent = buildIcsCalendar(listing, events);
     const safeName = String(listing.name || 'listing').replace(/[^a-z0-9]+/gi, '-').toLowerCase();

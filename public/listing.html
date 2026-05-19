@@ -95,6 +95,12 @@
         </form>
 
         <div class="ics-export-block">
+          <div class="calendar-source-row" style="margin-bottom: 0.75rem;">
+            <label class="team-role-option">
+              <input type="checkbox" id="listingEmptyExport" />
+              <span>Export empty data <span class="help-text" style="font-size:0.8em;">(dev: suppress all events in ICS export)</span></span>
+            </label>
+          </div>
           <p class="ics-export-label">Listing calendar export (.ics)</p>
           <div class="ics-export-row">
             <input id="icsExportUrl" type="text" class="ics-export-url" readonly />

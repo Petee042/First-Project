@@ -39,7 +39,8 @@ function getListingFormState() {
     name: String(document.getElementById('listingName').value || ''),
     propertyId: String(document.getElementById('listingPropertyId').value || ''),
     dateBasis: String(document.getElementById('listingDateBasis').value || ''),
-    usualCleanerId: String(document.getElementById('listingUsualCleaner').value || '')
+    usualCleanerId: String(document.getElementById('listingUsualCleaner').value || ''),
+    emptyExport: String(document.getElementById('listingEmptyExport').checked)
   });
 }
 
@@ -1040,6 +1041,7 @@ async function loadListing() {
   document.getElementById('listingName').value = listing.name;
   document.getElementById('listingPropertyId').value = String(listing.property_id || '');
   document.getElementById('listingDateBasis').value = listing.date_basis === 'checkin' ? 'checkin' : 'checkout';
+  document.getElementById('listingEmptyExport').checked = listing.empty_export === true || listing.empty_export === 'true';
 
   if (currentAccessRole === 'Manager') {
     if (!managerScopeState.hasAssignments) {
@@ -1360,6 +1362,7 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
   const dateBasis = document.getElementById('listingDateBasis').value === 'checkin' ? 'checkin' : 'checkout';
   const usualCleanerRaw = document.getElementById('listingUsualCleaner').value;
   const usualCleanerId = usualCleanerRaw ? Number(usualCleanerRaw) : null;
+  const emptyExport = document.getElementById('listingEmptyExport').checked;
 
   if (!name) {
     setListingMessage('Listing name is required.', true);
@@ -1376,7 +1379,7 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     const res = await fetch(isCreateMode ? '/api/listings' : ('/api/listings/' + listingId), {
       method: isCreateMode ? 'POST' : 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId })
+      body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId, emptyExport })
     });
     const data = await res.json();
 
