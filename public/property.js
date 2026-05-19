@@ -8,6 +8,7 @@ let canEditProperty = false;
 let currentAccessRole = '';
 let currentUserEmail = '';
 let initialPropertyFormState = '';
+let suppressBeforeunload = false;
 let managerScopeState = {
   hasAssignments: false,
   propertyIdSet: new Set()
@@ -166,7 +167,7 @@ async function loadProperty() {
 }
 
 async function fetchPropertyManagers() {
-  if (isCreateMode) {
+  if (!propertyId && !isCreateMode) {
     applyPropertyAssignmentEditor(null);
     return;
   }
@@ -273,6 +274,7 @@ async function savePropertyManagerAssignments() {
 
       const res = await fetch('/api/access/manager-assignments/' + encodeURIComponent(membershipId), {
         method: 'PUT',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ propertyIds: isChecked ? [propertyId] : [], listingIds })
       });
@@ -290,6 +292,7 @@ async function savePropertyManagerAssignments() {
     await fetchPropertyManagers();
   } catch (err) {
     setPropertyMessage(err.message || 'Failed to save manager assignments.', true);
+    throw err;
   }
 }
 
@@ -311,7 +314,6 @@ async function savePropertyManagerAssignments() {
       document.getElementById('propertyTitle').textContent = 'Create Property';
       document.getElementById('propertyPublicId').value = 'New';
       document.getElementById('deletePropertyBtn').classList.add('hidden');
-      document.getElementById('propertyAssignmentEditor').classList.add('hidden');
       setPropertyScopeHint('');
       initialPropertyFormState = getPropertyFormState();
     } else {
@@ -333,7 +335,7 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
     return;
   }
 
-  const button = e.target.querySelector('button[type="submit"]');
+  const button = document.getElementById('savePropertyBtn');
   const name = document.getElementById('propertyName').value.trim();
   const postalAddress = document.getElementById('postalAddress').value.trim();
 
@@ -359,16 +361,24 @@ document.getElementById('propertyForm').addEventListener('submit', async (e) => 
     if (isCreateMode) {
       const nextId = Number(data && data.property && data.property.id);
       if (Number.isInteger(nextId) && nextId > 0) {
-        window.location.href = '/property.html?id=' + encodeURIComponent(nextId);
+        propertyId = nextId;
+        await savePropertyManagerAssignments();
+        suppressBeforeunload = true;
+        goBackToConfig();
         return;
       }
     }
 
+    await savePropertyManagerAssignments();
+
     document.getElementById('propertyTitle').textContent = 'Property: ' + data.property.name;
     initialPropertyFormState = getPropertyFormState();
     setPropertyMessage('Property saved.', false);
-  } catch {
-    setPropertyMessage('Network error saving property.', true);
+    suppressBeforeunload = true;
+    goBackToConfig();
+  } catch (err) {
+    const message = err && err.message ? err.message : 'Network error saving property.';
+    setPropertyMessage(message, true);
   } finally {
     button.disabled = false;
   }
@@ -405,6 +415,7 @@ document.getElementById('deletePropertyBtn').addEventListener('click', async () 
       return;
     }
 
+    suppressBeforeunload = true;
     goBackToConfig();
   } catch {
     setPropertyMessage('Network error deleting property.', true);
@@ -412,16 +423,6 @@ document.getElementById('deletePropertyBtn').addEventListener('click', async () 
     if (!window.location.href.includes('/dashboard.html')) {
       button.disabled = false;
     }
-  }
-});
-
-document.getElementById('savePropertyAssignmentsBtn').addEventListener('click', async () => {
-  const button = document.getElementById('savePropertyAssignmentsBtn');
-  button.disabled = true;
-  try {
-    await savePropertyManagerAssignments();
-  } finally {
-    button.disabled = false;
   }
 });
 
@@ -440,6 +441,9 @@ document.getElementById('backBtn').addEventListener('click', () => {
 });
 
 window.addEventListener('beforeunload', (event) => {
+  if (suppressBeforeunload) {
+    return;
+  }
   if (!hasUnsavedPropertyChanges()) {
     return;
   }

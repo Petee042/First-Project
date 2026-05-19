@@ -43,11 +43,6 @@
             <label for="postalAddress">Postal Address</label>
             <textarea id="postalAddress" rows="4" maxlength="600"></textarea>
           </div>
-          <div class="feed-actions">
-            <button type="submit" class="btn primary calendar-btn">Save Property</button>
-            <button type="button" id="deletePropertyBtn" class="btn secondary">Delete Property</button>
-            <button type="button" id="cancelPropertyBtn" class="btn secondary">Cancel</button>
-          </div>
         </form>
       </section>
 
@@ -55,10 +50,13 @@
         <h3>Manager Assignments</h3>
         <p class="help-text">Select which managers have access to this property.</p>
         <div id="propertyManagersContainer" class="cleaning-empty">Loading managers...</div>
-        <div class="feed-actions">
-          <button type="button" id="savePropertyAssignmentsBtn" class="btn primary calendar-btn">Save Assignments</button>
-        </div>
       </section>
+
+      <div class="feed-actions" style="margin-top: 1.5rem;">
+        <button type="submit" id="savePropertyBtn" class="btn primary calendar-btn" form="propertyForm">Save Property</button>
+        <button type="button" id="deletePropertyBtn" class="btn secondary">Delete Property</button>
+        <button type="button" id="cancelPropertyBtn" class="btn secondary">Cancel</button>
+      </div>
     </div>
   </main>
 
