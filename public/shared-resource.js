@@ -904,6 +904,7 @@ document.getElementById('paymentFreeOfCharge').addEventListener('change', () => 
 
 document.getElementById('openChargeConfigBtn').addEventListener('click', () => {
   saveSharedResourceDraft();
+  suppressBeforeunload = true;
   const target = '/shared-resource-charge-config.html' + (isCreateMode
     ? '?new=1'
     : ('?id=' + encodeURIComponent(resourceId)));

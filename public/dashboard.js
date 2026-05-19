@@ -2177,7 +2177,8 @@ if (createGuestConfigBtn) {
   });
 }
 
-document.getElementById('addTeamMemberForm').addEventListener('submit', async (e) => {
+const _addTeamMemberForm = document.getElementById('addTeamMemberForm');
+if (_addTeamMemberForm) _addTeamMemberForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
   const button = form.querySelector('button[type="submit"]');
@@ -2238,7 +2239,8 @@ document.getElementById('addTeamMemberForm').addEventListener('submit', async (e
   }
 });
 
-document.getElementById('saveTeamMemberEditorBtn').addEventListener('click', async () => {
+const _saveTeamMemberEditorBtn = document.getElementById('saveTeamMemberEditorBtn');
+if (_saveTeamMemberEditorBtn) _saveTeamMemberEditorBtn.addEventListener('click', async () => {
   const button = document.getElementById('saveTeamMemberEditorBtn');
   const userId = Number(document.getElementById('editTeamMemberUserId').value);
   const roles = [];
@@ -2263,7 +2265,8 @@ document.getElementById('saveTeamMemberEditorBtn').addEventListener('click', asy
   }
 });
 
-document.getElementById('deleteTeamMemberBtn').addEventListener('click', async () => {
+const _deleteTeamMemberBtn = document.getElementById('deleteTeamMemberBtn');
+if (_deleteTeamMemberBtn) _deleteTeamMemberBtn.addEventListener('click', async () => {
   const button = document.getElementById('deleteTeamMemberBtn');
   const userId = Number(document.getElementById('editTeamMemberUserId').value);
 
@@ -2309,7 +2312,8 @@ document.getElementById('deleteTeamMemberBtn').addEventListener('click', async (
   }
 });
 
-document.getElementById('closeTeamMemberEditorBtn').addEventListener('click', () => {
+const _closeTeamMemberEditorBtn = document.getElementById('closeTeamMemberEditorBtn');
+if (_closeTeamMemberEditorBtn) _closeTeamMemberEditorBtn.addEventListener('click', () => {
   closeTeamMemberEditor();
 });
 
@@ -2342,7 +2346,8 @@ document.getElementById('startStripeConnectBtn').addEventListener('click', async
   }
 });
 
-document.getElementById('clearNotificationLogBtn').addEventListener('click', () => {
+const _clearNotificationLogBtn = document.getElementById('clearNotificationLogBtn');
+if (_clearNotificationLogBtn) _clearNotificationLogBtn.addEventListener('click', () => {
   currentNotificationRows = [];
   renderNotificationLog([]);
 });
