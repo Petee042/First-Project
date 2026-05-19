@@ -119,7 +119,7 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     if (ok) {
       rememberLoginEmail(email);
       setMessage('login-message', data.message, false);
-      window.location.href = '/dashboard.html';
+      window.location.href = '/dashboard.html?tab=panel-dashboard';
     } else {
       if (data && data.code === 'ACCOUNT_NOT_VALIDATED') {
         setMessage('login-message', 'Your account is not validated yet. Please open the validation email and click the link before logging in.', true);

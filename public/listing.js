@@ -8,7 +8,6 @@ let canEditListing = false;
 let currentAccessRole = '';
 let currentUserEmail = '';
 let initialListingFormState = '';
-let suppressBeforeunload = false;
 let managerScopeState = {
   hasAssignments: false,
   propertyIdSet: new Set(),
@@ -1167,9 +1166,6 @@ async function updateCalendars() {
       populateUsualCleanerSelect(cleaners, null);
       document.getElementById('listingTitle').textContent = 'Create Listing';
       document.getElementById('listingPublicId').value = 'New';
-      document.getElementById('listingFeedsSection').classList.add('hidden');
-      document.getElementById('listingCalendarSection').classList.add('hidden');
-      document.getElementById('listingAssignmentEditor').classList.add('hidden');
       document.getElementById('deleteListingBtn').classList.add('hidden');
       initialListingFormState = getListingFormState();
     } else {
@@ -1383,15 +1379,26 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     if (isCreateMode) {
       const nextListingId = Number(data && data.listing && data.listing.id);
       if (Number.isInteger(nextListingId) && nextListingId > 0) {
-        suppressBeforeunload = true;
-        window.location.href = '/listing.html?id=' + encodeURIComponent(nextListingId);
+        try {
+          await saveListingManagerAssignments();
+        } catch (err) {
+          console.error('Failed to save assignments on create:', err);
+        }
+        goBackToConfig();
         return;
+      }
+    } else {
+      try {
+        await saveListingManagerAssignments();
+      } catch (err) {
+        console.error('Failed to save assignments on update:', err);
       }
     }
 
     document.getElementById('listingTitle').textContent = 'Listing: ' + data.listing.name;
     initialListingFormState = getListingFormState();
     setListingMessage('Listing updated.', false);
+    goBackToConfig();
   } catch {
     setListingMessage('Network error saving listing.', true);
   } finally {
@@ -1528,9 +1535,6 @@ document.getElementById('deleteListingBtn').addEventListener('click', async () =
 });
 
 window.addEventListener('beforeunload', (event) => {
-  if (suppressBeforeunload) {
-    return;
-  }
   if (!hasUnsavedListingChanges()) {
     return;
   }
@@ -1546,12 +1550,4 @@ if (logoutBtn) {
   });
 }
 
-document.getElementById('saveListingAssignmentsBtn').addEventListener('click', async () => {
-  const button = document.getElementById('saveListingAssignmentsBtn');
-  button.disabled = true;
-  try {
-    await saveListingManagerAssignments();
-  } finally {
-    button.disabled = false;
-  }
-});
+

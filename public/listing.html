@@ -56,11 +56,6 @@
               <option value="">— None —</option>
             </select>
           </div>
-          <div class="feed-actions">
-            <button type="submit" class="btn primary calendar-btn">Save Listing</button>
-            <button type="button" id="deleteListingBtn" class="btn secondary">Delete Listing</button>
-            <button type="button" id="cancelListingBtn" class="btn secondary">Cancel</button>
-          </div>
         </form>
       </section>
 
@@ -128,14 +123,17 @@
         </div>
       </section>
 
-      <section class="listing-form-section hidden" id="listingAssignmentEditor">
+      <section class="listing-form-section" id="listingAssignmentEditor">
         <h3>Manager Assignments</h3>
         <p class="help-text">Select which managers have access to this listing.</p>
         <div id="listingManagersContainer" class="cleaning-empty">Loading managers...</div>
-        <div class="feed-actions">
-          <button type="button" id="saveListingAssignmentsBtn" class="btn primary calendar-btn">Save Assignments</button>
-        </div>
       </section>
+
+      <div class="feed-actions" style="margin-top: 1.5rem;">
+        <button type="submit" id="saveListingBtn" class="btn primary calendar-btn" form="renameListingForm">Save Listing</button>
+        <button type="button" id="deleteListingBtn" class="btn secondary">Delete Listing</button>
+        <button type="button" id="cancelListingBtn" class="btn secondary">Cancel</button>
+      </div>
     </div>
   </main>
 
