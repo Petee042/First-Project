@@ -1048,7 +1048,6 @@ textarea:focus {
   border: 1px solid #dbe1ef;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 10px 28px rgba(21, 34, 56, 0.22);
 }
 
 .floating-action-bar .btn {
