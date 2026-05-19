@@ -1514,6 +1514,45 @@ textarea:focus {
   line-height: 1.45;
 }
 
+.resource-charge-page .card-container.wide {
+  max-width: 640px;
+}
+
+.resource-charge-page .help-text {
+  margin-top: 0.35rem;
+  margin-bottom: 0.15rem;
+}
+
+.resource-charge-page .listing-form-section {
+  margin-top: 1.35rem;
+}
+
+.resource-charge-page .resource-dialog-body {
+  gap: 0.9rem;
+}
+
+.resource-charge-page .resource-dialog-fieldset {
+  background: #fafbfd;
+}
+
+.resource-charge-page .resource-hourly-grid {
+  margin-top: 0.1rem;
+}
+
+.resource-charge-actions {
+  flex-wrap: wrap;
+}
+
+.resource-charge-actions .btn.primary {
+  width: auto;
+  flex: 1 1 180px;
+}
+
+.resource-charge-actions .btn.secondary {
+  width: auto;
+  flex: 0 0 auto;
+}
+
 .resource-dialog {
   width: min(760px, calc(100vw - 2rem));
   border: 0;

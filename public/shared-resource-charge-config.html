@@ -6,7 +6,7 @@
   <title>Configure Charges - AutomaticPeople</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body class="logged-page">
+<body class="logged-page resource-charge-page">
   <div class="sticky-page-chrome">
     <div class="sticky-page-inner">
       <nav class="dashboard-tab-bar page-top-nav" aria-label="Main navigation">
@@ -21,9 +21,6 @@
 
   <main class="dashboard">
     <div class="card-container wide">
-      <div class="feed-actions" style="margin-bottom: 0.7rem;">
-        <button id="backBtn" type="button" class="btn secondary">← Back</button>
-      </div>
       <h2 id="chargeConfigTitle">Configure Charges</h2>
       <p id="chargeConfigMessage" class="message"></p>
       <p id="chargeConfigHelp" class="help-text"></p>
@@ -79,7 +76,8 @@
         </div>
       </section>
 
-      <div class="feed-actions" style="margin-top: 1.5rem;">
+      <div class="feed-actions resource-charge-actions" style="margin-top: 1.5rem;">
+        <button type="button" id="backBtn" class="btn secondary">← Back</button>
         <button type="button" id="saveChargeConfigBtn" class="btn primary calendar-btn">Save Charge Logic</button>
         <button type="button" id="cancelChargeConfigBtn" class="btn secondary">Cancel</button>
       </div>
