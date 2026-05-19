@@ -1515,7 +1515,7 @@ textarea:focus {
 }
 
 .resource-charge-page .card-container.wide {
-  max-width: 640px;
+  max-width: 560px;
 }
 
 .resource-charge-page .help-text {
@@ -1536,6 +1536,7 @@ textarea:focus {
 }
 
 .resource-charge-page .resource-hourly-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-top: 0.1rem;
 }
 
@@ -1551,6 +1552,12 @@ textarea:focus {
 .resource-charge-actions .btn.secondary {
   width: auto;
   flex: 0 0 auto;
+}
+
+@media (max-width: 700px) {
+  .resource-charge-page .resource-hourly-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .resource-dialog {
