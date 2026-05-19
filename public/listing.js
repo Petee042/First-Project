@@ -8,6 +8,7 @@ let canEditListing = false;
 let currentAccessRole = '';
 let currentUserEmail = '';
 let initialListingFormState = '';
+let suppressBeforeunload = false;
 let managerScopeState = {
   hasAssignments: false,
   propertyIdSet: new Set(),
@@ -1164,9 +1165,9 @@ async function updateCalendars() {
       await loadProperties();
       const cleaners = await loadCleaners();
       populateUsualCleanerSelect(cleaners, null);
+        await fetchListingManagers();
       document.getElementById('listingTitle').textContent = 'Create Listing';
       document.getElementById('listingPublicId').value = 'New';
-      document.getElementById('listingAssignmentEditor').classList.add('hidden');
       document.getElementById('deleteListingBtn').classList.add('hidden');
       initialListingFormState = getListingFormState();
     } else {
@@ -1536,6 +1537,12 @@ document.getElementById('deleteListingBtn').addEventListener('click', async () =
 });
 
 window.addEventListener('beforeunload', (event) => {
+    if (suppressBeforeunload) {
+      return;
+    }
+    listingId = nextListingId;
+    suppressBeforeunload = true;
+    suppressBeforeunload = true;
   if (!hasUnsavedListingChanges()) {
     return;
   }
