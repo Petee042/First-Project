@@ -4305,9 +4305,16 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
 
     const result = await pool.query(
       `
-        INSERT INTO listings (user_id, name, property_id, date_basis, usual_cleaner_id)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id, user_id, name, property_id, date_basis, usual_cleaner_id, created_at
+        INSERT INTO listings (user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id)
+        VALUES (
+          $1,
+          (SELECT client_account_id FROM properties WHERE id = $3),
+          $2,
+          $3,
+          $4,
+          $5
+        )
+        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, created_at
       `,
       [userId, name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId)]
     );
@@ -4333,9 +4340,13 @@ async function updateListingForUser(listingId, userId, name, propertyId, dateBas
     const result = await pool.query(
       `
         UPDATE listings
-        SET name = $1, property_id = $2, date_basis = $3, usual_cleaner_id = $4
+        SET name = $1,
+            property_id = $2,
+            client_account_id = (SELECT client_account_id FROM properties WHERE id = $2),
+            date_basis = $3,
+            usual_cleaner_id = $4
         WHERE id = $5 AND user_id = $6
-        RETURNING id, user_id, name, property_id, date_basis, usual_cleaner_id, created_at
+        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, created_at
       `,
       [name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId), listingId, userId]
     );

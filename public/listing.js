@@ -1399,8 +1399,9 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     setListingMessage('Listing updated.', false);
     suppressBeforeunload = true;
     goBackToConfig();
-  } catch {
-    setListingMessage('Network error saving listing.', true);
+  } catch (err) {
+    const message = err && err.message ? err.message : 'Network error saving listing.';
+    setListingMessage(message, true);
   } finally {
     button.disabled = false;
   }
