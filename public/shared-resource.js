@@ -8,6 +8,7 @@ let canEditSharedResource = false;
 let currentProperties = [];
 let currentListings = [];
 let initialSharedResourceFormState = '';
+let suppressBeforeunload = false;
 let activePaymentMessageKey = 'free_of_charge';
 let currentPaymentMessages = {
   free_of_charge: '',
@@ -60,6 +61,7 @@ function confirmDiscardSharedResourceChanges() {
 }
 
 function goBackToConfig() {
+  suppressBeforeunload = true;
   window.location.href = '/dashboard.html?tab=panel-config';
 }
 
@@ -87,6 +89,13 @@ function applySharedResourceAccess(role) {
       el.disabled = !canEditSharedResource;
     });
   }
+
+  const saveBtn = document.getElementById('saveSharedResourceBtn');
+  const deleteBtn = document.getElementById('deleteSharedResourceBtn');
+  const cancelBtn = document.getElementById('cancelSharedResourceBtn');
+  if (saveBtn) saveBtn.disabled = !canEditSharedResource;
+  if (deleteBtn) deleteBtn.disabled = !canEditSharedResource;
+  if (cancelBtn) cancelBtn.disabled = !canEditSharedResource;
 
   if (!canEditSharedResource) {
     setSharedResourceMessage('Read-only access: your current role can view this resource but cannot edit it.', false);
@@ -856,7 +865,7 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
     return;
   }
 
-  const button = e.target.querySelector('button[type="submit"]');
+  const button = document.getElementById('saveSharedResourceBtn');
   const shortDescription = document.getElementById('shortDescription').value.trim();
   const resourceType = document.getElementById('resourceType').value === 'parking' ? 'parking' : 'undefined';
   const maxUnits = Number(document.getElementById('maxUnits').value);
@@ -958,23 +967,17 @@ document.getElementById('sharedResourceForm').addEventListener('submit', async (
     if (isCreateMode) {
       const nextResourceId = Number(data && data.resource && data.resource.id);
       if (Number.isInteger(nextResourceId) && nextResourceId > 0) {
-        window.location.href = '/shared-resource.html?id=' + encodeURIComponent(nextResourceId);
+        suppressBeforeunload = true;
+        goBackToConfig();
         return;
       }
     }
 
     document.getElementById('sharedResourceTitle').textContent = 'Facility: ' + (data.resource.short_description || '');
-    const savedSummary = [
-      'Facility saved.',
-      'charge_basis=' + String(data.resource.charge_basis || ''),
-      'daily_charge_mode=' + String(data.resource.daily_charge_mode || ''),
-      'daily_rate=' + (data.resource.daily_rate === null || data.resource.daily_rate === undefined ? '' : String(data.resource.daily_rate)),
-      'hourly_charge_mode=' + String(data.resource.hourly_charge_mode || ''),
-      'hourly_rate=' + (data.resource.hourly_rate === null || data.resource.hourly_rate === undefined ? '' : String(data.resource.hourly_rate)),
-      'updated_at=' + String(data.resource.updated_at || '')
-    ].join(' ');
     initialSharedResourceFormState = getSharedResourceFormState();
-    setSharedResourceMessage(savedSummary, false);
+    setSharedResourceMessage('Facility saved.', false);
+    suppressBeforeunload = true;
+    goBackToConfig();
   } catch {
     setSharedResourceMessage('Network error saving facility.', true);
   } finally {
@@ -1038,6 +1041,9 @@ document.getElementById('cancelSharedResourceBtn').addEventListener('click', () 
 });
 
 window.addEventListener('beforeunload', (event) => {
+  if (suppressBeforeunload) {
+    return;
+  }
   if (!hasUnsavedSharedResourceChanges()) {
     return;
   }

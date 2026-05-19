@@ -3763,9 +3763,12 @@ async function updateSharedResourceReservationForUser(reservationId, resourceId,
   return { reservation: result.rows[0] };
 }
 
-async function createSharedResourceForUser(userId, input) {
+async function createSharedResourceForUser(userId, clientAccountId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
+  const fullDescriptionHtml = sanitiseRichTextHtml(input.fullDescriptionHtml);
+  const maxUnits = normaliseSharedResourceMaxUnits(input.maxUnits) || 1;
   const maxDaysAdvanceBooking = normaliseSharedResourceMaxAdvanceBookingDays(input.maxDaysAdvanceBooking) || 365;
+  const scopedClientAccountId = Number(clientAccountId);
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
   const resourceType = normaliseSharedResourceType(input.resourceType);
@@ -3789,6 +3792,9 @@ async function createSharedResourceForUser(userId, input) {
       };
   if (!shortDescription) {
     return { error: 'Short description is required.' };
+  }
+  if (!Number.isInteger(scopedClientAccountId) || scopedClientAccountId <= 0) {
+    return { error: 'Client account context is required.' };
   }
   if (chargeConfig.error) {
     return { error: chargeConfig.error };
@@ -3819,6 +3825,7 @@ async function createSharedResourceForUser(userId, input) {
     `
       INSERT INTO shared_resources (
         user_id,
+        client_account_id,
         short_description,
         full_description_html,
         max_units,
@@ -3841,8 +3848,8 @@ async function createSharedResourceForUser(userId, input) {
         hourly_rate,
         hourly_rates_json
       )
-            VALUES ($1, $2, '', 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-      RETURNING id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+      RETURNING id, user_id, client_account_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
                 free_of_charge, cash_on_site, bank_transfer, online_payment,
               free_of_charge_message_html, cash_on_site_message_html, bank_transfer_message_html, online_payment_message_html,
                 charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
@@ -3850,7 +3857,10 @@ async function createSharedResourceForUser(userId, input) {
     `,
     [
       userId,
+      scopedClientAccountId,
       shortDescription,
+      fullDescriptionHtml,
+      maxUnits,
       maxDaysAdvanceBooking,
       propertyId,
       listingId,
@@ -3874,11 +3884,12 @@ async function createSharedResourceForUser(userId, input) {
   return { resource: result.rows[0] };
 }
 
-async function updateSharedResourceForUser(resourceId, userId, input) {
+async function updateSharedResourceForUser(resourceId, userId, clientAccountId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
   const fullDescriptionHtml = sanitiseRichTextHtml(input.fullDescriptionHtml);
   const maxUnits = normaliseSharedResourceMaxUnits(input.maxUnits);
   const maxDaysAdvanceBooking = normaliseSharedResourceMaxAdvanceBookingDays(input.maxDaysAdvanceBooking);
+  const scopedClientAccountId = Number(clientAccountId);
   let propertyId = normaliseOptionalPositiveInteger(input.propertyId);
   const listingId = normaliseOptionalPositiveInteger(input.listingId);
   const resourceType = normaliseSharedResourceType(input.resourceType);
@@ -3888,6 +3899,9 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
 
   if (!shortDescription) {
     return { error: 'Short description is required.' };
+  }
+  if (!Number.isInteger(scopedClientAccountId) || scopedClientAccountId <= 0) {
+    return { error: 'Client account context is required.' };
   }
   if (!maxUnits) {
     return { error: 'Maximum units must be a whole number greater than zero.' };
@@ -3924,6 +3938,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
     `
       UPDATE shared_resources
       SET short_description = $1,
+          client_account_id = COALESCE(client_account_id, $24),
           full_description_html = $2,
           max_units = $3,
           max_days_advance_booking = $4,
@@ -3946,7 +3961,7 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
             hourly_rates_json = $21,
           updated_at = CURRENT_TIMESTAMP
           WHERE id = $22 AND user_id = $23
-          RETURNING id, user_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
+          RETURNING id, user_id, client_account_id, short_description, full_description_html, max_units, max_days_advance_booking, property_id, listing_id, resource_type,
               free_of_charge, cash_on_site, bank_transfer, online_payment,
               free_of_charge_message_html, cash_on_site_message_html, bank_transfer_message_html, online_payment_message_html,
               charge_basis, daily_charge_mode, daily_rate, hourly_charge_mode, hourly_rate, hourly_rates_json,
@@ -3975,7 +3990,8 @@ async function updateSharedResourceForUser(resourceId, userId, input) {
       chargeConfig.hourly_rate,
       JSON.stringify(chargeConfig.hourly_rates),
       resourceId,
-      userId
+      userId,
+      scopedClientAccountId
     ]
   );
 
@@ -6641,8 +6657,36 @@ app.get('/api/shared-resources/all-reservations', requireScopedRole('Staff'), as
 // POST /api/shared-resources — create shared resource with short description
 app.post('/api/shared-resources', requireScopedRole('Manager'), async (req, res) => {
   try {
-    const { resource, error } = await createSharedResourceForUser(req.accessContext.effectiveOwnerUserId, {
+    if (hasManagerAssignmentScope(req)) {
+      const scopedPropertyId = Number(req.body.propertyId);
+      const scopedListingId = Number(req.body.listingId);
+
+      if (Number.isInteger(scopedListingId) && scopedListingId > 0) {
+        const listing = await getListingByIdForUser(scopedListingId, req.accessContext.effectiveOwnerUserId);
+        if (!listing || !isListingAllowedByScope(req, listing)) {
+          return res.status(403).json({ error: 'You are not allowed to create facilities for this listing.' });
+        }
+      }
+
+      if (Number.isInteger(scopedPropertyId) && scopedPropertyId > 0) {
+        if (!isPropertyAllowedByScope(req, scopedPropertyId)) {
+          return res.status(403).json({ error: 'You are not allowed to create facilities for this property.' });
+        }
+      }
+
+      if ((!Number.isInteger(scopedPropertyId) || scopedPropertyId <= 0)
+        && (!Number.isInteger(scopedListingId) || scopedListingId <= 0)) {
+        return res.status(403).json({ error: 'Please select an assigned property or listing when creating a facility.' });
+      }
+    }
+
+    const { resource, error } = await createSharedResourceForUser(
+      req.accessContext.effectiveOwnerUserId,
+      req.accessContext.activeClientAccountId,
+      {
       shortDescription: req.body.shortDescription,
+      fullDescriptionHtml: req.body.fullDescriptionHtml,
+      maxUnits: req.body.maxUnits,
       maxDaysAdvanceBooking: req.body.maxDaysAdvanceBooking,
       propertyId: req.body.propertyId,
       listingId: req.body.listingId,
@@ -6663,7 +6707,8 @@ app.post('/api/shared-resources', requireScopedRole('Manager'), async (req, res)
       hourlyRates: req.body.hourlyRates
     });
     if (error) {
-      return res.status(400).json({ error });
+      const status = error === 'Client account context is required.' ? 400 : 400;
+      return res.status(status).json({ error });
     }
     return res.status(201).json({ resource });
   } catch (err) {
@@ -7178,7 +7223,11 @@ app.put('/api/shared-resources/:resourceId', requireScopedRole('Manager'), async
       return res.status(404).json({ error: 'Shared resource not found.' });
     }
 
-    const { resource, error } = await updateSharedResourceForUser(resourceId, req.accessContext.effectiveOwnerUserId, {
+    const { resource, error } = await updateSharedResourceForUser(
+      resourceId,
+      req.accessContext.effectiveOwnerUserId,
+      req.accessContext.activeClientAccountId,
+      {
       shortDescription: req.body.shortDescription,
       fullDescriptionHtml: req.body.fullDescriptionHtml,
       maxUnits: req.body.maxUnits,
