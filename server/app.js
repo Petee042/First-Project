@@ -3150,6 +3150,14 @@ async function deletePropertyForUser(propertyId, userId) {
     return { error: 'Property not found.' };
   }
 
+  const propertyCountResult = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM properties WHERE user_id = $1',
+    [userId]
+  );
+  if (Number(propertyCountResult.rows[0].count) <= 1) {
+    return { error: 'This is the last remaining property and cannot be deleted. Please create another property first.' };
+  }
+
   if (property.is_default === true) {
     return { error: 'The default property cannot be deleted.' };
   }
