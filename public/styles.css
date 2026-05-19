@@ -1002,14 +1002,14 @@ textarea:focus {
 }
 
 .floating-action-bar {
-  position: fixed;
-  right: 1rem;
-  bottom: 1rem;
-  z-index: 1300;
+  position: static;
   display: flex;
   flex-direction: row;
   justify-content: flex-end;
   align-items: center;
+  width: fit-content;
+  margin-left: auto;
+  margin-top: 1rem;
   padding: 0.35rem;
   border: 1px solid #dbe1ef;
   border-radius: 999px;
@@ -1021,7 +1021,7 @@ textarea:focus {
   margin-top: 0;
 }
 
-.floating-action-bar .action-icon {
+.action-icon {
   width: 2.7rem;
   height: 2.7rem;
   border-radius: 999px;
@@ -1033,32 +1033,32 @@ textarea:focus {
   justify-content: center;
 }
 
-.floating-action-bar .action-icon::before {
+.action-icon::before {
   font-size: 1.2rem;
   font-weight: 700;
 }
 
-.floating-action-bar .action-delete {
+.action-delete {
   order: 1;
 }
 
-.floating-action-bar .action-cancel {
+.action-cancel {
   order: 2;
 }
 
-.floating-action-bar .action-save {
+.action-save {
   order: 3;
 }
 
-.floating-action-bar .action-delete::before {
+.action-delete::before {
   content: '\1F5D1';
 }
 
-.floating-action-bar .action-cancel::before {
+.action-cancel::before {
   content: '\2715';
 }
 
-.floating-action-bar .action-save::before {
+.action-save::before {
   content: '\2713';
 }
 
@@ -1076,10 +1076,7 @@ textarea:focus {
 }
 
 .floating-standalone-action {
-  position: fixed;
-  right: 1rem;
-  bottom: 1rem;
-  z-index: 1300;
+  position: static;
 }
 
 .source-color-cell {
@@ -1338,13 +1335,10 @@ textarea:focus {
 
   .floating-action-bar {
     flex-direction: row;
-    right: 0.65rem;
-    bottom: 0.65rem;
   }
 
   .floating-standalone-action {
-    right: 0.65rem;
-    bottom: 0.65rem;
+    position: static;
   }
 
   .public-booking-action-row {
