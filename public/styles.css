@@ -1006,6 +1006,8 @@ textarea:focus {
   right: 1rem;
   bottom: 1rem;
   z-index: 1300;
+  display: flex;
+  flex-direction: row;
   justify-content: flex-end;
   align-items: center;
   padding: 0.35rem;
@@ -1071,6 +1073,13 @@ textarea:focus {
 
 .floating-action-bar .btn:disabled {
   opacity: 0.55;
+}
+
+.floating-standalone-action {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 1300;
 }
 
 .source-color-cell {
@@ -1329,6 +1338,11 @@ textarea:focus {
 
   .floating-action-bar {
     flex-direction: row;
+    right: 0.65rem;
+    bottom: 0.65rem;
+  }
+
+  .floating-standalone-action {
     right: 0.65rem;
     bottom: 0.65rem;
   }

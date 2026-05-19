@@ -134,10 +134,10 @@
             </fieldset>
             <p id="teamMemberDeleteImpact" class="hint">Delete impact: loading...</p>
             <input id="editTeamMemberUserId" type="hidden" />
-            <div class="feed-actions">
-              <button type="button" id="saveTeamMemberEditorBtn" class="btn secondary">Save Team Member</button>
-              <button type="button" id="deleteTeamMemberBtn" class="btn secondary">Delete Team Member</button>
-              <button type="button" id="closeTeamMemberEditorBtn" class="btn secondary">Close</button>
+            <div class="feed-actions floating-action-bar">
+              <button type="button" id="saveTeamMemberEditorBtn" class="btn secondary action-icon action-save" aria-label="Save Team Member">Save Team Member</button>
+              <button type="button" id="deleteTeamMemberBtn" class="btn secondary action-icon action-delete" aria-label="Delete Team Member">Delete Team Member</button>
+              <button type="button" id="closeTeamMemberEditorBtn" class="btn secondary action-icon action-cancel" aria-label="Close">Close</button>
             </div>
           </div>
         </section>
@@ -255,8 +255,8 @@
               <button id="sendScheduleEmailBtn" type="button" class="btn secondary schedule-email-btn">Send</button>
             </div>
             <p id="scheduleEmailMessage" class="schedule-email-message" aria-live="polite"></p>
-            <div class="schedule-save-row">
-              <button id="saveScheduleChangesBtn" type="button" class="btn secondary schedule-save-btn">Save Changes</button>
+            <div class="schedule-save-row floating-action-bar">
+              <button id="saveScheduleChangesBtn" type="button" class="btn secondary schedule-save-btn action-icon action-save" aria-label="Save Changes">Save Changes</button>
             </div>
             <div class="schedule-download-row">
               <div class="schedule-format-row">
