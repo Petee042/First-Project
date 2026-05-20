@@ -77,6 +77,14 @@ body {
   margin: 1vh auto 0;
 }
 
+.logged-page main.dashboard {
+  padding-top: 0.08rem !important;
+}
+
+.logged-page main.dashboard .card-container {
+  margin-top: 0 !important;
+}
+
 /* ── Site title ────────────────────────────────────────────── */
 .site-title-row {
   display: flex;
