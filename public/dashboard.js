@@ -107,6 +107,58 @@ function canViewGuests() {
   return currentAccessContext.activeRole === 'Client' || currentAccessContext.activeRole === 'Manager';
 }
 
+function getCleanerDisplayName(cleaner) {
+  if (!cleaner) {
+    return 'Unallocated';
+  }
+  const fullName = [cleaner.first_name || '', cleaner.last_name || ''].join(' ').trim();
+  if (fullName) {
+    return fullName;
+  }
+  return String(cleaner.email || '').trim() || 'Unallocated';
+}
+
+function getCleanerUserId(cleaner) {
+  const cleanerUserId = Number(cleaner && cleaner.cleaner_user_id ? cleaner.cleaner_user_id : 0);
+  return Number.isInteger(cleanerUserId) && cleanerUserId > 0 ? cleanerUserId : null;
+}
+
+function getCleanerByUserIdMap(cleaners) {
+  return new Map(
+    (cleaners || currentCleaners || [])
+      .filter((cleaner) => getCleanerUserId(cleaner))
+      .map((cleaner) => [getCleanerUserId(cleaner), cleaner])
+  );
+}
+
+function resolveCleanerNameFromChange(change, cleaners) {
+  if (!change) {
+    return 'Unallocated';
+  }
+
+  const explicitName = String(change.cleaner_name || '').trim();
+  if (explicitName) {
+    return explicitName;
+  }
+
+  const cleanerList = cleaners || currentCleaners || [];
+  const byUserId = getCleanerByUserIdMap(cleanerList);
+  const cleanerUserId = Number(change.cleaner_user_id || 0);
+  if (Number.isInteger(cleanerUserId) && cleanerUserId > 0 && byUserId.has(cleanerUserId)) {
+    return getCleanerDisplayName(byUserId.get(cleanerUserId));
+  }
+
+  const cleanerId = Number(change.cleaner_id || 0);
+  if (Number.isInteger(cleanerId) && cleanerId > 0) {
+    const fallbackCleaner = cleanerList.find((cleaner) => Number(cleaner.id) === cleanerId);
+    if (fallbackCleaner) {
+      return getCleanerDisplayName(fallbackCleaner);
+    }
+  }
+
+  return 'Unallocated';
+}
+
 function getCurrentManagerScopeState() {
   const empty = {
     managerMembershipId: null,
@@ -1505,11 +1557,7 @@ async function buildSchedule(selectedListings, days, startDateUtc) {
           return;
         }
 
-        const cleanerByUserId = new Map(
-          (currentCleaners || [])
-            .filter((c) => Number.isInteger(Number(c.cleaner_user_id)) && Number(c.cleaner_user_id) > 0)
-            .map((c) => [Number(c.cleaner_user_id), c])
-        );
+        const cleanerByUserId = getCleanerByUserIdMap(currentCleaners);
         const usualCleanerId = listing.usualCleanerId || null;
         let defaultCleanerId = null;
         let defaultCleanerName = 'Unallocated';
@@ -1520,7 +1568,7 @@ async function buildSchedule(selectedListings, days, startDateUtc) {
         if (defaultCleanerUserId && cleanerByUserId.has(defaultCleanerUserId)) {
           const uc = cleanerByUserId.get(defaultCleanerUserId);
           defaultCleanerId = defaultCleanerUserId;
-          defaultCleanerName = (uc.first_name || '') + ' ' + (uc.last_name || '');
+          defaultCleanerName = getCleanerDisplayName(uc);
         }
 
         rows.push({
@@ -1574,29 +1622,17 @@ async function buildSchedule(selectedListings, days, startDateUtc) {
     const key = reservationKey(row.listing_id, row.reservation_checkin_date, row.reservation_checkout_date);
     bookedMap.set(key, row);
   });
-
-  const cleanerByUserId = new Map(
-    (currentCleaners || [])
-      .filter((cleaner) => Number.isInteger(Number(cleaner.cleaner_user_id)) && Number(cleaner.cleaner_user_id) > 0)
-      .map((cleaner) => [Number(cleaner.cleaner_user_id), cleaner])
-  );
   rows.forEach((row) => {
     const existing = bookedMap.get(row.reservationKey);
     if (!existing) {
       return;
     }
     row.changeDate = existing.changeover_date || row.changeDate;
-    if (existing.cleaner_name) {
-      row.cleanerName = String(existing.cleaner_name);
-    }
+    row.cleanerName = resolveCleanerNameFromChange(existing, currentCleaners);
     row.cleanerId = existing.cleaner_user_id ? Number(existing.cleaner_user_id) : null;
     if (!row.cleanerId && existing.cleaner_id) {
       const fallbackCleaner = (currentCleaners || []).find((cleaner) => Number(cleaner.id) === Number(existing.cleaner_id));
       row.cleanerId = fallbackCleaner && fallbackCleaner.cleaner_user_id ? Number(fallbackCleaner.cleaner_user_id) : null;
-    }
-    if (row.cleanerId && cleanerByUserId.has(row.cleanerId)) {
-      const cleaner = cleanerByUserId.get(row.cleanerId);
-      row.cleanerName = (cleaner.first_name || '') + ' ' + (cleaner.last_name || '');
     }
   });
 
@@ -1750,7 +1786,7 @@ function renderSchedulePreviewTable(rows, errors, notifications) {
       }
       const option = document.createElement('option');
       option.value = String(cleanerUserId);
-      option.textContent = (cleaner.first_name || '') + ' ' + (cleaner.last_name || '');
+      option.textContent = getCleanerDisplayName(cleaner);
       cleanerSelect.appendChild(option);
     });
     cleanerSelect.value = row.cleanerId ? String(row.cleanerId) : '';
