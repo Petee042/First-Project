@@ -123,18 +123,16 @@
             <div id="schedulePreview" class="schedule-preview" aria-live="polite">
               <p class="cleaning-empty">Select listings to preview the schedule.</p>
             </div>
-            <div class="schedule-refresh-row">
-              <button id="refreshScheduleBtn" type="button" class="btn secondary schedule-refresh-btn">Refresh Schedule</button>
+            <div class="schedule-actions-row">
+              <button id="refreshScheduleBtn" type="button" class="btn secondary schedule-refresh-btn schedule-action-icon schedule-refresh-icon" aria-label="Refresh Schedule" title="Refresh Schedule">Refresh Schedule</button>
+              <button id="saveScheduleChangesBtn" type="button" class="btn primary schedule-save-btn schedule-action-icon schedule-tick-icon" aria-label="Save Changes to Changeover Staff and Date" title="Save Changes to Changeover Staff and Date">Save Changes</button>
             </div>
             <div class="schedule-email-row">
               <label for="scheduleEmailTo">Email text schedule to</label>
               <input id="scheduleEmailTo" type="email" placeholder="name@example.com" />
-              <button id="sendScheduleEmailBtn" type="button" class="btn secondary schedule-email-btn">Send</button>
+              <button id="sendScheduleEmailBtn" type="button" class="btn primary schedule-email-btn schedule-action-icon schedule-tick-icon" aria-label="Send Text Schedule" title="Send Text Schedule">Send</button>
             </div>
             <p id="scheduleEmailMessage" class="schedule-email-message" aria-live="polite"></p>
-            <div class="schedule-save-row">
-              <button id="saveScheduleChangesBtn" type="button" class="btn primary schedule-save-btn" aria-label="Save Changes to Changeover Staff and Date">Save Changes to Changeover Staff and Date ✓</button>
-            </div>
             <div class="schedule-download-row">
               <div class="schedule-format-row">
                 <label for="cleaningFormat">Download format</label>
@@ -143,7 +141,7 @@
                   <option value="csv">CSV (.csv)</option>
                 </select>
               </div>
-              <button id="downloadCleaningScheduleBtn" type="submit" class="btn primary schedule-download-btn">Download Schedule</button>
+              <button id="downloadCleaningScheduleBtn" type="submit" class="btn primary schedule-download-btn schedule-action-icon schedule-tick-icon" aria-label="Download Schedule" title="Download Schedule">Download Schedule</button>
             </div>
           </form>
         </section>

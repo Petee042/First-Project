@@ -800,6 +800,13 @@ textarea:focus {
   margin-top: 0.6rem;
 }
 
+.schedule-actions-row {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+  margin-top: 0.6rem;
+}
+
 .schedule-refresh-row {
   margin-top: 0.6rem;
 }
@@ -826,9 +833,38 @@ textarea:focus {
   min-width: 210px;
 }
 
-.schedule-email-btn {
-  width: auto;
+.schedule-action-icon {
+  width: 2.7rem !important;
+  height: 2.7rem;
+  min-width: 2.7rem;
+  min-height: 2.7rem;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0;
   flex-shrink: 0;
+}
+
+.schedule-action-icon::before {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.schedule-refresh-icon::before {
+  content: '\21BB';
+}
+
+.schedule-tick-icon::before {
+  content: '\2713';
+}
+
+.schedule-email-row .schedule-email-btn,
+.schedule-download-row .schedule-download-btn {
+  margin-left: auto;
 }
 
 .schedule-email-message {
@@ -843,11 +879,6 @@ textarea:focus {
 
 .schedule-email-message.error {
   color: #b31d1d;
-}
-
-.schedule-refresh-btn,
-.schedule-save-btn {
-  width: 100%;
 }
 
 .schedule-download-btn {
@@ -1395,13 +1426,15 @@ textarea:focus {
   }
 
   .schedule-download-row {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
   }
 
   .schedule-email-row {
-    flex-direction: column;
-    align-items: stretch;
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
   }
 
   .schedule-email-btn {
