@@ -127,6 +127,76 @@ function getDefaultCleanerNameForListing(usualCleanerId) {
   return cleaner ? getCleanerDisplayName(cleaner) : '';
 }
 
+function getListingMetaById(listingId) {
+  const id = Number(listingId || 0);
+  if (!Number.isInteger(id) || id <= 0) {
+    return null;
+  }
+  return (currentListings || []).find((listing) => Number(listing.id) === id) || null;
+}
+
+function reservationChangeKey(listingId, checkinDate, checkoutDate) {
+  return String(listingId || '') + '|' + String(checkinDate || '') + '|' + String(checkoutDate || '');
+}
+
+function buildOpsDefaultCleaningChanges(events, changes) {
+  const existingKeys = new Set(
+    (changes || []).map((change) => reservationChangeKey(
+      Number(change.listingId || change.listing_id || 0),
+      toDateKey(change.reservation_checkin_date),
+      toDateKey(change.reservation_checkout_date)
+    ))
+  );
+
+  const synthetic = [];
+
+  (events || []).forEach((event) => {
+    if (event && event.isReservation === false) {
+      return;
+    }
+
+    const listingId = Number(event && (event.listingId || event.listing_id) ? (event.listingId || event.listing_id) : 0);
+    const checkinKey = toDateKey(event && event.start);
+    const checkoutKey = toDateKey(event && event.end);
+    if (!Number.isInteger(listingId) || listingId <= 0 || !checkinKey || !checkoutKey) {
+      return;
+    }
+
+    const listingMeta = getListingMetaById(listingId);
+    if (!listingMeta) {
+      return;
+    }
+
+    const defaultCleanerId = Number(listingMeta.usual_cleaner_id || 0);
+    const defaultCleanerName = getDefaultCleanerNameForListing(defaultCleanerId);
+    if (!defaultCleanerName) {
+      return;
+    }
+
+    const key = reservationChangeKey(listingId, checkinKey, checkoutKey);
+    if (existingKeys.has(key)) {
+      return;
+    }
+    existingKeys.add(key);
+
+    const basis = listingMeta.date_basis === 'checkin' ? 'checkin' : 'checkout';
+    synthetic.push({
+      listingId,
+      listing_id: listingId,
+      listingName: listingMeta.name || ('Listing #' + listingId),
+      reservation_checkin_date: checkinKey,
+      reservation_checkout_date: checkoutKey,
+      changeover_date: basis === 'checkin' ? checkinKey : checkoutKey,
+      cleaner_id: null,
+      cleaner_name: '',
+      default_cleaner_id: defaultCleanerId,
+      default_cleaner_name: defaultCleanerName
+    });
+  });
+
+  return synthetic;
+}
+
 function setScheduleEmailMessage(text, isError) {
   const el = document.getElementById('scheduleEmailMessage');
   if (!el) return;
@@ -2603,8 +2673,10 @@ async function refreshOpsCalendar(refresh) {
     }
 
     const data = result.data || {};
-    const listingName = result.listing.name || ('Listing #' + result.listing.id);
-    const listingColorName = result.listing.property_name || '';
+    const listingMeta = getListingMetaById(result.listing.id) || {};
+    const listingName = result.listing.name || listingMeta.name || ('Listing #' + result.listing.id);
+    const listingColorName = listingMeta.property_name || '';
+    const defaultCleanerId = listingMeta.usual_cleaner_id || null;
     events.push(...(data.events || []).map((event) => Object.assign({}, event, {
       listingId: result.listing.id,
       listingName,
@@ -2613,8 +2685,8 @@ async function refreshOpsCalendar(refresh) {
     cleaningChanges.push(...(data.cleaningChanges || []).map((change) => Object.assign({}, change, {
       listingId: result.listing.id,
       listingName,
-      default_cleaner_id: result.listing.usual_cleaner_id || null,
-      default_cleaner_name: getDefaultCleanerNameForListing(result.listing.usual_cleaner_id)
+      default_cleaner_id: defaultCleanerId,
+      default_cleaner_name: getDefaultCleanerNameForListing(defaultCleanerId)
     })));
     if (data.fetchedAt) {
       fetchedAts.push(data.fetchedAt);
@@ -2627,11 +2699,11 @@ async function refreshOpsCalendar(refresh) {
   });
 
   opsCalCurrentEvents = events;
-  opsCalCurrentCleaningChanges = cleaningChanges;
+  opsCalCurrentCleaningChanges = cleaningChanges.concat(buildOpsDefaultCleaningChanges(events, cleaningChanges));
   opsCalCurrentFetchedAt = fetchedAts.length ? fetchedAts.sort().slice(-1)[0] : null;
 
-  opsCalendarRenderCleanerLegend(cleaningChanges);
-  opsCalendarRenderReservationCalendar(events, cleaningChanges);
+  opsCalendarRenderCleanerLegend(opsCalCurrentCleaningChanges);
+  opsCalendarRenderReservationCalendar(events, opsCalCurrentCleaningChanges);
   opsCalendarSetFetchedAt(opsCalCurrentFetchedAt);
 
   if (issues.length) {
