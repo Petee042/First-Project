@@ -85,6 +85,15 @@
         <p id="login-message" class="message" aria-live="polite"></p>
         <button type="submit" class="btn primary">Log In</button>
       </form>
+
+      <form id="forgotPasswordForm" novalidate style="margin-top: 1rem;">
+        <div class="field">
+          <label for="fp-email">Forgot your password? Enter your email</label>
+          <input type="email" id="fp-email" name="email" autocomplete="email" required />
+        </div>
+        <p id="forgot-password-message" class="message" aria-live="polite"></p>
+        <button type="submit" class="btn secondary">Send Password Reset Link</button>
+      </form>
     </section>
 
     <p class="site-warning">User data on this site may be deleted or corrupted at any time</p>

@@ -133,3 +133,29 @@ document.getElementById('loginForm').addEventListener('submit', async (e) => {
     btn.disabled = false;
   }
 });
+
+document.getElementById('forgotPasswordForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+
+  const email = document.getElementById('fp-email').value.trim();
+  if (!email) {
+    setMessage('forgot-password-message', 'Email is required.', true);
+    btn.disabled = false;
+    return;
+  }
+
+  try {
+    const { ok, data } = await postJSON('/api/account/password-reset/request', { email });
+    if (ok) {
+      setMessage('forgot-password-message', data.message || 'If an account exists for that email, a reset link has been sent.', false);
+    } else {
+      setMessage('forgot-password-message', data.error || 'Failed to request password reset.', true);
+    }
+  } catch {
+    setMessage('forgot-password-message', 'Network error. Please try again.', true);
+  } finally {
+    btn.disabled = false;
+  }
+});

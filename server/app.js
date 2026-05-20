@@ -36,6 +36,8 @@ const DATA_RESET_FLAG_KEY = 'minimal-profile-reset-v1';
 const APP_BASE_URL = String(process.env.APP_BASE_URL || '').trim();
 const ACCOUNT_VALIDATION_TOKEN_VERSION = 'v1';
 const ACCOUNT_VALIDATION_TOKEN_TTL_MS = Number(process.env.ACCOUNT_VALIDATION_TOKEN_TTL_MS || (1000 * 60 * 60 * 24 * 7));
+const PASSWORD_RESET_TOKEN_VERSION = 'v1';
+const PASSWORD_RESET_TOKEN_TTL_MS = Number(process.env.PASSWORD_RESET_TOKEN_TTL_MS || (1000 * 60 * 60));
 const DATABASE_URL = String(process.env.DATABASE_URL || '').trim();
 const HEX_COLOR_REGEX = /^#[0-9a-fA-F]{6}$/;
 const stripeClient = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
@@ -1812,6 +1814,91 @@ function buildAccountValidationSignature(userId, email, issuedAtMs) {
   return createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
 }
 
+function buildPasswordResetSignature(userId, email, passwordHash, issuedAtMs) {
+  const payload = [
+    'password-reset',
+    PASSWORD_RESET_TOKEN_VERSION,
+    String(userId),
+    String(email || '').trim().toLowerCase(),
+    String(passwordHash || ''),
+    String(issuedAtMs)
+  ].join(':');
+  return createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
+}
+
+function buildPasswordResetToken(user, issuedAtMs) {
+  const userId = Number(user && user.id);
+  const email = String(user && user.email || '').trim().toLowerCase();
+  const passwordHash = String(user && user.password_hash || '');
+  const issued = Number(issuedAtMs || Date.now());
+  if (!Number.isInteger(userId) || userId <= 0 || !email || !passwordHash || !Number.isFinite(issued) || issued <= 0) {
+    return null;
+  }
+  const signature = buildPasswordResetSignature(userId, email, passwordHash, issued);
+  return [PASSWORD_RESET_TOKEN_VERSION, String(userId), String(issued), signature].join('.');
+}
+
+function parsePasswordResetToken(token) {
+  const raw = String(token || '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  const parts = raw.split('.');
+  if (parts.length !== 4) {
+    return null;
+  }
+
+  const version = String(parts[0] || '').trim();
+  const userId = Number(parts[1]);
+  const issuedAtMs = Number(parts[2]);
+  const signature = String(parts[3] || '').trim();
+  if (version !== PASSWORD_RESET_TOKEN_VERSION) {
+    return null;
+  }
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return null;
+  }
+  if (!Number.isFinite(issuedAtMs) || issuedAtMs <= 0) {
+    return null;
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(signature)) {
+    return null;
+  }
+
+  return { userId, issuedAtMs, signature, raw };
+}
+
+async function validatePasswordResetToken(token) {
+  const parsed = parsePasswordResetToken(token);
+  if (!parsed) {
+    return { error: 'Password reset link is invalid.' };
+  }
+
+  const now = Date.now();
+  if ((now - parsed.issuedAtMs) > PASSWORD_RESET_TOKEN_TTL_MS) {
+    return { error: 'Password reset link has expired. Please request a new one.' };
+  }
+
+  const user = await getUserById(parsed.userId);
+  if (!user || !user.email || !user.password_hash) {
+    return { error: 'Password reset link is invalid.' };
+  }
+
+  const expectedToken = buildPasswordResetToken(user, parsed.issuedAtMs);
+  if (!expectedToken) {
+    return { error: 'Password reset link is invalid.' };
+  }
+
+  const expectedBuffer = Buffer.from(expectedToken);
+  const providedBuffer = Buffer.from(parsed.raw);
+  if (expectedBuffer.length !== providedBuffer.length || !timingSafeEqual(expectedBuffer, providedBuffer)) {
+    return { error: 'Password reset link is invalid.' };
+  }
+
+  return { user };
+}
+
 function buildAccountValidationToken(user, issuedAtMs) {
   const userId = Number(user && user.id);
   const email = String(user && user.email || '').trim().toLowerCase();
@@ -1996,6 +2083,41 @@ async function sendSiteUserValidationEmail(req, user) {
     'After validation, return to the login page and sign in.',
     '',
     'If you did not expect this email, you can ignore it.'
+  ].join('\n');
+
+  return sendAppEmail({
+    to: user.email,
+    subject,
+    textBody
+  });
+}
+
+async function sendPasswordResetEmail(req, user) {
+  if (!user || !user.email) {
+    return { ok: false, error: 'Cannot send password reset email without a user email.' };
+  }
+
+  const baseUrl = getPreferredAppBaseUrl(req);
+  if (!baseUrl) {
+    return { ok: false, error: 'Cannot build password reset URL because APP_BASE_URL is not configured.' };
+  }
+
+  const token = buildPasswordResetToken(user);
+  if (!token) {
+    return { ok: false, error: 'Could not generate password reset token.' };
+  }
+
+  const resetUrl = baseUrl + '/reset-password.html?token=' + encodeURIComponent(token);
+  const subject = 'Reset your AutomaticPeople password';
+  const textBody = [
+    'A request was made to reset your AutomaticPeople password.',
+    '',
+    'Reset your password using this link:',
+    resetUrl,
+    '',
+    'This link expires in 1 hour.',
+    '',
+    'If you did not request this reset, you can ignore this email.'
   ].join('\n');
 
   return sendAppEmail({
@@ -5647,6 +5769,14 @@ const validationEmailResendRateLimiter = rateLimit({
   message: { error: 'Too many validation email requests. Please try again later.' }
 });
 
+const passwordResetRequestRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many password reset requests. Please try again later.' }
+});
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 // POST /api/signup
@@ -6390,6 +6520,70 @@ app.post('/api/account/validation-email/resend', validationEmailResendRateLimite
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to resend validation email.' });
+  }
+});
+
+// POST /api/account/password-reset/request — request a password reset link by email
+app.post('/api/account/password-reset/request', passwordResetRequestRateLimiter, async (req, res) => {
+  const email = String(req.body && req.body.email || '').trim().toLowerCase();
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required.' });
+  }
+
+  try {
+    const user = await findUserByEmail(email);
+    if (user && user.email) {
+      await sendPasswordResetEmail(req, user);
+    }
+
+    return res.json({
+      message: 'If an account exists for that email, a password reset link has been sent.'
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to process password reset request.' });
+  }
+});
+
+// POST /api/account/password-reset/confirm — set a new password with a valid reset token
+app.post('/api/account/password-reset/confirm', async (req, res) => {
+  const token = String(req.body && req.body.token || '').trim();
+  const password = String(req.body && req.body.password || '');
+
+  if (!token || !password) {
+    return res.status(400).json({ error: 'Reset token and new password are required.' });
+  }
+
+  const passwordCheck = validateStrongPassword(password);
+  if (!passwordCheck.ok) {
+    return res.status(400).json({ error: passwordCheck.error });
+  }
+
+  try {
+    const validatedToken = await validatePasswordResetToken(token);
+    if (validatedToken.error) {
+      return res.status(400).json({ error: validatedToken.error });
+    }
+
+    const user = validatedToken.user;
+    if (!user || !Number.isInteger(Number(user.id))) {
+      return res.status(400).json({ error: 'Password reset link is invalid.' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+    await pool.query(
+      `
+        UPDATE users
+        SET password_hash = $1
+        WHERE id = $2
+      `,
+      [passwordHash, Number(user.id)]
+    );
+
+    return res.json({ message: 'Your password has been reset. You can now log in.' });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to reset password.' });
   }
 });
 
