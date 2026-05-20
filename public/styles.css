@@ -814,6 +814,7 @@ textarea:focus {
   gap: 0.7rem;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .schedule-export-label {
@@ -829,29 +830,6 @@ textarea:focus {
   border-radius: 4px;
   font-size: 0.9rem;
   background: #fff;
-}
-
-.schedule-email-label {
-  font-weight: 500;
-  font-size: 0.93rem;
-  white-space: nowrap;
-}
-
-.schedule-email-input {
-  flex: 1 1 180px;
-  min-width: 180px;
-  max-width: 280px;
-  padding: 0.45rem 0.55rem;
-  border: 1px solid #dbe1ef;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  background: #fff;
-}
-
-.schedule-email-input:focus {
-  outline: none;
-  border-color: #4361ee;
-  box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.1);
 }
 
 .schedule-action-icon {
@@ -909,6 +887,39 @@ textarea:focus {
 .schedule-download-btn {
   width: auto;
   margin-top: 0;
+}
+
+.schedule-email-dialog {
+  width: min(520px, calc(100vw - 2rem));
+}
+
+.schedule-email-dialog-body {
+  gap: 0.6rem;
+}
+
+.schedule-email-dialog-label {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #32415f;
+}
+
+.schedule-email-dialog-input {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #dbe1ef;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  background: #fff;
+}
+
+.schedule-email-dialog-input:focus {
+  outline: none;
+  border-color: #4361ee;
+  box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.1);
+}
+
+.schedule-email-dialog-actions {
+  gap: 0.6rem;
 }
 
 .schedule-preview {

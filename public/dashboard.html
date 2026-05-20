@@ -139,8 +139,6 @@
                       <option value="txt">.txt</option>
                     </select>
                     <button id="downloadCleaningScheduleBtn" type="submit" class="btn primary schedule-download-btn schedule-action-icon schedule-download-icon" aria-label="Download Schedule" title="Download Schedule">Download Schedule</button>
-                    <label class="schedule-email-label" for="scheduleEmailTo">Email</label>
-                    <input id="scheduleEmailTo" type="email" class="schedule-email-input" placeholder="name@example.com" />
                     <button id="sendScheduleEmailBtn" type="button" class="btn primary schedule-email-btn schedule-action-icon schedule-email-icon" aria-label="Email Schedule" title="Email Schedule">Email Schedule</button>
                   </div>
                 </div>
@@ -149,6 +147,23 @@
             <p id="scheduleEmailMessage" class="schedule-email-message" aria-live="polite"></p>
           </form>
         </section>
+
+        <dialog id="scheduleEmailDialog" class="resource-dialog schedule-email-dialog">
+          <form id="scheduleEmailDialogForm" method="dialog" novalidate>
+            <div class="resource-dialog-header">
+              <h3>Email Schedule</h3>
+            </div>
+            <div class="resource-dialog-body schedule-email-dialog-body">
+              <label for="scheduleEmailDialogTo" class="schedule-email-dialog-label">Email address</label>
+              <input id="scheduleEmailDialogTo" type="email" class="schedule-email-dialog-input" placeholder="name@example.com" />
+              <p class="hint">This uses the selected export format for the message.</p>
+            </div>
+            <div class="resource-dialog-actions schedule-email-dialog-actions">
+              <button id="cancelScheduleEmailDialogBtn" type="button" class="btn secondary">Cancel</button>
+              <button type="submit" class="btn primary">Send Email</button>
+            </div>
+          </form>
+        </dialog>
 
         <section class="listing-form-section">
           <h3>Reservations</h3>

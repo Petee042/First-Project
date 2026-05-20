@@ -38,11 +38,94 @@ let opsCalCurrentCleaningChanges = [];
 let opsCalCurrentFetchedAt = null;
 let opsCalSelectedListingIds = new Set();
 let opsCalRequestId = 0;
+let savedDashboardState = null;
 
 const opsCalSourceColorMap = {};
 const opsCalSourcePalette = ['#ff5a5f', '#003580', '#2a9d8f', '#e76f51', '#264653', '#f4a261', '#8a5cf6'];
+const opsCalListingColorMap = {};
+const opsCalListingColorPalette = ['#1d4ed8', '#0f766e', '#b45309', '#be123c', '#4338ca', '#166534', '#0369a1', '#7c3aed'];
 const opsCalCleanerBadgeColorMap = {};
 const opsCalCleanerBadgePalette = ['#0f766e', '#1d4ed8', '#b45309', '#be123c', '#4338ca', '#166534', '#92400e', '#0369a1'];
+
+function getDashboardStateStorageKey() {
+  const identity = currentUserEmail || 'anonymous';
+  return 'dashboard-state:v1:' + identity;
+}
+
+function loadDashboardState() {
+  try {
+    const raw = window.localStorage.getItem(getDashboardStateStorageKey());
+    savedDashboardState = raw ? JSON.parse(raw) : null;
+  } catch {
+    savedDashboardState = null;
+  }
+}
+
+function saveDashboardState(patch) {
+  const nextState = Object.assign({}, savedDashboardState || {}, patch || {});
+  savedDashboardState = nextState;
+  try {
+    window.localStorage.setItem(getDashboardStateStorageKey(), JSON.stringify(nextState));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function getSavedListingIdSet(stateKey) {
+  if (!savedDashboardState || !Array.isArray(savedDashboardState[stateKey])) {
+    return null;
+  }
+  return new Set(savedDashboardState[stateKey].map((id) => String(id)));
+}
+
+function getListingDisplayNameFromEvent(event) {
+  const listingName = String(event && (event.listingName || event.listing_name || event.listing || '')).trim();
+  return listingName || 'Unknown listing';
+}
+
+function getListingKeyFromEvent(event) {
+  const listingId = Number(event && event.listingId ? event.listingId : event && event.listing_id ? event.listing_id : 0);
+  if (Number.isInteger(listingId) && listingId > 0) {
+    return 'id:' + String(listingId);
+  }
+  return 'name:' + getListingDisplayNameFromEvent(event).toLowerCase();
+}
+
+function getListingColor(listingKey) {
+  if (!opsCalListingColorMap[listingKey]) {
+    const idx = Object.keys(opsCalListingColorMap).length % opsCalListingColorPalette.length;
+    opsCalListingColorMap[listingKey] = opsCalListingColorPalette[idx];
+  }
+  return opsCalListingColorMap[listingKey];
+}
+
+function getOpsCalendarListings(events) {
+  const listings = [];
+  const seen = new Set();
+  (events || []).forEach((event) => {
+    const key = getListingKeyFromEvent(event);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    listings.push({
+      key,
+      name: getListingDisplayNameFromEvent(event),
+      color: getListingColor(key)
+    });
+  });
+  listings.sort((a, b) => a.name.localeCompare(b.name));
+  return listings;
+}
+
+function getDefaultCleanerNameForListing(usualCleanerId) {
+  const cleanerId = Number(usualCleanerId || 0);
+  if (!Number.isInteger(cleanerId) || cleanerId <= 0) {
+    return '';
+  }
+  const cleaner = (currentCleaners || []).find((item) => Number(item.id) === cleanerId);
+  return cleaner ? getCleanerDisplayName(cleaner) : '';
+}
 
 function setScheduleEmailMessage(text, isError) {
   const el = document.getElementById('scheduleEmailMessage');
@@ -1309,6 +1392,7 @@ function renderCleaningListings(listings) {
   const sorted = sortListingsByProperty(listings);
   const container = document.getElementById('cleaningListings');
   container.innerHTML = '';
+  const savedListingIds = getSavedListingIdSet('scheduleListingIds');
 
   if (!sorted.length) {
     const text = document.createElement('p');
@@ -1330,6 +1414,9 @@ function renderCleaningListings(listings) {
     checkbox.setAttribute('data-property-name', listing.property_name || '');
     checkbox.setAttribute('data-date-basis', listing.date_basis === 'checkin' ? 'checkin' : 'checkout');
     checkbox.setAttribute('data-usual-cleaner-id', listing.usual_cleaner_id ? String(listing.usual_cleaner_id) : '');
+    if (savedListingIds) {
+      checkbox.checked = savedListingIds.has(String(listing.id));
+    }
 
     const name = document.createElement('span');
     name.className = 'cleaning-listing-name';
@@ -1338,6 +1425,14 @@ function renderCleaningListings(listings) {
     row.appendChild(checkbox);
     row.appendChild(name);
     container.appendChild(row);
+  });
+
+  Array.from(container.querySelectorAll('.cleaning-listing-checkbox')).forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      saveDashboardState({
+        scheduleListingIds: Array.from(container.querySelectorAll('.cleaning-listing-checkbox:checked')).map((box) => String(box.value))
+      });
+    });
   });
 }
 
@@ -1850,6 +1945,7 @@ function renderOpsCalendarListingSelector(listings) {
   }
 
   container.innerHTML = '';
+  const savedListingIds = getSavedListingIdSet('opsCalendarListingIds');
   if (!Array.isArray(sorted) || !sorted.length) {
     const empty = document.createElement('p');
     empty.className = 'cleaning-empty';
@@ -1860,10 +1956,11 @@ function renderOpsCalendarListingSelector(listings) {
   }
 
   const validIds = new Set(sorted.map((listing) => String(listing.id)));
-  const nextSelectedIds = new Set(
-    Array.from(opsCalSelectedListingIds || []).filter((id) => validIds.has(String(id)))
-  );
-  if (!nextSelectedIds.size) {
+  const hasSavedSelection = !!savedListingIds;
+  const nextSelectedIds = hasSavedSelection
+    ? new Set(Array.from(savedListingIds).filter((id) => validIds.has(String(id))))
+    : new Set(Array.from(opsCalSelectedListingIds || []).filter((id) => validIds.has(String(id))));
+  if (!hasSavedSelection && !nextSelectedIds.size) {
     sorted.forEach((listing) => nextSelectedIds.add(String(listing.id)));
   }
   opsCalSelectedListingIds = nextSelectedIds;
@@ -1898,6 +1995,7 @@ function renderOpsCalendarListingSelector(listings) {
     checkbox.addEventListener('change', () => {
       const checkedBoxes = Array.from(container.querySelectorAll('.ops-calendar-listing-checkbox:checked'));
       opsCalSelectedListingIds = new Set(checkedBoxes.map((box) => String(box.value)));
+      saveDashboardState({ opsCalendarListingIds: Array.from(opsCalSelectedListingIds) });
       refreshOpsCalendar(false);
     });
   });
@@ -1927,7 +2025,10 @@ function opsCalendarGetCleanerKey(change) {
   if (change && change.cleaner_id) {
     return 'id:' + String(change.cleaner_id);
   }
-  const name = String(change && change.cleaner_name ? change.cleaner_name : '').trim().toLowerCase();
+  if (change && change.default_cleaner_id) {
+    return 'default:' + String(change.default_cleaner_id);
+  }
+  const name = opsCalendarGetCleanerDisplayName(change).trim().toLowerCase();
   return name ? ('name:' + name) : '';
 }
 
@@ -1936,8 +2037,8 @@ function opsCalendarGetCleanerInitials(change) {
   if (!key) {
     return '';
   }
-  const name = String(change && change.cleaner_name ? change.cleaner_name : '').trim();
-  if (!name || name.toLowerCase() === 'unallocated') {
+  const name = opsCalendarGetCleanerDisplayName(change);
+  if (!name) {
     return '';
   }
   const parts = name.split(/\s+/).filter(Boolean);
@@ -1963,8 +2064,12 @@ function opsCalendarGetCleanerDisplayName(change) {
   if (!change) {
     return '';
   }
-  const name = String(change.cleaner_name || '').trim();
-  return !name || name.toLowerCase() === 'unallocated' ? '' : name;
+  const explicitName = String(change.cleaner_name || '').trim();
+  if (explicitName && explicitName.toLowerCase() !== 'unallocated') {
+    return explicitName;
+  }
+  const defaultName = String(change.default_cleaner_name || '').trim();
+  return !defaultName || defaultName.toLowerCase() === 'unallocated' ? '' : defaultName;
 }
 
 function opsCalendarGetSources(events) {
@@ -2050,8 +2155,8 @@ function isOpsAirbnbNotAvailableEvent(event, sourceLabel) {
   return String(getOpsEventSummary(event) || '').toLowerCase().includes('not available');
 }
 
-function shouldDimBar(events, sourceLabel) {
-  return (events || []).some((event) => isOpsAirbnbNotAvailableEvent(event, sourceLabel));
+function shouldDimBar(events) {
+  return (events || []).some((event) => isOpsAirbnbNotAvailableEvent(event));
 }
 
 function hasDisplayUnavailable(events) {
@@ -2079,12 +2184,7 @@ function opsCalendarBuildDayIndex(events) {
   function ensureDay(key) {
     if (!index[key]) {
       index[key] = {
-        stays: new Set(),
-        checkins: new Set(),
-        checkouts: new Set(),
-        stayEventsBySource: {},
-        checkinEventsBySource: {},
-        checkoutEventsBySource: {},
+        listings: new Map(),
         events: [],
         conflict: false
       };
@@ -2092,15 +2192,27 @@ function opsCalendarBuildDayIndex(events) {
     return index[key];
   }
 
-  function addSourceEvent(day, fieldName, source, event) {
-    if (!day[fieldName][source]) {
-      day[fieldName][source] = [];
+  function ensureListing(day, listingKey, listingName, color) {
+    if (!day.listings.has(listingKey)) {
+      day.listings.set(listingKey, {
+        name: listingName,
+        color,
+        stays: new Set(),
+        checkins: new Set(),
+        checkouts: new Set(),
+        stayEvents: [],
+        checkinEvents: [],
+        checkoutEvents: [],
+        events: []
+      });
     }
-    day[fieldName][source].push(event);
+    return day.listings.get(listingKey);
   }
 
   (events || []).forEach((event) => {
-    const source = event.source || 'Unknown';
+    const listingKey = getListingKeyFromEvent(event);
+    const listingName = getListingDisplayNameFromEvent(event);
+    const listingColor = getListingColor(listingKey);
     const startKey = toDateKey(event.start);
     const rawEndKey = toDateKey(event.end);
     if (!startKey) {
@@ -2114,25 +2226,27 @@ function opsCalendarBuildDayIndex(events) {
     }
 
     const checkinDay = ensureDay(startKey);
-    checkinDay.checkins.add(source);
-    addSourceEvent(checkinDay, 'checkinEventsBySource', source, event);
+    checkinDay.events.push(event);
+    const checkinListing = ensureListing(checkinDay, listingKey, listingName, listingColor);
+    checkinListing.checkins.add(listingKey);
+    checkinListing.checkinEvents.push(event);
+    checkinListing.events.push(event);
 
     const checkoutKey = keyFromUtcDate(endDate);
     const checkoutDay = ensureDay(checkoutKey);
-    checkoutDay.checkouts.add(source);
-    addSourceEvent(checkoutDay, 'checkoutEventsBySource', source, event);
+    checkoutDay.events.push(event);
+    const checkoutListing = ensureListing(checkoutDay, listingKey, listingName, listingColor);
+    checkoutListing.checkouts.add(listingKey);
+    checkoutListing.checkoutEvents.push(event);
+    checkoutListing.events.push(event);
 
     for (let cursor = new Date(startDate.getTime()); cursor < endDate; cursor = addUtcDays(cursor, 1)) {
       const day = ensureDay(keyFromUtcDate(cursor));
-      day.stays.add(source);
       day.events.push(event);
-      addSourceEvent(day, 'stayEventsBySource', source, event);
-    }
-  });
-
-  Object.keys(index).forEach((key) => {
-    if (index[key].stays.size > 1) {
-      index[key].conflict = true;
+      const listingEntry = ensureListing(day, listingKey, listingName, listingColor);
+      listingEntry.stays.add(listingKey);
+      listingEntry.stayEvents.push(event);
+      listingEntry.events.push(event);
     }
   });
 
@@ -2237,7 +2351,7 @@ function opsCalendarRenderReservationCalendar(events, changes) {
   const monthStart = opsCalendarMonthStart(opsCalCurrentMonth);
   const dayIndex = opsCalendarBuildDayIndex(events);
   const cleanerBadgesByDate = opsCalendarBuildCleaningBadgesByDate(changes);
-  const sources = opsCalendarGetSources(events);
+  const listings = getOpsCalendarListings(events);
 
   monthLabel.textContent = formatMonthLabel(monthStart);
   calendar.innerHTML = '';
@@ -2269,25 +2383,25 @@ function opsCalendarRenderReservationCalendar(events, changes) {
     dayNumbers.push(null);
   }
 
-  const daySources = sources.length ? sources : ['Unknown'];
+  const dayListings = listings.length ? listings : [{ key: 'unknown', name: 'Unknown listing', color: '#667085' }];
 
   for (let weekStart = 0; weekStart < dayNumbers.length; weekStart += 7) {
     if (weekStart === 0) {
       const labelsCell = document.createElement('div');
       labelsCell.className = 'calendar-channel-labels';
 
-      daySources.forEach((source) => {
+      dayListings.forEach((listing) => {
         const row = document.createElement('div');
         row.className = 'calendar-channel-label-row';
 
         const swatch = document.createElement('span');
         swatch.className = 'calendar-channel-label-swatch';
-        swatch.style.backgroundColor = opsCalendarSourceColor(source);
+        swatch.style.backgroundColor = listing.color;
 
         const text = document.createElement('span');
         text.className = 'calendar-channel-label-text';
-        text.textContent = source;
-        text.title = source;
+        text.textContent = listing.name;
+        text.title = listing.name;
 
         row.appendChild(swatch);
         row.appendChild(text);
@@ -2343,7 +2457,7 @@ function opsCalendarRenderReservationCalendar(events, changes) {
       const bars = document.createElement('div');
       bars.className = 'calendar-day-bars';
 
-      daySources.forEach((source) => {
+      dayListings.forEach((listing) => {
         const slot = document.createElement('div');
         slot.className = 'day-bar-slot';
 
@@ -2357,17 +2471,18 @@ function opsCalendarRenderReservationCalendar(events, changes) {
           return;
         }
 
-        const hasCheckout = dayEntry.checkouts.has(source);
-        const hasCheckin = dayEntry.checkins.has(source);
-        const hasStay = dayEntry.stays.has(source);
-        const color = opsCalendarSourceColor(source);
+        const listingEntry = dayEntry.listings.get(listing.key);
+        const hasCheckout = !!(listingEntry && listingEntry.checkouts.size);
+        const hasCheckin = !!(listingEntry && listingEntry.checkins.size);
+        const hasStay = !!(listingEntry && listingEntry.stays.size);
+        const color = listing.color;
         const transparentStop = color.length === 7 ? (color + '00') : 'rgba(0,0,0,0)';
 
         if (hasCheckout && hasCheckin) {
-          const transitionEvents = (dayEntry.checkoutEventsBySource[source] || []).concat(dayEntry.checkinEventsBySource[source] || []);
+          const transitionEvents = (listingEntry.checkoutEvents || []).concat(listingEntry.checkinEvents || []);
           bar.classList.add('day-transition-bar');
           bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 47%, ' + transparentStop + ' 47% 53%, ' + color + ' 53% 100%)';
-          if (shouldDimBar(transitionEvents, source)) {
+          if (shouldDimBar(transitionEvents, listing.name)) {
             bar.style.opacity = '0.5';
           }
           bar.title = buildBarTooltip(transitionEvents);
@@ -2375,10 +2490,10 @@ function opsCalendarRenderReservationCalendar(events, changes) {
             applyUnavailableHatch(bar);
           }
         } else if (hasCheckout) {
-          const checkoutEvents = dayEntry.checkoutEventsBySource[source] || [];
+          const checkoutEvents = listingEntry.checkoutEvents || [];
           bar.classList.add('day-transition-bar');
           bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 68%, ' + transparentStop + ' 68% 100%)';
-          if (shouldDimBar(checkoutEvents, source)) {
+          if (shouldDimBar(checkoutEvents, listing.name)) {
             bar.style.opacity = '0.5';
           }
           bar.title = buildBarTooltip(checkoutEvents);
@@ -2386,10 +2501,10 @@ function opsCalendarRenderReservationCalendar(events, changes) {
             applyUnavailableHatch(bar);
           }
         } else if (hasCheckin) {
-          const checkinEvents = dayEntry.checkinEventsBySource[source] || [];
+          const checkinEvents = listingEntry.checkinEvents || [];
           bar.classList.add('day-transition-bar');
           bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 32%, ' + color + ' 32% 100%)';
-          if (shouldDimBar(checkinEvents, source)) {
+          if (shouldDimBar(checkinEvents, listing.name)) {
             bar.style.opacity = '0.5';
           }
           bar.title = buildBarTooltip(checkinEvents);
@@ -2397,9 +2512,9 @@ function opsCalendarRenderReservationCalendar(events, changes) {
             applyUnavailableHatch(bar);
           }
         } else if (hasStay) {
-          const stayEvents = dayEntry.stayEventsBySource[source] || [];
+          const stayEvents = listingEntry.stayEvents || [];
           bar.style.backgroundColor = color;
-          if (shouldDimBar(stayEvents, source)) {
+          if (shouldDimBar(stayEvents, listing.name)) {
             bar.style.opacity = '0.5';
           }
           bar.title = buildBarTooltip(stayEvents);
@@ -2488,8 +2603,19 @@ async function refreshOpsCalendar(refresh) {
     }
 
     const data = result.data || {};
-    events.push(...(data.events || []));
-    cleaningChanges.push(...(data.cleaningChanges || []));
+    const listingName = result.listing.name || ('Listing #' + result.listing.id);
+    const listingColorName = result.listing.property_name || '';
+    events.push(...(data.events || []).map((event) => Object.assign({}, event, {
+      listingId: result.listing.id,
+      listingName,
+      listingPropertyName: listingColorName
+    })));
+    cleaningChanges.push(...(data.cleaningChanges || []).map((change) => Object.assign({}, change, {
+      listingId: result.listing.id,
+      listingName,
+      default_cleaner_id: result.listing.usual_cleaner_id || null,
+      default_cleaner_name: getDefaultCleanerNameForListing(result.listing.usual_cleaner_id)
+    })));
     if (data.fetchedAt) {
       fetchedAts.push(data.fetchedAt);
     }
@@ -2767,9 +2893,9 @@ async function persistCurrentScheduleChanges() {
 
 async function loadDashboardData() {
   await fetchProperties();
-  await fetchListings();
   await fetchFeedSources();
   await fetchCleaners();
+  await fetchListings();
   await fetchSharedResources();
   await fetchTeamMembers();
   await fetchManagerAssignments();
@@ -2779,6 +2905,172 @@ async function loadDashboardData() {
   const managerSelect = document.getElementById('managerAssignmentMembership');
   if (managerSelect) {
     renderManagerScopeOptions(Number(managerSelect.value));
+  }
+}
+
+function restorePersistedScheduleControls() {
+  if (!savedDashboardState) {
+    return;
+  }
+
+  const startDateInput = document.getElementById('cleaningStartDate');
+  const daysInput = document.getElementById('cleaningDays');
+  const formatInput = document.getElementById('cleaningFormat');
+
+  if (startDateInput && savedDashboardState.cleaningStartDate) {
+    startDateInput.value = savedDashboardState.cleaningStartDate;
+  }
+  if (daysInput && savedDashboardState.cleaningDays) {
+    daysInput.value = String(savedDashboardState.cleaningDays);
+  }
+  if (formatInput && savedDashboardState.cleaningFormat) {
+    formatInput.value = savedDashboardState.cleaningFormat;
+  }
+}
+
+function persistScheduleControls() {
+  const startDateInput = document.getElementById('cleaningStartDate');
+  const daysInput = document.getElementById('cleaningDays');
+  const formatInput = document.getElementById('cleaningFormat');
+  saveDashboardState({
+    cleaningStartDate: startDateInput ? startDateInput.value : '',
+    cleaningDays: daysInput ? daysInput.value : '',
+    cleaningFormat: formatInput ? formatInput.value : 'csv'
+  });
+}
+
+function openScheduleEmailDialog() {
+  const dialog = document.getElementById('scheduleEmailDialog');
+  const input = document.getElementById('scheduleEmailDialogTo');
+  if (!dialog || typeof dialog.showModal !== 'function') {
+    return;
+  }
+  if (input) {
+    input.value = currentUserEmail || input.value || '';
+  }
+  dialog.showModal();
+  if (input) {
+    input.focus();
+    input.select();
+  }
+}
+
+function closeScheduleEmailDialog() {
+  const dialog = document.getElementById('scheduleEmailDialog');
+  if (dialog && typeof dialog.close === 'function' && dialog.open) {
+    dialog.close();
+  }
+}
+
+async function sendScheduleEmailToRecipient(toEmail) {
+  const format = String((document.getElementById('cleaningFormat') && document.getElementById('cleaningFormat').value) || 'csv').toLowerCase() === 'txt' ? 'txt' : 'csv';
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailRegex.test(toEmail)) {
+    setMessage('Enter a valid email address.', true);
+    setScheduleEmailMessage('Enter a valid email address.', true);
+    return;
+  }
+
+  const daysValue = Number(document.getElementById('cleaningDays').value);
+  const startDateUtc = getSelectedStartDateUtc();
+  const selectedListings = getSelectedCleaningListings();
+
+  if (!selectedListings.length) {
+    setMessage('Select at least one listing for the schedule.', true);
+    setScheduleEmailMessage('Select at least one listing for the schedule.', true);
+    return;
+  }
+  if (!Number.isInteger(daysValue) || daysValue < 1 || daysValue > 365) {
+    setMessage('Number of days must be between 1 and 365.', true);
+    setScheduleEmailMessage('Number of days must be between 1 and 365.', true);
+    return;
+  }
+  if (!startDateUtc) {
+    setMessage('Please select a valid start date.', true);
+    setScheduleEmailMessage('Please select a valid start date.', true);
+    return;
+  }
+
+  setMessage('Preparing schedule email...', false);
+  setScheduleEmailMessage('Preparing schedule email...', false);
+
+  try {
+    let rows = currentScheduleRows || [];
+    let errors = currentScheduleErrors || [];
+
+    if (!rows.length) {
+      const result = await buildSchedule(selectedListings, daysValue, startDateUtc);
+      rows = result.rows || [];
+      errors = result.errors || [];
+      currentScheduleRows = rows;
+      currentScheduleErrors = errors;
+      renderSchedulePreviewTable(rows, errors, result.notifications || []);
+    }
+
+    if (!rows.length) {
+      setMessage('No reservations found in the selected range.', true);
+      setScheduleEmailMessage('No reservations found in the selected range.', true);
+      return;
+    }
+
+    const startKey = keyFromUtcDate(startDateUtc);
+    const listingNames = Array.from(new Set(rows.map((row) => String(row.listing || '').trim()).filter(Boolean)));
+    const subjectPrefix = listingNames.length ? listingNames.join(', ') : 'Listings';
+    const subject = subjectPrefix + ' Schedule';
+    const textContent = rowsToText(rows, formatCleaningScheduleLine) + '\n';
+    const csvContent = rowsToCsv(rows) + '\n';
+    const fileName = 'schedule-' + startKey + (format === 'csv' ? '.csv' : '.txt');
+    const bodyText = format === 'txt'
+      ? textContent
+      : ('Please find the schedule attached as CSV.\n\nListings: ' + (listingNames.join(', ') || 'N/A') + '\nDate range start: ' + startKey + '\n');
+
+    const button = document.getElementById('sendScheduleEmailBtn');
+    if (button) {
+      button.disabled = true;
+    }
+
+    const sendRes = await fetch('/api/schedules/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: toEmail,
+        subject,
+        format,
+        fileName,
+        textContent: bodyText,
+        csvContent
+      })
+    });
+
+    if (sendRes.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const sendData = await sendRes.json();
+    if (!sendRes.ok) {
+      setMessage(sendData.error || 'Failed to send schedule email.', true);
+      setScheduleEmailMessage(sendData.error || 'Failed to send schedule email.', true);
+      return;
+    }
+
+    if (errors.length) {
+      setMessage('Email sent with some feed issues: ' + errors.join(' | '), true);
+      setScheduleEmailMessage('Email sent with some feed issues.', false);
+    } else {
+      setMessage('Schedule email sent to ' + toEmail + '.', false);
+      setScheduleEmailMessage('Schedule email sent to ' + toEmail + '.', false);
+    }
+    closeScheduleEmailDialog();
+  } catch {
+    setMessage('Failed to send schedule email.', true);
+    setScheduleEmailMessage('Failed to send schedule email.', true);
+  } finally {
+    const button = document.getElementById('sendScheduleEmailBtn');
+    if (button) {
+      button.disabled = false;
+    }
   }
 }
 
@@ -2792,9 +3084,7 @@ async function loadDashboardData() {
     const meData = await meRes.json();
     setConsolidatedIcsUrl(meData.consolidated_ics_token || '');
     currentUserEmail = String(meData.email || '').toLowerCase();
-    if (meData.email) {
-      document.getElementById('scheduleEmailTo').value = meData.email;
-    }
+    loadDashboardState();
     renderStripeConnectStatus(meData.stripeConnect || null);
 
     await fetchAccessContext();
@@ -2802,8 +3092,20 @@ async function loadDashboardData() {
 
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    document.getElementById('cleaningStartDate').value = toDateInputValue(todayUtc);
+    const cleaningStartDate = document.getElementById('cleaningStartDate');
+    if (cleaningStartDate && !cleaningStartDate.value) {
+      cleaningStartDate.value = toDateInputValue(todayUtc);
+    }
+    restorePersistedScheduleControls();
+    persistScheduleControls();
     resetCleanerForm();
+
+    const savedSelection = savedDashboardState && Array.isArray(savedDashboardState.scheduleListingIds)
+      ? savedDashboardState.scheduleListingIds.length
+      : 0;
+    if (savedSelection) {
+      await updateSchedulePreview();
+    }
   } catch (err) {
     setMessage(err.message || 'Failed to load page.', true);
   }
@@ -3166,111 +3468,35 @@ document.getElementById('refreshScheduleBtn').addEventListener('click', async ()
   }
 });
 
-document.getElementById('sendScheduleEmailBtn').addEventListener('click', async () => {
-  const button = document.getElementById('sendScheduleEmailBtn');
-  const toEmailInput = document.getElementById('scheduleEmailTo');
-  const toEmail = String((toEmailInput && toEmailInput.value) || currentUserEmail || '').trim().toLowerCase();
-  const format = String((document.getElementById('cleaningFormat') && document.getElementById('cleaningFormat').value) || 'csv').toLowerCase() === 'txt' ? 'txt' : 'csv';
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+document.getElementById('sendScheduleEmailBtn').addEventListener('click', () => {
+  openScheduleEmailDialog();
+});
 
-  if (!emailRegex.test(toEmail)) {
-    setMessage('Enter a valid email address.', true);
-    setScheduleEmailMessage('Enter a valid email address.', true);
-    return;
-  }
+const _scheduleEmailDialogForm = document.getElementById('scheduleEmailDialogForm');
+if (_scheduleEmailDialogForm) _scheduleEmailDialogForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('scheduleEmailDialogTo');
+  await sendScheduleEmailToRecipient(String(input ? input.value : '').trim().toLowerCase());
+});
 
-  const daysValue = Number(document.getElementById('cleaningDays').value);
-  const startDateUtc = getSelectedStartDateUtc();
-  const selectedListings = getSelectedCleaningListings();
+const _cancelScheduleEmailDialogBtn = document.getElementById('cancelScheduleEmailDialogBtn');
+if (_cancelScheduleEmailDialogBtn) _cancelScheduleEmailDialogBtn.addEventListener('click', () => {
+  closeScheduleEmailDialog();
+});
 
-  if (!selectedListings.length) {
-    setMessage('Select at least one listing for the schedule.', true);
-    setScheduleEmailMessage('Select at least one listing for the schedule.', true);
-    return;
-  }
-  if (!Number.isInteger(daysValue) || daysValue < 1 || daysValue > 365) {
-    setMessage('Number of days must be between 1 and 365.', true);
-    setScheduleEmailMessage('Number of days must be between 1 and 365.', true);
-    return;
-  }
-  if (!startDateUtc) {
-    setMessage('Please select a valid start date.', true);
-    setScheduleEmailMessage('Please select a valid start date.', true);
-    return;
-  }
-
-  button.disabled = true;
-  setMessage('Preparing schedule email...', false);
-  setScheduleEmailMessage('Preparing schedule email...', false);
-
-  try {
-    let rows = currentScheduleRows || [];
-    let errors = currentScheduleErrors || [];
-
-    if (!rows.length) {
-      const result = await buildSchedule(selectedListings, daysValue, startDateUtc);
-      rows = result.rows || [];
-      errors = result.errors || [];
-      currentScheduleRows = rows;
-      currentScheduleErrors = errors;
-      renderSchedulePreviewTable(rows, errors, result.notifications || []);
-    }
-
-    if (!rows.length) {
-      setMessage('No reservations found in the selected range.', true);
-      setScheduleEmailMessage('No reservations found in the selected range.', true);
-      return;
-    }
-
-    const startKey = keyFromUtcDate(startDateUtc);
-    const listingNames = Array.from(new Set(rows.map((row) => String(row.listing || '').trim()).filter(Boolean)));
-    const subjectPrefix = listingNames.length ? listingNames.join(', ') : 'Listings';
-    const subject = subjectPrefix + ' Schedule';
-    const textContent = rowsToText(rows, formatCleaningScheduleLine) + '\n';
-    const csvContent = rowsToCsv(rows) + '\n';
-    const fileName = 'schedule-' + startKey + (format === 'csv' ? '.csv' : '.txt');
-    const bodyText = format === 'txt'
-      ? textContent
-      : ('Please find the schedule attached as CSV.\n\nListings: ' + (listingNames.join(', ') || 'N/A') + '\nDate range start: ' + startKey + '\n');
-
-    const sendRes = await fetch('/api/schedules/email', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: toEmail,
-        subject,
-        format,
-        fileName,
-        textContent: bodyText,
-        csvContent
-      })
+['cleaningStartDate', 'cleaningDays', 'cleaningFormat'].forEach((id) => {
+  const el = document.getElementById(id);
+  if (el) {
+    el.addEventListener('change', () => {
+      persistScheduleControls();
     });
-
-    if (sendRes.status === 401) {
-      window.location.href = '/';
-      return;
-    }
-
-    const sendData = await sendRes.json();
-    if (!sendRes.ok) {
-      setMessage(sendData.error || 'Failed to send schedule email.', true);
-      setScheduleEmailMessage(sendData.error || 'Failed to send schedule email.', true);
-      return;
-    }
-
-    if (errors.length) {
-      setMessage('Email sent with some feed issues: ' + errors.join(' | '), true);
-      setScheduleEmailMessage('Email sent with some feed issues.', false);
-    } else {
-      setMessage('Schedule email sent to ' + toEmail + '.', false);
-      setScheduleEmailMessage('Schedule email sent to ' + toEmail + '.', false);
-    }
-  } catch {
-    setMessage('Failed to send schedule email.', true);
-    setScheduleEmailMessage('Failed to send schedule email.', true);
-  } finally {
-    button.disabled = false;
   }
+});
+
+document.querySelectorAll('.cleaning-listing-checkbox, .ops-calendar-listing-checkbox').forEach((checkbox) => {
+  checkbox.addEventListener('change', () => {
+    persistScheduleControls();
+  });
 });
 
 document.getElementById('cleaningScheduleForm').addEventListener('submit', async (e) => {
