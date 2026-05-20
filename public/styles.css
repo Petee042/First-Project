@@ -85,6 +85,10 @@ body {
   margin-top: 0 !important;
 }
 
+.logged-page .dashboard-tab-panel > .listing-form-section:first-child {
+  margin-top: 0.12rem !important;
+}
+
 /* ── Site title ────────────────────────────────────────────── */
 .site-title-row {
   display: flex;

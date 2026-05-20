@@ -2442,6 +2442,30 @@ function opsCalendarRenderReservationCalendar(events, changes) {
   const dayIndex = opsCalendarBuildDayIndex(events);
   const cleanerBadgesByDate = opsCalendarBuildCleaningBadgesByDate(changes);
   const listings = getOpsCalendarListings(events);
+  const defaultCleanerByListingKey = new Map();
+
+  listings.forEach((listing) => {
+    const listingId = String(listing.key || '').startsWith('id:') ? Number(String(listing.key).slice(3)) : null;
+    const listingMeta = Number.isInteger(listingId) ? getListingMetaById(listingId) : null;
+    const defaultCleaner = listingMeta ? getDefaultCleanerForListing(listingMeta.usual_cleaner_id) : null;
+    if (!defaultCleaner || !defaultCleaner.name || defaultCleaner.name.toLowerCase() === 'unallocated') {
+      return;
+    }
+
+    const nameParts = defaultCleaner.name.split(/\s+/).filter(Boolean);
+    const initials = nameParts.length === 1
+      ? nameParts[0].charAt(0).toUpperCase()
+      : (nameParts[0].charAt(0) + nameParts[nameParts.length - 1].charAt(0)).toUpperCase();
+
+    defaultCleanerByListingKey.set(listing.key, {
+      key: defaultCleaner.userId ? ('default-user:' + String(defaultCleaner.userId)) : ('default-id:' + String(defaultCleaner.id)),
+      initials,
+      color: opsCalendarGetCleanerColor({
+        default_cleaner_id: defaultCleaner.id,
+        default_cleaner_name: defaultCleaner.name
+      })
+    });
+  });
 
   monthLabel.textContent = formatMonthLabel(monthStart);
   calendar.innerHTML = '';
@@ -2530,7 +2554,26 @@ function opsCalendarRenderReservationCalendar(events, changes) {
       num.textContent = String(dayNum);
       cell.appendChild(num);
 
-      const dayCleanerBadges = cleanerBadgesByDate[key] ? Array.from(cleanerBadgesByDate[key].values()) : [];
+      const dayCleanerBadgeMap = cleanerBadgesByDate[key] ? new Map(cleanerBadgesByDate[key]) : new Map();
+      if (dayEntry && dayEntry.listings && dayEntry.listings.size) {
+        dayEntry.listings.forEach((listingEntry, listingKey) => {
+          if (!listingEntry || (!listingEntry.stays.size && !listingEntry.checkins.size && !listingEntry.checkouts.size)) {
+            return;
+          }
+          const fallbackBadge = defaultCleanerByListingKey.get(listingKey);
+          if (!fallbackBadge) {
+            return;
+          }
+          if (!dayCleanerBadgeMap.has(fallbackBadge.key)) {
+            dayCleanerBadgeMap.set(fallbackBadge.key, {
+              initials: fallbackBadge.initials,
+              color: fallbackBadge.color
+            });
+          }
+        });
+      }
+
+      const dayCleanerBadges = Array.from(dayCleanerBadgeMap.values());
       if (dayCleanerBadges.length) {
         const cleanersEl = document.createElement('div');
         cleanersEl.className = 'calendar-day-cleaners';
