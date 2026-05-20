@@ -4518,14 +4518,29 @@ async function getBookedInChangesForUserByListings(userId, listingIds) {
 
   const result = await pool.query(
     `
-      SELECT id, user_id, property_id, listing_id,
+      SELECT bic.id,
+             bic.user_id,
+             bic.property_id,
+             bic.listing_id,
              reservation_checkin_date::text AS reservation_checkin_date,
              reservation_checkout_date::text AS reservation_checkout_date,
              changeover_date::text AS changeover_date,
-             cleaner_id, cleaner_user_id, created_at, updated_at
-      FROM booked_in_changes
-      WHERE user_id = $1
-        AND listing_id = ANY($2::bigint[])
+             COALESCE(bic.cleaner_id, cleaner_by_id.id, cleaner_by_user_id.id) AS cleaner_id,
+             bic.cleaner_user_id,
+             COALESCE(
+               NULLIF(TRIM(COALESCE(cleaner_by_id.first_name, cleaner_by_user_id.first_name, '') || ' ' || COALESCE(cleaner_by_id.last_name, cleaner_by_user_id.last_name, '')), ''),
+               NULLIF(TRIM(COALESCE(cleaner_by_id.email, cleaner_by_user_id.email, '')), ''),
+               'Unallocated'
+             ) AS cleaner_name,
+             bic.created_at,
+             bic.updated_at
+      FROM booked_in_changes bic
+      LEFT JOIN cleaners cleaner_by_id ON cleaner_by_id.id = bic.cleaner_id
+      LEFT JOIN cleaners cleaner_by_user_id
+        ON cleaner_by_user_id.cleaner_user_id = bic.cleaner_user_id
+       AND cleaner_by_user_id.user_id = bic.user_id
+      WHERE bic.user_id = $1
+        AND bic.listing_id = ANY($2::bigint[])
     `,
     [userId, uniqueListingIds]
   );
