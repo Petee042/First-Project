@@ -1675,7 +1675,7 @@ function formatDisplayDate(dateKey) {
 }
 
 function renderSchedulePreviewTable(rows, errors, notifications) {
-  const container = document.getElementById('schedulePreview');
+  const container = document.getElementById('schedulePreviewContent') || document.getElementById('schedulePreview');
   container.innerHTML = '';
   renderNotificationLog(notifications || []);
 
@@ -2521,7 +2521,7 @@ function renderOpsCalendarForCurrentMonth() {
 }
 
 async function updateSchedulePreview() {
-  const container = document.getElementById('schedulePreview');
+  const container = document.getElementById('schedulePreviewContent') || document.getElementById('schedulePreview');
   const daysValue = Number(document.getElementById('cleaningDays').value);
   const startDateUtc = getSelectedStartDateUtc();
   const selectedListings = getSelectedCleaningListings();
@@ -3168,7 +3168,9 @@ document.getElementById('refreshScheduleBtn').addEventListener('click', async ()
 
 document.getElementById('sendScheduleEmailBtn').addEventListener('click', async () => {
   const button = document.getElementById('sendScheduleEmailBtn');
-  const toEmail = document.getElementById('scheduleEmailTo').value.trim().toLowerCase();
+  const toEmailInput = document.getElementById('scheduleEmailTo');
+  const toEmail = String((toEmailInput && toEmailInput.value) || currentUserEmail || '').trim().toLowerCase();
+  const format = String((document.getElementById('cleaningFormat') && document.getElementById('cleaningFormat').value) || 'csv').toLowerCase() === 'txt' ? 'txt' : 'csv';
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   if (!emailRegex.test(toEmail)) {
@@ -3221,17 +3223,26 @@ document.getElementById('sendScheduleEmailBtn').addEventListener('click', async 
     }
 
     const startKey = keyFromUtcDate(startDateUtc);
+    const listingNames = Array.from(new Set(rows.map((row) => String(row.listing || '').trim()).filter(Boolean)));
+    const subjectPrefix = listingNames.length ? listingNames.join(', ') : 'Listings';
+    const subject = subjectPrefix + ' Schedule';
     const textContent = rowsToText(rows, formatCleaningScheduleLine) + '\n';
-    const fileName = 'schedule-' + startKey + '.txt';
+    const csvContent = rowsToCsv(rows) + '\n';
+    const fileName = 'schedule-' + startKey + (format === 'csv' ? '.csv' : '.txt');
+    const bodyText = format === 'txt'
+      ? textContent
+      : ('Please find the schedule attached as CSV.\n\nListings: ' + (listingNames.join(', ') || 'N/A') + '\nDate range start: ' + startKey + '\n');
 
     const sendRes = await fetch('/api/schedules/email', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: toEmail,
-        subject: 'Cleaning schedule ' + startKey,
+        subject,
+        format,
         fileName,
-        textContent
+        textContent: bodyText,
+        csvContent
       })
     });
 

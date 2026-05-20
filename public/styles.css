@@ -793,44 +793,34 @@ textarea:focus {
   width: 120px;
 }
 
-.schedule-download-row {
-  display: flex;
-  gap: 0.8rem;
-  align-items: center;
-  margin-top: 0.6rem;
-}
-
 .schedule-actions-row {
   display: flex;
   gap: 0.6rem;
   justify-content: flex-end;
-  margin-top: 0.6rem;
+  margin-top: 0.7rem;
 }
 
-.schedule-refresh-row {
-  margin-top: 0.6rem;
-}
-
-.schedule-save-row {
-  margin-top: 0.6rem;
-}
-
-.schedule-email-row {
+.schedule-export-row {
   margin-top: 0.6rem;
   display: flex;
   gap: 0.7rem;
   align-items: center;
+  justify-content: flex-end;
 }
 
-.schedule-email-row label {
+.schedule-export-label {
   font-weight: 500;
   font-size: 0.93rem;
   white-space: nowrap;
 }
 
-.schedule-email-row input {
-  flex: 1;
-  min-width: 210px;
+.schedule-export-row select {
+  min-width: 110px;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #dbe1ef;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  background: #fff;
 }
 
 .schedule-action-icon {
@@ -862,9 +852,12 @@ textarea:focus {
   content: '\2713';
 }
 
-.schedule-email-row .schedule-email-btn,
-.schedule-download-row .schedule-download-btn {
-  margin-left: auto;
+.schedule-download-icon::before {
+  content: '\2913';
+}
+
+.schedule-email-icon::before {
+  content: '\2709';
 }
 
 .schedule-email-message {
@@ -894,30 +887,14 @@ textarea:focus {
   padding: 0.7rem;
 }
 
+.schedule-table-footer {
+  border-top: 1px solid #dbe1ef;
+  margin-top: 0.65rem;
+  padding-top: 0.55rem;
+}
+
 .schedule-preview .calendar-table {
   margin-top: 0.25rem;
-}
-
-.schedule-format-row {
-  display: flex;
-  gap: 0.8rem;
-  align-items: center;
-  margin-top: 0;
-  flex: 1;
-}
-
-.schedule-format-row label {
-  font-weight: 500;
-  font-size: 0.93rem;
-}
-
-.schedule-format-row select {
-  flex: 1;
-  min-width: 160px;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 0.93rem;
 }
 
 .schedule-change-date,
@@ -1425,13 +1402,7 @@ textarea:focus {
     align-items: stretch;
   }
 
-  .schedule-download-row {
-    flex-direction: row;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-
-  .schedule-email-row {
+  .schedule-export-row {
     flex-direction: row;
     align-items: center;
     flex-wrap: wrap;

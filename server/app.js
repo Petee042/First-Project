@@ -6859,6 +6859,8 @@ app.post('/api/booked-in-changes/delete', requireScopedRole('Manager'), async (r
 app.post('/api/schedules/email', requireScopedRole('Staff'), async (req, res) => {
   const to = normaliseOptionalEmail(req.body.email);
   const textContent = String(req.body.textContent || '');
+  const csvContent = String(req.body.csvContent || '');
+  const format = String(req.body.format || 'txt').trim().toLowerCase() === 'csv' ? 'csv' : 'txt';
   const subject = String(req.body.subject || 'Cleaning schedule').trim().slice(0, 160) || 'Cleaning schedule';
   const rawFileName = String(req.body.fileName || 'schedule.txt').trim();
   const safeFileName = rawFileName.replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || 'schedule.txt';
@@ -6870,6 +6872,9 @@ app.post('/api/schedules/email', requireScopedRole('Staff'), async (req, res) =>
   if (!textContent.trim()) {
     return res.status(400).json({ error: 'Schedule text is required.' });
   }
+  if (format === 'csv' && !csvContent.trim()) {
+    return res.status(400).json({ error: 'CSV schedule content is required for CSV export.' });
+  }
 
   const transportResult = getScheduleEmailTransporter();
   if (transportResult.error) {
@@ -6877,18 +6882,21 @@ app.post('/api/schedules/email', requireScopedRole('Staff'), async (req, res) =>
   }
 
   try {
+    const attachments = [];
+    if (format === 'csv') {
+      attachments.push({
+        filename: safeFileName.toLowerCase().endsWith('.csv') ? safeFileName : (safeFileName + '.csv'),
+        content: csvContent,
+        contentType: 'text/csv; charset=utf-8'
+      });
+    }
+
     await transportResult.transporter.sendMail({
       from: transportResult.from,
       to,
       subject,
       text: textContent,
-      attachments: [
-        {
-          filename: safeFileName.toLowerCase().endsWith('.txt') ? safeFileName : (safeFileName + '.txt'),
-          content: textContent,
-          contentType: 'text/plain; charset=utf-8'
-        }
-      ]
+      attachments
     });
     return res.json({ message: 'Schedule email sent.' });
   } catch (err) {
