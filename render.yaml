@@ -122,6 +122,10 @@ services:
         value: GB
 
 databases:
+  - name: automaticpeople-db
+    region: oregon
+    postgresMajorVersion: "17"
+
   - name: two-page-website-db
     region: oregon
     postgresMajorVersion: "17"
