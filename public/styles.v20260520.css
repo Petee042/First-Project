@@ -936,6 +936,11 @@ textarea:focus {
   flex-shrink: 1;
 }
 
+/* Undo flex:1 on inputs so checkboxes inside the list aren't stretched */
+.calendar-source-row .cleaning-listings input {
+  flex: none;
+}
+
 /* Align the listings box to the top of its row rather than centring it */
 .calendar-source-row:has(.cleaning-listings) {
   align-items: flex-start;
