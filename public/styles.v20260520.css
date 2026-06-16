@@ -925,6 +925,11 @@ textarea:focus {
   width: 100%;
 }
 
+.calendar-source-row .cleaning-listings {
+  flex: 1;
+  min-width: 0;
+}
+
 .cleaning-actions-row {
   display: flex;
   align-items: end;
