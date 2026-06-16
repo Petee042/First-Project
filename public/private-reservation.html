@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New Private Reservation - AutomaticPeople</title>
+  <link rel="stylesheet" href="styles.v20260520.css" />
+</head>
+<body class="logged-page">
+  <div class="sticky-page-chrome">
+    <div class="sticky-page-inner">
+      <nav class="dashboard-tab-bar page-top-nav" aria-label="Main navigation">
+        <a class="dashboard-tab-link active" href="/dashboard.html?tab=panel-dashboard">Dashboard</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-config">Config</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-ops">Ops</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-account">Account</a>
+      </nav>
+      <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
+    </div>
+  </div>
+
+  <main class="dashboard">
+    <div class="card-container wide">
+      <div class="feed-actions back-row" style="margin-bottom: 0.7rem;">
+        <button id="backBtn" type="button" class="back-arrow-control" aria-label="Back"></button>
+      </div>
+
+      <h2>New Private Reservation</h2>
+      <p id="reservationMessage" class="message"></p>
+
+      <section class="listing-form-section">
+        <form id="privateReservationForm" novalidate>
+
+          <div class="calendar-source-row">
+            <label for="arrivalDate">Arrival Date</label>
+            <input id="arrivalDate" type="date" required />
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="departureDate">Departure Date</label>
+            <input id="departureDate" type="date" required />
+          </div>
+
+          <div class="calendar-source-row">
+            <label>Listings</label>
+            <div id="listingsCheckboxList" class="cleaning-listings" aria-label="Select listings for this reservation">
+              <p class="cleaning-empty">Loading listings&hellip;</p>
+            </div>
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="guestFirstName">First Name</label>
+            <input id="guestFirstName" type="text" maxlength="120" required />
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="guestFamilyName">Family Name</label>
+            <input id="guestFamilyName" type="text" maxlength="120" required />
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="guestEmail">Email Address</label>
+            <input id="guestEmail" type="email" maxlength="160" required />
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="reservationCost">Cost</label>
+            <input id="reservationCost" type="number" min="0" step="0.01" placeholder="0.00" />
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="holdHours">Hold for (hours)</label>
+            <input id="holdHours" type="number" min="1" max="720" placeholder="24" />
+          </div>
+
+          <div class="feed-actions floating-action-bar">
+            <button type="submit" id="saveReservationBtn" class="btn primary action-icon action-save" aria-label="Save Reservation">Save Reservation</button>
+            <button type="button" id="cancelReservationBtn" class="btn secondary action-icon action-cancel" aria-label="Cancel">Cancel</button>
+          </div>
+
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <script src="sticky-layout.js"></script>
+  <script src="private-reservation.js"></script>
+</body>
+</html>

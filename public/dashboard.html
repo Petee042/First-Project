@@ -9,12 +9,23 @@
 <body class="logged-page">
   <div class="sticky-page-chrome">
     <div class="sticky-page-inner">
-      <nav class="dashboard-tab-bar" role="tablist" aria-label="Main sections">
-        <button class="dashboard-tab-btn active" data-panel="panel-dashboard" role="tab" aria-selected="true" aria-controls="panel-dashboard">Dashboard</button>
-        <button class="dashboard-tab-btn" data-panel="panel-config" role="tab" aria-selected="false" aria-controls="panel-config">Config</button>
-        <button class="dashboard-tab-btn" data-panel="panel-ops" role="tab" aria-selected="false" aria-controls="panel-ops">Ops</button>
-        <button class="dashboard-tab-btn" data-panel="panel-account" role="tab" aria-selected="false" aria-controls="panel-account">Account</button>
-      </nav>
+      <div class="tab-bar-row">
+        <nav class="dashboard-tab-bar" role="tablist" aria-label="Main sections">
+          <button class="dashboard-tab-btn active" data-panel="panel-dashboard" role="tab" aria-selected="true" aria-controls="panel-dashboard">Dashboard</button>
+          <button class="dashboard-tab-btn" data-panel="panel-config" role="tab" aria-selected="false" aria-controls="panel-config">Config</button>
+          <button class="dashboard-tab-btn" data-panel="panel-ops" role="tab" aria-selected="false" aria-controls="panel-ops">Ops</button>
+          <button class="dashboard-tab-btn" data-panel="panel-account" role="tab" aria-selected="false" aria-controls="panel-account">Account</button>
+        </nav>
+        <button id="tabMenuBtn" class="tab-menu-btn" aria-label="Section menu" aria-expanded="false" aria-haspopup="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="1.7"/>
+            <line x1="7.5" y1="9" x2="16.5" y2="9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            <line x1="7.5" y1="12" x2="16.5" y2="12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            <line x1="7.5" y1="15" x2="16.5" y2="15" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <div id="tabContextMenu" class="tab-context-menu hidden" role="menu" aria-label="Section actions"></div>
+      </div>
 
       <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
     </div>

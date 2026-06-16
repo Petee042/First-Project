@@ -371,6 +371,96 @@ textarea:focus {
   outline-offset: -2px;
 }
 
+/* ── Tab bar row (tabs + menu button) ────────────────────────── */
+.tab-bar-row {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.tab-bar-row .dashboard-tab-bar {
+  flex: 1;
+  min-width: 0;
+}
+
+.tab-menu-btn {
+  flex-shrink: 0;
+  width: 2.8rem;
+  border: none;
+  border-bottom: 2px solid #e0e4f0;
+  border-left: 1px solid #e4e9f7;
+  margin-bottom: -2px;
+  background: #ffffff;
+  color: #5a6378;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.18s, background 0.18s;
+}
+
+.tab-menu-btn:hover {
+  color: #4361ee;
+  background: #f4f7ff;
+}
+
+.tab-menu-btn.open {
+  color: #4361ee;
+  background: #f4f7ff;
+  border-bottom-color: #4361ee;
+}
+
+.tab-menu-btn:focus-visible {
+  outline: 2px solid #4361ee;
+  outline-offset: -2px;
+}
+
+.tab-context-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  min-width: 210px;
+  background: #ffffff;
+  border: 1px solid #e0e4f0;
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  box-shadow: 0 6px 18px rgba(18, 33, 70, 0.13);
+  z-index: 1300;
+  overflow: hidden;
+}
+
+.tab-context-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.72rem 1rem;
+  border: none;
+  border-bottom: 1px solid #f0f2f8;
+  background: none;
+  text-align: left;
+  color: #24304b;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab-context-menu-item:last-child {
+  border-bottom: none;
+}
+
+.tab-context-menu-item:hover {
+  background: #f4f7ff;
+  color: #4361ee;
+}
+
+.tab-context-menu-empty {
+  display: block;
+  padding: 0.72rem 1rem;
+  font-size: 0.88rem;
+  color: #9aa3b8;
+}
+
 .dashboard-tab-link {
   flex: 1;
   min-width: 90px;

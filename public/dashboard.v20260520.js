@@ -3875,3 +3875,76 @@ async function loadAllReservations() {
     tbody.innerHTML = '<tr><td colspan="6">—</td></tr>';
   }
 }
+
+
+// -- Tab context menu ------------------------------------------
+
+(function initTabContextMenu() {
+  const TAB_SUBMENUS = {
+    'panel-dashboard': [
+      { label: 'New Private Reservation', href: '/private-reservation.html' },
+      { label: 'New Resource Booking', href: '#' }
+    ],
+    'panel-config': [],
+    'panel-ops': [],
+    'panel-account': []
+  };
+
+  const menuBtn = document.getElementById('tabMenuBtn');
+  const menuEl = document.getElementById('tabContextMenu');
+  if (!menuBtn || !menuEl) return;
+
+  function getActivePanel() {
+    const active = document.querySelector('.dashboard-tab-btn.active');
+    return active ? active.dataset.panel : 'panel-dashboard';
+  }
+
+  function buildMenu(panelId) {
+    const items = TAB_SUBMENUS[panelId] || [];
+    if (!items.length) {
+      menuEl.innerHTML = '<span class="tab-context-menu-empty">No actions for this section.</span>';
+    } else {
+      menuEl.innerHTML = items.map(function(item) {
+        return '<a class="tab-context-menu-item" href="' + item.href + '">' + item.label + '</a>';
+      }).join('');
+    }
+  }
+
+  function openMenu() {
+    buildMenu(getActivePanel());
+    menuEl.classList.remove('hidden');
+    menuBtn.setAttribute('aria-expanded', 'true');
+    menuBtn.classList.add('open');
+  }
+
+  function closeMenu() {
+    menuEl.classList.add('hidden');
+    menuBtn.setAttribute('aria-expanded', 'false');
+    menuBtn.classList.remove('open');
+  }
+
+  menuBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (menuEl.classList.contains('hidden')) {
+      openMenu();
+    } else {
+      closeMenu();
+    }
+  });
+
+  document.addEventListener('click', function() { closeMenu(); });
+
+  menuEl.addEventListener('click', function(e) {
+    const item = e.target.closest('.tab-context-menu-item');
+    if (item) { closeMenu(); }
+  });
+
+  // Rebuild submenu if user changes tab while menu is open
+  document.querySelectorAll('.dashboard-tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      if (!menuEl.classList.contains('hidden')) {
+        buildMenu(btn.dataset.panel);
+      }
+    });
+  });
+})();
