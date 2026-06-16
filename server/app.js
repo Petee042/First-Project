@@ -921,6 +921,27 @@ async function initializeUserStore() {
     ADD COLUMN IF NOT EXISTS cleaner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL
   `);
 
+  // Bank details on client_accounts
+  await pool.query(`
+    ALTER TABLE client_accounts
+    ADD COLUMN IF NOT EXISTS bank_account_name TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE client_accounts
+    ADD COLUMN IF NOT EXISTS bank_sort_code TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE client_accounts
+    ADD COLUMN IF NOT EXISTS bank_account_number TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE client_accounts
+    ADD COLUMN IF NOT EXISTS bank_is_business BOOLEAN NOT NULL DEFAULT FALSE
+  `);
+
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_cleaners_cleaner_user_id
     ON cleaners (cleaner_user_id)
@@ -6456,6 +6477,52 @@ app.get('/api/me', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load current user profile.' });
+  }
+});
+
+// GET /api/account/bank-details — fetch bank details for active client account
+app.get('/api/account/bank-details', requireScopedRole('Client'), async (req, res) => {
+  try {
+    const clientAccountId = req.accessContext.activeClientAccountId;
+    const result = await pool.query(
+      'SELECT bank_account_name, bank_sort_code, bank_account_number, bank_is_business FROM client_accounts WHERE id = $1 LIMIT 1',
+      [clientAccountId]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'Client account not found.' });
+    }
+    const row = result.rows[0];
+    return res.json({
+      accountName: row.bank_account_name || '',
+      sortCode: row.bank_sort_code || '',
+      accountNumber: row.bank_account_number || '',
+      isBusiness: row.bank_is_business === true
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load bank details.' });
+  }
+});
+
+// PUT /api/account/bank-details — save bank details for active client account
+app.put('/api/account/bank-details', requireScopedRole('Client'), async (req, res) => {
+  const accountName = sanitizeHtml(String(req.body.accountName || '').trim(), { allowedTags: [], allowedAttributes: {} }).slice(0, 200);
+  const sortCode = sanitizeHtml(String(req.body.sortCode || '').trim(), { allowedTags: [], allowedAttributes: {} }).slice(0, 20);
+  const accountNumber = sanitizeHtml(String(req.body.accountNumber || '').trim(), { allowedTags: [], allowedAttributes: {} }).slice(0, 20);
+  const isBusiness = req.body.isBusiness === true || req.body.isBusiness === 'true';
+
+  try {
+    const clientAccountId = req.accessContext.activeClientAccountId;
+    await pool.query(
+      `UPDATE client_accounts
+       SET bank_account_name = $1, bank_sort_code = $2, bank_account_number = $3, bank_is_business = $4, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5`,
+      [accountName, sortCode, accountNumber, isBusiness, clientAccountId]
+    );
+    return res.json({ accountName, sortCode, accountNumber, isBusiness });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to save bank details.' });
   }
 });
 

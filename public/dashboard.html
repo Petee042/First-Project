@@ -214,6 +214,32 @@
           </div>
         </section>
 
+        <section class="listing-form-section">
+          <h3>Bank Details</h3>
+          <p id="bankDetailsMessage" class="message"></p>
+          <form id="bankDetailsForm" novalidate>
+            <div class="calendar-source-row">
+              <label for="bankAccountName">Account Name</label>
+              <input id="bankAccountName" type="text" maxlength="200" />
+            </div>
+            <div class="calendar-source-row">
+              <label for="bankSortCode">Sort Code</label>
+              <input id="bankSortCode" type="text" maxlength="20" placeholder="00-00-00" />
+            </div>
+            <div class="calendar-source-row">
+              <label for="bankAccountNumber">Account Number</label>
+              <input id="bankAccountNumber" type="text" maxlength="20" />
+            </div>
+            <div class="calendar-source-row">
+              <label for="bankIsBusiness">Business Account</label>
+              <input id="bankIsBusiness" type="checkbox" />
+            </div>
+            <div class="feed-actions" style="margin-top: 0.9rem;">
+              <button type="submit" id="saveBankDetailsBtn" class="btn primary action-icon action-save" aria-label="Save Bank Details">Save Bank Details</button>
+            </div>
+          </form>
+        </section>
+
       </div><!-- /panel-account -->
 
     </div>

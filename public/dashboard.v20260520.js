@@ -2988,6 +2988,7 @@ async function loadDashboardData() {
   await fetchManagerAssignments();
   await fetchGuests();
   await fetchStripeConnectStatus();
+  await fetchBankDetails();
 
   const managerSelect = document.getElementById('managerAssignmentMembership');
   if (managerSelect) {
@@ -3492,7 +3493,56 @@ document.getElementById('logoutBtn').addEventListener('click', async () => {
   window.location.href = '/';
 });
 
-document.getElementById('startStripeConnectBtn').addEventListener('click', async () => {
+// ── Bank Details ──────────────────────────────────────────────
+
+function setBankDetailsMessage(text, isError) {
+  const el = document.getElementById('bankDetailsMessage');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
+}
+
+async function fetchBankDetails() {
+  try {
+    const res = await fetch('/api/account/bank-details');
+    if (!res.ok) return;
+    const data = await res.json();
+    document.getElementById('bankAccountName').value = data.accountName || '';
+    document.getElementById('bankSortCode').value = data.sortCode || '';
+    document.getElementById('bankAccountNumber').value = data.accountNumber || '';
+    document.getElementById('bankIsBusiness').checked = data.isBusiness === true;
+  } catch {
+    // non-fatal
+  }
+}
+
+document.getElementById('bankDetailsForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  setBankDetailsMessage('', false);
+  const btn = document.getElementById('saveBankDetailsBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/account/bank-details', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountName: document.getElementById('bankAccountName').value.trim(),
+        sortCode: document.getElementById('bankSortCode').value.trim(),
+        accountNumber: document.getElementById('bankAccountNumber').value.trim(),
+        isBusiness: document.getElementById('bankIsBusiness').checked
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to save bank details.');
+    setBankDetailsMessage('Bank details saved.', false);
+  } catch (err) {
+    setBankDetailsMessage(err.message || 'Failed to save bank details.', true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+
   const button = document.getElementById('startStripeConnectBtn');
   button.disabled = true;
   setStripeConnectStatus('Opening Stripe onboarding...', false);
