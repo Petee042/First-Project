@@ -874,6 +874,21 @@ textarea:focus {
   color: #59627d;
 }
 
+/* ── Availability indicators ──────────────────────────────── */
+.avail-indicator {
+  flex-shrink: 0;
+  width: 1.25rem;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.avail-yes  { color: #1f7a37; }
+.avail-no   { color: #c0392b; }
+.avail-loading { color: #9aa3b8; font-size: 1.2rem; letter-spacing: -0.1em; }
+.avail-unknown { color: transparent; }
+
 .cleaning-actions-row {
   display: flex;
   align-items: end;
