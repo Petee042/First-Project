@@ -3488,7 +3488,8 @@ if (_closeTeamMemberEditorBtn) _closeTeamMemberEditorBtn.addEventListener('click
   closeTeamMemberEditor();
 });
 
-document.getElementById('logoutBtn').addEventListener('click', async () => {
+const _logoutBtn = document.getElementById('logoutBtn');
+if (_logoutBtn) _logoutBtn.addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/';
 });
@@ -3516,20 +3517,21 @@ async function fetchBankDetails() {
   }
 }
 
-document.getElementById('bankDetailsForm').addEventListener('submit', async (e) => {
+const _bankDetailsForm = document.getElementById('bankDetailsForm');
+if (_bankDetailsForm) _bankDetailsForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   setBankDetailsMessage('', false);
   const btn = document.getElementById('saveBankDetailsBtn');
-  btn.disabled = true;
+  if (btn) btn.disabled = true;
   try {
     const res = await fetch('/api/account/bank-details', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        accountName: document.getElementById('bankAccountName').value.trim(),
-        sortCode: document.getElementById('bankSortCode').value.trim(),
-        accountNumber: document.getElementById('bankAccountNumber').value.trim(),
-        isBusiness: document.getElementById('bankIsBusiness').checked
+        accountName: (document.getElementById('bankAccountName') || {}).value || '',
+        sortCode: (document.getElementById('bankSortCode') || {}).value || '',
+        accountNumber: (document.getElementById('bankAccountNumber') || {}).value || '',
+        isBusiness: !!(document.getElementById('bankIsBusiness') || {}).checked
       })
     });
     const data = await res.json();
@@ -3538,12 +3540,13 @@ document.getElementById('bankDetailsForm').addEventListener('submit', async (e) 
   } catch (err) {
     setBankDetailsMessage(err.message || 'Failed to save bank details.', true);
   } finally {
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 });
 
 
-document.getElementById('startStripeConnectBtn').addEventListener('click', async () => {
+const _startStripeConnectBtn = document.getElementById('startStripeConnectBtn');
+if (_startStripeConnectBtn) _startStripeConnectBtn.addEventListener('click', async () => {
   const button = document.getElementById('startStripeConnectBtn');
   button.disabled = true;
   setStripeConnectStatus('Opening Stripe onboarding...', false);
@@ -3596,17 +3599,18 @@ if (_opsCalendarNextBtn) _opsCalendarNextBtn.addEventListener('click', () => {
   renderOpsCalendarForCurrentMonth();
 });
 
-document.getElementById('refreshScheduleBtn').addEventListener('click', async () => {
-  const button = document.getElementById('refreshScheduleBtn');
-  button.disabled = true;
+const _refreshScheduleBtn = document.getElementById('refreshScheduleBtn');
+if (_refreshScheduleBtn) _refreshScheduleBtn.addEventListener('click', async () => {
+  _refreshScheduleBtn.disabled = true;
   try {
     await updateSchedulePreview();
   } finally {
-    button.disabled = false;
+    _refreshScheduleBtn.disabled = false;
   }
 });
 
-document.getElementById('sendScheduleEmailBtn').addEventListener('click', () => {
+const _sendScheduleEmailBtn = document.getElementById('sendScheduleEmailBtn');
+if (_sendScheduleEmailBtn) _sendScheduleEmailBtn.addEventListener('click', () => {
   openScheduleEmailDialog();
 });
 
@@ -3637,7 +3641,8 @@ document.querySelectorAll('.cleaning-listing-checkbox, .ops-calendar-listing-che
   });
 });
 
-document.getElementById('cleaningScheduleForm').addEventListener('submit', async (e) => {
+const _cleaningScheduleForm = document.getElementById('cleaningScheduleForm');
+if (_cleaningScheduleForm) _cleaningScheduleForm.addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const button = document.getElementById('downloadCleaningScheduleBtn');
@@ -3702,7 +3707,8 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
   }
 });
 
-document.getElementById('saveScheduleChangesBtn').addEventListener('click', async () => {
+const _saveScheduleChangesBtn = document.getElementById('saveScheduleChangesBtn');
+if (_saveScheduleChangesBtn) _saveScheduleChangesBtn.addEventListener('click', async () => {
   const button = document.getElementById('saveScheduleChangesBtn');
   button.disabled = true;
   try {
@@ -3777,7 +3783,8 @@ if (cancelCleanerEditBtn) {
   });
 }
 
-document.getElementById('copyConsolidatedIcsUrlBtn').addEventListener('click', async () => {
+const _copyConsolidatedIcsUrlBtn = document.getElementById('copyConsolidatedIcsUrlBtn');
+if (_copyConsolidatedIcsUrlBtn) _copyConsolidatedIcsUrlBtn.addEventListener('click', async () => {
   const url = document.getElementById('consolidatedIcsExportUrl').value;
   if (!url) return;
 
