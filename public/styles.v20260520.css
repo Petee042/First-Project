@@ -652,6 +652,23 @@ textarea:focus {
   min-width: 0;
 }
 
+/* ── Bank details form — wider labels, checkbox left-aligned ── */
+.bank-details-form .calendar-source-row label {
+  width: 160px;
+}
+
+.bank-details-form .calendar-source-row.checkbox-row {
+  align-items: center;
+}
+
+.bank-details-form .calendar-source-row.checkbox-row input[type="checkbox"] {
+  flex: none;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin: 0;
+  cursor: pointer;
+}
+
 .team-role-fieldset {
   margin: 0.5rem 0 0.8rem;
   border: 1px solid #d8dfef;
