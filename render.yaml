@@ -1,9 +1,11 @@
 services:
+  # --- ALPHA: development environment (develop branch, isolated database) ---
   - type: web
-    name: two-page-website
+    name: automaticpeople-alpha
     runtime: node
     plan: free
     region: oregon
+    branch: develop
     autoDeployTrigger: commit
     buildFilter:
       paths:
@@ -15,19 +17,79 @@ services:
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
-        value: production
+        value: development
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: automaticpeople-alpha-db
+          property: connectionString
+      - key: APP_BASE_URL
+        sync: false
+      - key: POSTMARK_SERVER_TOKEN
+        sync: false
+      - key: POSTMARK_FROM
+        value: noreply@automaticpeople.com
+      - key: POSTMARK_MESSAGE_STREAM
+        value: outbound
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_CONNECT_DEFAULT_COUNTRY
+        value: GB
+
+  # --- BETA: staging environment (staging branch, live database) ---
+  - type: web
+    name: automaticpeople-beta
+    runtime: node
+    plan: free
+    region: oregon
+    branch: staging
+    autoDeployTrigger: commit
+    buildFilter:
+      paths:
+        - public/**
+        - server/**
+        - render.yaml
+    buildCommand: cd server && npm install
+    startCommand: cd server && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: staging
       - key: SESSION_SECRET
         generateValue: true
       - key: DATABASE_URL
         fromDatabase:
           name: two-page-website-db
           property: connectionString
+      - key: APP_BASE_URL
+        sync: false
+      - key: POSTMARK_SERVER_TOKEN
+        sync: false
+      - key: POSTMARK_FROM
+        value: noreply@automaticpeople.com
+      - key: POSTMARK_MESSAGE_STREAM
+        value: outbound
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_CONNECT_DEFAULT_COUNTRY
+        value: GB
 
+  # --- PRODUCTION: live environment (main branch, live database) ---
   - type: web
     name: automaticpeople
     runtime: node
     plan: free
     region: oregon
+    branch: main
     autoDeployTrigger: commit
     buildFilter:
       paths:
@@ -62,6 +124,11 @@ services:
         value: GB
 
 databases:
+  - name: automaticpeople-alpha-db
+    region: oregon
+    plan: free
+    postgresMajorVersion: "17"
+
   - name: two-page-website-db
     region: oregon
     postgresMajorVersion: "17"

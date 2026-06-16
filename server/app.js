@@ -33,6 +33,7 @@ const STRIPE_PUBLISHABLE_KEY = String(process.env.STRIPE_PUBLISHABLE_KEY || '').
 const STRIPE_WEBHOOK_SECRET = String(process.env.STRIPE_WEBHOOK_SECRET || '').trim();
 const STRIPE_CONNECT_DEFAULT_COUNTRY = String(process.env.STRIPE_CONNECT_DEFAULT_COUNTRY || 'GB').trim().toUpperCase();
 const DATA_RESET_FLAG_KEY = 'minimal-profile-reset-v1';
+const IS_ALPHA = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'development';
 const APP_BASE_URL = String(process.env.APP_BASE_URL || '').trim();
 const ACCOUNT_VALIDATION_TOKEN_VERSION = 'v1';
 const ACCOUNT_VALIDATION_TOKEN_TTL_MS = Number(process.env.ACCOUNT_VALIDATION_TOKEN_TTL_MS || (1000 * 60 * 60 * 24 * 7));
@@ -1285,7 +1286,9 @@ async function initializeUserStore() {
         updated_at = CURRENT_TIMESTAMP
   `);
 
-  await runOneTimeSiteDataResetIfNeeded();
+  if (IS_ALPHA) {
+    await runOneTimeSiteDataResetIfNeeded();
+  }
 }
 
 async function findUserByEmail(email) {
