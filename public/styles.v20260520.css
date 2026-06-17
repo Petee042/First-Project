@@ -886,6 +886,11 @@ textarea:focus {
   color: #24304b;
 }
 
+.cleaning-listing-row:has(.cleaning-listing-checkbox:disabled) {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
 .cleaning-empty {
   font-size: 0.9rem;
   color: #59627d;

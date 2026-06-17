@@ -780,6 +780,39 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS reservation_activity (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      client_account_id BIGINT NOT NULL REFERENCES client_accounts(id) ON DELETE CASCADE,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      reservation_checkin_date DATE NOT NULL,
+      reservation_checkout_date DATE NOT NULL,
+      first_name TEXT NOT NULL DEFAULT '',
+      family_name TEXT NOT NULL DEFAULT '',
+      email_address TEXT NOT NULL DEFAULT '',
+      guest_count INTEGER NOT NULL DEFAULT 1,
+      reservation_amount NUMERIC(10,2),
+      hold_until_at TIMESTAMPTZ,
+      payment_method TEXT NOT NULL DEFAULT 'No Charge',
+      payment_due_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'confirmed',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_reservation_activity_listing_dates
+    ON reservation_activity (listing_id, reservation_checkin_date, reservation_checkout_date)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_reservation_activity_client_created
+    ON reservation_activity (client_account_id, created_at DESC)
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS client_memberships (
       id BIGSERIAL PRIMARY KEY,
       client_account_id BIGINT NOT NULL REFERENCES client_accounts(id) ON DELETE CASCADE,
@@ -1450,9 +1483,35 @@ const SHARED_RESOURCE_RESERVATION_STATUSES = new Set([
   'Confirmed'
 ]);
 
+const DIRECT_RESERVATION_PAYMENT_METHODS = new Set([
+  'No Charge',
+  'Bank Transfer',
+  'Online Payment'
+]);
+
+const DIRECT_RESERVATION_ACTIVE_STATUSES = new Set([
+  'confirmed',
+  'awaiting_bank_transfer',
+  'awaiting_online_payment'
+]);
+
 function normaliseSharedResourceReservationStatus(value) {
   const status = String(value || '').trim();
   return SHARED_RESOURCE_RESERVATION_STATUSES.has(status) ? status : null;
+}
+
+function normaliseDirectReservationPaymentMethod(value) {
+  const method = String(value || '').trim();
+  return DIRECT_RESERVATION_PAYMENT_METHODS.has(method) ? method : null;
+}
+
+function normaliseDirectReservationStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  if (!status) {
+    return null;
+  }
+  const allowed = new Set(['confirmed', 'awaiting_bank_transfer', 'awaiting_online_payment', 'cancelled', 'expired']);
+  return allowed.has(status) ? status : null;
 }
 
 function normaliseSharedResourceReservationText(value, maxLen) {
@@ -3525,9 +3584,141 @@ async function getListingIdsForSharedResource(resource) {
   return listings.map((listing) => Number(listing.id));
 }
 
+function mapReservationActivityRowToEvent(row) {
+  const firstName = String(row && row.first_name || '').trim();
+  const familyName = String(row && row.family_name || '').trim();
+  const guestName = [firstName, familyName].filter(Boolean).join(' ').trim() || 'Direct Guest';
+  const paymentMethod = String(row && row.payment_method || '').trim() || 'Direct Booking';
+  const reservationAmount = row && row.reservation_amount !== null && row.reservation_amount !== undefined
+    ? Number(row.reservation_amount)
+    : null;
+  const amountText = Number.isFinite(reservationAmount) ? ('Amount: ' + reservationAmount.toFixed(2)) : '';
+  const guestCount = Number(row && row.guest_count || 0);
+  const guestText = guestCount > 0 ? ('Guests: ' + String(guestCount)) : '';
+  const holdText = row && row.hold_until_at ? ('Hold until: ' + formatDateTimeForMessage(row.hold_until_at)) : '';
+  const notes = [
+    'Private Reservation',
+    'Guest: ' + guestName,
+    guestText,
+    amountText,
+    'Payment: ' + paymentMethod,
+    holdText
+  ].filter(Boolean).join(' | ');
+
+  return {
+    isReservation: true,
+    isUnavailableBlock: false,
+    source: 'Direct Booking',
+    start: String(row && row.reservation_checkin_date || ''),
+    end: String(row && row.reservation_checkout_date || ''),
+    title: 'Direct Booking - ' + guestName,
+    description: notes,
+    location: '',
+    raw: null,
+    reservationActivityId: Number(row && row.id || 0)
+  };
+}
+
+async function getDirectReservationEventsForListing(listingId) {
+  const id = Number(listingId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id,
+             reservation_checkin_date::text AS reservation_checkin_date,
+             reservation_checkout_date::text AS reservation_checkout_date,
+             first_name,
+             family_name,
+             guest_count,
+             reservation_amount,
+             payment_method,
+             hold_until_at,
+             status
+      FROM reservation_activity
+      WHERE listing_id = $1
+        AND status = ANY($2::text[])
+      ORDER BY reservation_checkin_date ASC, id ASC
+    `,
+    [id, Array.from(DIRECT_RESERVATION_ACTIVE_STATUSES)]
+  );
+
+  return result.rows.map((row) => mapReservationActivityRowToEvent(row));
+}
+
+async function createReservationActivityForListing(input) {
+  const result = await pool.query(
+    `
+      INSERT INTO reservation_activity (
+        user_id,
+        client_account_id,
+        listing_id,
+        reservation_checkin_date,
+        reservation_checkout_date,
+        first_name,
+        family_name,
+        email_address,
+        guest_count,
+        reservation_amount,
+        hold_until_at,
+        payment_method,
+        payment_due_at,
+        status,
+        notes,
+        updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4, $5,
+        $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15,
+        CURRENT_TIMESTAMP
+      )
+      RETURNING id,
+                user_id,
+                client_account_id,
+                listing_id,
+                reservation_checkin_date::text AS reservation_checkin_date,
+                reservation_checkout_date::text AS reservation_checkout_date,
+                first_name,
+                family_name,
+                email_address,
+                guest_count,
+                reservation_amount,
+                hold_until_at,
+                payment_method,
+                payment_due_at,
+                status,
+                notes,
+                created_at,
+                updated_at
+    `,
+    [
+      input.userId,
+      input.clientAccountId,
+      input.listingId,
+      input.checkinDate,
+      input.checkoutDate,
+      input.firstName,
+      input.familyName,
+      input.emailAddress,
+      input.guestCount,
+      input.reservationAmount,
+      input.holdUntilAt,
+      input.paymentMethod,
+      input.paymentDueAt,
+      input.status,
+      input.notes || ''
+    ]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function getReservationEventsForListing(listingId) {
   const cached = await getCachedEventsForListing(listingId);
-  return (cached || [])
+  const feedEvents = (cached || [])
     .filter((entry) => !entry.error_text)
     .flatMap((entry) => {
       try {
@@ -3536,7 +3727,9 @@ async function getReservationEventsForListing(listingId) {
       } catch {
         return [];
       }
-    })
+    });
+  const directEvents = await getDirectReservationEventsForListing(listingId);
+  return [...feedEvents, ...directEvents]
     .filter((event) => event && event.isReservation !== false);
 }
 
@@ -8555,7 +8748,12 @@ async function getIcsEventsForListing(listingId) {
     }
   }
 
-  return events;
+  const directEvents = await getDirectReservationEventsForListing(listingId);
+  return [...events, ...directEvents].sort((a, b) => {
+    const aTime = a.start ? new Date(a.start).getTime() : 0;
+    const bTime = b.start ? new Date(b.start).getTime() : 0;
+    return aTime - bTime;
+  });
 }
 
 // GET /api/listings/:listingId/calendar.ics — export merged calendar as ICS
@@ -8708,6 +8906,13 @@ app.get('/api/listings/:listingId/events', requireScopedRole('Staff'), async (re
         return aTime - bTime;
       });
 
+    const directEvents = await getDirectReservationEventsForListing(listingId);
+    const mergedEvents = [...events, ...directEvents].sort((a, b) => {
+      const aTime = a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
+      const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
+      return aTime - bTime;
+    });
+
     const fetchedAt = cached.length
       ? cached.map((c) => c.fetched_at).sort().pop()
       : null;
@@ -8728,7 +8933,7 @@ app.get('/api/listings/:listingId/events', requireScopedRole('Staff'), async (re
       cleaner_name: row.cleaner_id ? (cleanerNameById.get(Number(row.cleaner_id)) || 'Unallocated') : 'Unallocated'
     }));
 
-    return res.json({ listing, events, feedErrors, fetchedAt, cleaningChanges });
+    return res.json({ listing, events: mergedEvents, feedErrors, fetchedAt, cleaningChanges });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load listing events.' });
@@ -8774,6 +8979,13 @@ app.post('/api/listings/:listingId/events/refresh', requireScopedRole('Manager')
         return aTime - bTime;
       });
 
+    const directEvents = await getDirectReservationEventsForListing(listingId);
+    const mergedEvents = [...events, ...directEvents].sort((a, b) => {
+      const aTime = a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
+      const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
+      return aTime - bTime;
+    });
+
     const fetchedAt = cached.length
       ? cached.map((c) => c.fetched_at).sort().pop()
       : null;
@@ -8794,10 +9006,154 @@ app.post('/api/listings/:listingId/events/refresh', requireScopedRole('Manager')
       cleaner_name: row.cleaner_id ? (cleanerNameById.get(Number(row.cleaner_id)) || 'Unallocated') : 'Unallocated'
     }));
 
-    return res.json({ listing, events, feedErrors, fetchedAt, cleaningChanges });
+    return res.json({ listing, events: mergedEvents, feedErrors, fetchedAt, cleaningChanges });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to refresh listing events.' });
+  }
+});
+
+// POST /api/private-reservations — create a direct reservation activity entry
+app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, res) => {
+  const arrivalDate = normaliseDateKey(req.body.arrivalDate);
+  const departureDate = normaliseDateKey(req.body.departureDate);
+  const listingId = Number(req.body.listingId || (Array.isArray(req.body.listingIds) ? req.body.listingIds[0] : 0));
+  const firstName = normaliseSharedResourceReservationText(req.body.firstName, 120);
+  const familyName = normaliseSharedResourceReservationText(req.body.familyName, 120);
+  const emailAddress = normaliseSharedResourceReservationEmail(req.body.email);
+  const guestCount = normaliseOptionalPositiveInteger(req.body.guestCount);
+  const reservationAmount = normaliseSharedResourceReservationAmount(req.body.cost);
+  const holdHours = normaliseOptionalPositiveInteger(req.body.holdHours);
+  const paymentMethod = normaliseDirectReservationPaymentMethod(req.body.paymentMethod);
+
+  if (!arrivalDate || !departureDate || departureDate <= arrivalDate) {
+    return res.status(400).json({ error: 'Arrival and departure dates are required and must be valid.' });
+  }
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Exactly one listing must be selected.' });
+  }
+  if (!firstName || !familyName) {
+    return res.status(400).json({ error: 'First name and family name are required.' });
+  }
+  if (!emailAddress || !isValidEmailAddress(emailAddress)) {
+    return res.status(400).json({ error: 'A valid email address is required.' });
+  }
+  if (!Number.isInteger(guestCount) || guestCount <= 0 || guestCount > 50) {
+    return res.status(400).json({ error: 'Guest count is required.' });
+  }
+  if (reservationAmount === null) {
+    return res.status(400).json({ error: 'Cost is required.' });
+  }
+  if (!Number.isInteger(holdHours) || holdHours <= 0 || holdHours > 720) {
+    return res.status(400).json({ error: 'Hold period (hours) is required.' });
+  }
+  if (!paymentMethod) {
+    return res.status(400).json({ error: 'Payment method is required.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const existingEvents = await getReservationEventsForListing(listingId);
+    const hasConflict = existingEvents.some((event) => {
+      const eventStart = getDateKeyFromEventDateTime(event && event.start);
+      const eventEnd = getDateKeyFromEventDateTime(event && event.end);
+      if (!eventStart || !eventEnd) {
+        return false;
+      }
+      return eventStart < departureDate && eventEnd > arrivalDate;
+    });
+    if (hasConflict) {
+      return res.status(409).json({ error: 'The selected listing is not available for those dates.' });
+    }
+
+    const nowMs = Date.now();
+    const holdUntilAt = new Date(nowMs + holdHours * 60 * 60 * 1000).toISOString();
+    const nextStatus = paymentMethod === 'No Charge'
+      ? 'confirmed'
+      : paymentMethod === 'Bank Transfer'
+        ? 'awaiting_bank_transfer'
+        : 'awaiting_online_payment';
+
+    if (paymentMethod === 'Bank Transfer') {
+      const bankResult = await pool.query(
+        'SELECT bank_account_name, bank_sort_code, bank_account_number, bank_is_business FROM client_accounts WHERE id = $1 LIMIT 1',
+        [req.accessContext.activeClientAccountId]
+      );
+      const bankRow = bankResult.rows[0] || {};
+      const bankAccountName = String(bankRow.bank_account_name || '').trim();
+      const bankSortCode = String(bankRow.bank_sort_code || '').trim();
+      const bankAccountNumber = String(bankRow.bank_account_number || '').trim();
+      const bankType = bankRow.bank_is_business === true ? 'Business' : 'Personal';
+      const dueText = formatDateTimeForMessage(holdUntilAt);
+
+      const textLines = [
+        'Payment Request For Accommodation',
+        '',
+        'Guest: ' + firstName + ' ' + familyName,
+        'Number of guests: ' + String(guestCount),
+        'Arrival date: ' + arrivalDate,
+        'Departure date: ' + departureDate,
+        'Amount payable: ' + reservationAmount.toFixed(2),
+        'Payment due by: ' + dueText,
+        '',
+        'Bank details:',
+        'Account name: ' + (bankAccountName || 'Not configured'),
+        'Sort code: ' + (bankSortCode || 'Not configured'),
+        'Account number: ' + (bankAccountNumber || 'Not configured'),
+        'Account type: ' + bankType
+      ];
+
+      const emailResult = await sendAppEmail({
+        to: emailAddress,
+        subject: 'Payment Request For Accommodation',
+        textBody: textLines.join('\n')
+      });
+
+      if (!emailResult.ok) {
+        return res.status(502).json({ error: emailResult.error || 'Failed to send payment request email.' });
+      }
+    }
+
+    const reservation = await createReservationActivityForListing({
+      userId: req.accessContext.effectiveOwnerUserId,
+      clientAccountId: req.accessContext.activeClientAccountId,
+      listingId,
+      checkinDate: arrivalDate,
+      checkoutDate: departureDate,
+      firstName,
+      familyName,
+      emailAddress,
+      guestCount,
+      reservationAmount,
+      holdUntilAt,
+      paymentMethod,
+      paymentDueAt: holdUntilAt,
+      status: nextStatus,
+      notes: ''
+    });
+
+    const mode = paymentMethod === 'No Charge'
+      ? 'no-charge'
+      : paymentMethod === 'Bank Transfer'
+        ? 'bank-transfer'
+        : 'online-payment';
+
+    return res.json({
+      reservation,
+      nextUrl: '/private-reservation-complete.html?mode=' + encodeURIComponent(mode) + '&id=' + encodeURIComponent(String(reservation.id)),
+      message: paymentMethod === 'No Charge'
+        ? 'Private reservation confirmed and added to the listing calendar.'
+        : paymentMethod === 'Bank Transfer'
+          ? 'Payment request sent and reservation activity logged.'
+          : 'Reservation activity logged. Continue to online payment.'
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create private reservation.' });
   }
 });
 

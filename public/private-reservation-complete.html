@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reservation Confirmation - AutomaticPeople</title>
+  <link rel="stylesheet" href="styles.v20260520.css" />
+</head>
+<body class="logged-page">
+  <div class="sticky-page-chrome">
+    <div class="sticky-page-inner">
+      <nav class="dashboard-tab-bar page-top-nav" aria-label="Main navigation">
+        <a class="dashboard-tab-link active" href="/dashboard.html?tab=panel-dashboard">Dashboard</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-config">Config</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-ops">Ops</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-account">Account</a>
+      </nav>
+      <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
+    </div>
+  </div>
+
+  <main class="dashboard">
+    <div class="card-container wide">
+      <h2>Private Reservation</h2>
+      <p id="completeMessage" class="message"></p>
+      <div class="feed-actions" style="margin-top: 1rem; justify-content: flex-end;">
+        <a href="/dashboard.html?tab=panel-dashboard" class="btn secondary">Return to Dashboard</a>
+      </div>
+    </div>
+  </main>
+
+  <script src="sticky-layout.js"></script>
+  <script src="private-reservation-complete.js"></script>
+</body>
+</html>

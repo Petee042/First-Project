@@ -42,6 +42,7 @@ function renderListings(listings) {
     const id = 'listing-chk-' + listing.id;
     const name = String(listing.name || listing.id);
     const avail = availabilityMap[listing.id];
+    const isDisabled = avail === 'unavailable';
     let indicatorHtml;
     if (avail === 'loading') {
       indicatorHtml = '<span class="avail-indicator avail-loading" aria-label="Checking">&#8943;</span>';
@@ -52,11 +53,12 @@ function renderListings(listings) {
     } else {
       indicatorHtml = '<span class="avail-indicator avail-unknown" aria-label=""></span>';
     }
-    const checked = checkedIds.has(String(listing.id)) ? ' checked' : '';
+    const checked = checkedIds.has(String(listing.id)) && !isDisabled ? ' checked' : '';
+    const disabled = isDisabled ? ' disabled' : '';
     return (
       '<label class="cleaning-listing-row" for="' + id + '">' +
         indicatorHtml +
-        '<input class="cleaning-listing-checkbox" type="checkbox" id="' + id + '" value="' + listing.id + '"' + checked + ' />' +
+        '<input class="cleaning-listing-checkbox" type="checkbox" id="' + id + '" value="' + listing.id + '"' + checked + disabled + ' />' +
         '<span class="cleaning-listing-name">' + name + '</span>' +
       '</label>'
     );
@@ -103,12 +105,33 @@ function getSelectedListingIds() {
   ).map(function(cb) { return Number(cb.value); });
 }
 
+function getSelectedListingId() {
+  const selected = getSelectedListingIds();
+  return selected.length ? selected[0] : null;
+}
+
 document.getElementById('backBtn').addEventListener('click', function() {
   window.location.href = '/dashboard.html?tab=panel-dashboard';
 });
 
 document.getElementById('cancelReservationBtn').addEventListener('click', function() {
   window.location.href = '/dashboard.html?tab=panel-dashboard';
+});
+
+document.getElementById('listingsCheckboxList').addEventListener('change', function(e) {
+  const target = e.target;
+  if (!target || !target.classList || !target.classList.contains('cleaning-listing-checkbox')) {
+    return;
+  }
+  if (!target.checked) {
+    return;
+  }
+  // Single-select logic: if one listing is checked, uncheck all others.
+  Array.from(document.querySelectorAll('#listingsCheckboxList .cleaning-listing-checkbox')).forEach(function(cb) {
+    if (cb !== target) {
+      cb.checked = false;
+    }
+  });
 });
 
 // Trigger availability check when either date changes
@@ -132,20 +155,26 @@ document.getElementById('privateReservationForm').addEventListener('submit', asy
 
   const arrivalDate = document.getElementById('arrivalDate').value;
   const departureDate = document.getElementById('departureDate').value;
-  const listingIds = getSelectedListingIds();
+  const listingId = getSelectedListingId();
   const firstName = document.getElementById('guestFirstName').value.trim();
   const familyName = document.getElementById('guestFamilyName').value.trim();
   const email = document.getElementById('guestEmail').value.trim();
+  const guestCount = Number(document.getElementById('guestCount').value || 0);
   const cost = document.getElementById('reservationCost').value;
   const holdHours = document.getElementById('holdHours').value;
+  const paymentMethod = document.getElementById('paymentMethod').value;
 
   if (!arrivalDate) { setMessage('Arrival date is required.', true); return; }
   if (!departureDate) { setMessage('Departure date is required.', true); return; }
   if (departureDate <= arrivalDate) { setMessage('Departure date must be after arrival date.', true); return; }
-  if (!listingIds.length) { setMessage('Please select at least one listing.', true); return; }
+  if (!listingId) { setMessage('Please select one listing.', true); return; }
   if (!firstName) { setMessage('First name is required.', true); return; }
   if (!familyName) { setMessage('Family name is required.', true); return; }
   if (!email) { setMessage('Email address is required.', true); return; }
+  if (!Number.isInteger(guestCount) || guestCount <= 0) { setMessage('Number of guests is required.', true); return; }
+  if (cost === '' || Number(cost) < 0) { setMessage('Cost is required.', true); return; }
+  if (holdHours === '' || Number(holdHours) <= 0) { setMessage('Hold period in hours is required.', true); return; }
+  if (!paymentMethod) { setMessage('Payment method is required.', true); return; }
 
   setMessage('Saving reservation\u2026', false);
   document.getElementById('saveReservationBtn').disabled = true;
@@ -157,12 +186,14 @@ document.getElementById('privateReservationForm').addEventListener('submit', asy
       body: JSON.stringify({
         arrivalDate,
         departureDate,
-        listingIds,
+        listingId,
         firstName,
         familyName,
         email,
+        guestCount,
         cost: cost ? Number(cost) : null,
-        holdHours: holdHours ? Number(holdHours) : null
+        holdHours: holdHours ? Number(holdHours) : null,
+        paymentMethod
       })
     });
 
@@ -176,10 +207,15 @@ document.getElementById('privateReservationForm').addEventListener('submit', asy
       throw new Error(data.error || 'Failed to save reservation.');
     }
 
-    setMessage('Reservation saved.', false);
+    if (data.nextUrl) {
+      window.location.href = data.nextUrl;
+      return;
+    }
+
+    setMessage(data.message || 'Reservation saved.', false);
     setTimeout(function() {
       window.location.href = '/dashboard.html?tab=panel-dashboard';
-    }, 1200);
+    }, 900);
   } catch (err) {
     setMessage(err.message || 'Failed to save reservation.', true);
     document.getElementById('saveReservationBtn').disabled = false;
@@ -207,6 +243,14 @@ document.getElementById('privateReservationForm').addEventListener('submit', asy
       renderListings(allListings);
     } else {
       renderListings([]);
+    }
+
+    // Keep defaults explicit so all fields can be validated consistently.
+    if (!document.getElementById('holdHours').value) {
+      document.getElementById('holdHours').value = '24';
+    }
+    if (!document.getElementById('guestCount').value) {
+      document.getElementById('guestCount').value = '1';
     }
   } catch (err) {
     setMessage('Failed to load page data. Please try again.', true);

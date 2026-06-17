@@ -64,6 +64,11 @@
           </div>
 
           <div class="calendar-source-row">
+            <label for="guestCount">Number of Guests</label>
+            <input id="guestCount" type="number" min="1" max="50" required />
+          </div>
+
+          <div class="calendar-source-row">
             <label for="reservationCost">Cost</label>
             <input id="reservationCost" type="number" min="0" step="0.01" placeholder="0.00" />
           </div>
@@ -71,6 +76,16 @@
           <div class="calendar-source-row">
             <label for="holdHours">Hold for (hours)</label>
             <input id="holdHours" type="number" min="1" max="720" placeholder="24" />
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="paymentMethod">Payment Method</label>
+            <select id="paymentMethod" required>
+              <option value="">Select method</option>
+              <option value="No Charge">No Charge</option>
+              <option value="Bank Transfer">Bank Transfer</option>
+              <option value="Online Payment">Online Payment</option>
+            </select>
           </div>
 
           <div class="feed-actions floating-action-bar">
