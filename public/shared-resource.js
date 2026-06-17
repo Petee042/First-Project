@@ -669,7 +669,7 @@ function renderListingOptions(selectedListingId) {
   allOption.textContent = 'All Listings';
   select.appendChild(allOption);
 
-  const filteredListings = sortListingsByProperty(sortListingsByProperty((currentListings || []).filter((listing) => {
+  const filteredListings = sortListingsByProperty((currentListings || []).filter((listing) => {
     if (!propertyId) {
       return true;
     }
