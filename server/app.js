@@ -3485,6 +3485,90 @@ async function getGuestSiteUsersForClientAccount(clientAccountId) {
   return result.rows;
 }
 
+async function getReservationGuestOptionsForClientAccount(clientAccountId) {
+  const id = Number(clientAccountId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `
+      WITH source_rows AS (
+        SELECT
+          NULL::bigint AS user_id,
+          NULLIF(LOWER(TRIM(COALESCE(ra.email_address, ''))), '') AS email,
+          ''::text AS telephone,
+          NULLIF(TRIM(COALESCE(ra.first_name, '')), '') AS first_name,
+          NULLIF(TRIM(COALESCE(ra.family_name, '')), '') AS family_name,
+          COALESCE(ra.created_at, CURRENT_TIMESTAMP) AS seen_at
+        FROM reservation_activity ra
+        WHERE ra.client_account_id = $1
+
+        UNION ALL
+
+        SELECT
+          NULL::bigint AS user_id,
+          NULLIF(LOWER(TRIM(COALESCE(srr.email_address, ''))), '') AS email,
+          NULLIF(TRIM(COALESCE(srr.telephone, '')), '') AS telephone,
+          NULLIF(TRIM(COALESCE(srr.first_name, '')), '') AS first_name,
+          NULLIF(TRIM(COALESCE(srr.family_name, '')), '') AS family_name,
+          COALESCE(srr.created_at, CURRENT_TIMESTAMP) AS seen_at
+        FROM shared_resource_reservations srr
+        JOIN shared_resources sr ON sr.id = srr.shared_resource_id
+        WHERE sr.client_account_id = $1
+
+        UNION ALL
+
+        SELECT
+          gr.guest_user_id AS user_id,
+          NULLIF(LOWER(TRIM(COALESCE(gr.guest_email, ''))), '') AS email,
+          NULLIF(TRIM(COALESCE(gr.guest_phone, '')), '') AS telephone,
+          NULLIF(TRIM(COALESCE(gr.guest_first_name, '')), '') AS first_name,
+          NULLIF(TRIM(COALESCE(gr.guest_family_name, '')), '') AS family_name,
+          COALESCE(gr.last_seen_at, CURRENT_TIMESTAMP) AS seen_at
+        FROM guest_relationships gr
+        WHERE gr.client_account_id = $1
+      ),
+      ranked_rows AS (
+        SELECT
+          user_id,
+          email,
+          telephone,
+          first_name,
+          family_name,
+          seen_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(CAST(user_id AS text), COALESCE(email, '') || '|' || COALESCE(telephone, ''))
+            ORDER BY seen_at DESC
+          ) AS rn
+        FROM source_rows
+        WHERE user_id IS NOT NULL OR email IS NOT NULL
+      )
+      SELECT
+        rr.user_id AS id,
+        COALESCE(NULLIF(LOWER(TRIM(COALESCE(u.email, ''))), ''), rr.email, '') AS email,
+        COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '')), ''), rr.first_name, '') AS first_name,
+        COALESCE(NULLIF(TRIM(COALESCE(u.family_name, '')), ''), rr.family_name, '') AS family_name,
+        COALESCE(rr.telephone, '') AS telephone,
+        rr.seen_at
+      FROM ranked_rows rr
+      LEFT JOIN users u ON u.id = rr.user_id
+      WHERE rr.rn = 1
+      ORDER BY LOWER(
+        COALESCE(
+          NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.family_name, '')), ''),
+          NULLIF(TRIM(COALESCE(rr.first_name, '') || ' ' || COALESCE(rr.family_name, '')), ''),
+          COALESCE(u.email, rr.email, '')
+        )
+      ) ASC,
+      rr.seen_at DESC
+    `,
+    [id]
+  );
+
+  return result.rows;
+}
+
 async function setUserStripeConnectState(userId, nextState) {
   const state = {
     stripe_account_id: nextState && nextState.stripe_account_id ? String(nextState.stripe_account_id).trim() : null,
@@ -9412,6 +9496,32 @@ app.get('/api/private-reservations/guest-users', requireScopedRole('Manager'), a
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load guest users.' });
+  }
+});
+
+app.get('/api/shared-reservations/guest-users', requireScopedRole('Staff'), async (req, res) => {
+  try {
+    const guestUsers = await getReservationGuestOptionsForClientAccount(req.accessContext.activeClientAccountId);
+    return res.json({
+      guestUsers: guestUsers.map((row) => {
+        const firstName = String(row && row.first_name || '').trim();
+        const familyName = String(row && row.family_name || '').trim();
+        const email = String(row && row.email || '').trim();
+        const telephone = String(row && row.telephone || '').trim();
+        const fullName = [firstName, familyName].filter(Boolean).join(' ').trim();
+        return {
+          id: Number(row && row.id || 0) || null,
+          email,
+          firstName,
+          familyName,
+          telephone,
+          displayName: fullName || email || 'Guest'
+        };
+      })
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load reservation guest users.' });
   }
 });
 

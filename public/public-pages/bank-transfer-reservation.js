@@ -11,6 +11,7 @@ const checkoutDateParam = params.get('checkoutDate') || '';
 const spacesRequiredParam = params.get('spacesRequired') || '';
 
 let currentResource = null;
+let reservationGuestOptions = [];
 
 function formatReservationDateTime(isoStr) {
   if (!isoStr) return '-';
@@ -85,6 +86,76 @@ function renderPaymentMethodMessage(resource, paymentKey) {
   container.innerHTML = messageHtml;
 }
 
+function populateExistingGuestSelect(guestUsers) {
+  const select = document.getElementById('existingGuestSelect');
+  if (!select) {
+    return;
+  }
+
+  const list = Array.isArray(guestUsers) ? guestUsers : [];
+  reservationGuestOptions = list;
+  select.innerHTML = '<option value="">Select existing guest (optional)</option>';
+
+  list.forEach((guest, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    const name = String(guest.displayName || '').trim();
+    const email = String(guest.email || '').trim();
+    option.textContent = name && email ? (name + ' (' + email + ')') : (name || email || 'Guest');
+    select.appendChild(option);
+  });
+}
+
+function applyExistingGuest(indexValue) {
+  const index = Number(indexValue);
+  if (!Number.isInteger(index) || index < 0 || index >= reservationGuestOptions.length) {
+    return;
+  }
+
+  const guest = reservationGuestOptions[index] || {};
+  const firstName = String(guest.firstName || '').trim();
+  const familyName = String(guest.familyName || '').trim();
+  const email = String(guest.email || '').trim();
+  const telephone = String(guest.telephone || '').trim();
+
+  if (firstName) {
+    document.getElementById('guestFirstName').value = firstName;
+  }
+  if (familyName) {
+    document.getElementById('guestFamilyName').value = familyName;
+  }
+  if (email) {
+    document.getElementById('guestEmailAddress').value = email;
+  }
+  if (telephone) {
+    document.getElementById('guestTelephone').value = telephone;
+  }
+}
+
+async function loadReservationGuestOptions() {
+  const select = document.getElementById('existingGuestSelect');
+  if (!select) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/shared-reservations/guest-users');
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to load existing guests.');
+    }
+
+    populateExistingGuestSelect(Array.isArray(data.guestUsers) ? data.guestUsers : []);
+  } catch {
+    populateExistingGuestSelect([]);
+  }
+}
+
 async function loadPublicResource() {
   if (!Number.isInteger(resourceId) || resourceId <= 0) {
     setReservationMessage('Invalid resource id.', true);
@@ -112,10 +183,18 @@ async function loadPublicResource() {
   try {
     await loadPublicResource();
     renderReservationDetails();
+    await loadReservationGuestOptions();
   } catch (err) {
     setReservationMessage(err.message || 'Failed to initialize reservation page.', true);
   }
 })();
+
+const existingGuestSelect = document.getElementById('existingGuestSelect');
+if (existingGuestSelect) {
+  existingGuestSelect.addEventListener('change', () => {
+    applyExistingGuest(existingGuestSelect.value);
+  });
+}
 
 document.getElementById('backToPaymentBtn').addEventListener('click', () => {
   window.history.back();
@@ -163,13 +242,7 @@ document.getElementById('submitReservationBtn').addEventListener('click', async 
       throw new Error(data.error || 'Failed to submit reservation.');
     }
 
-    const reference = data && data.reservation && data.reservation.reservation_identifier
-      ? data.reservation.reservation_identifier
-      : '';
-    setReservationMessage(
-      reference ? ('Reservation confirmed. Reference: ' + reference) : 'Reservation confirmed.',
-      false
-    );
+    window.location.href = '/dashboard.html?tab=panel-dashboard';
   } catch (err) {
     setReservationMessage(err.message || 'Failed to submit reservation.', true);
   } finally {

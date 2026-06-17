@@ -4224,14 +4224,14 @@ async function loadAllReservations() {
       const actionsWrap = document.createElement('div');
       actionsWrap.className = 'feed-actions';
 
-      const deleteBtn = createSharedReservationActionButton('🗑', 'Delete Reservation', 'resource-delete-btn', () => {
+      const deleteBtn = createSharedReservationActionButton('✖', 'Delete Reservation', 'resource-delete-btn', () => {
         deleteSharedReservation(row.shared_resource_id, row.id, deleteBtn);
       });
       actionsWrap.appendChild(deleteBtn);
 
       const statusText = String(row.status || '').trim();
       if (statusText === 'cash') {
-        const confirmCashBtn = createSharedReservationActionButton('🪙', 'Register Cash Payment Received', 'resource-pay-cash-btn', () => {
+        const confirmCashBtn = createSharedReservationActionButton('◍◍', 'Register Cash Payment Received', 'resource-pay-cash-btn', () => {
           confirmSharedReservationPayment(row.shared_resource_id, row.id, 'Cash Received', confirmCashBtn);
         });
         actionsWrap.appendChild(confirmCashBtn);

@@ -81,7 +81,7 @@ function getEnabledPaymentOptions(resource) {
   return options.filter((option) => option.enabled);
 }
 
-function populatePaymentSelectionDropdown(resource) {
+function populatePaymentSelectionDropdown(resource, preferredValue) {
   const select = document.getElementById('bookingPaymentSelect');
   if (!select) {
     return;
@@ -97,7 +97,12 @@ function populatePaymentSelectionDropdown(resource) {
     select.appendChild(optionEl);
   });
 
-  select.value = '';
+  const candidate = String(preferredValue || '').trim();
+  if (candidate && options.some((option) => option.key === candidate)) {
+    select.value = candidate;
+  } else {
+    select.value = '';
+  }
 }
 
 function syncMirroredField(sourceId, targetId) {
@@ -485,7 +490,7 @@ function initialiseBookingRequestForm() {
 
   const reserveBtn = document.getElementById('reserveBtn');
   if (reserveBtn) {
-    reserveBtn.addEventListener('click', () => {
+    reserveBtn.addEventListener('click', async () => {
       const resourceId = getSelectedResourceId();
       if (!resourceId) {
         setBookingMessage('Please select a facility first.', true);
@@ -498,12 +503,44 @@ function initialiseBookingRequestForm() {
         return;
       }
 
-      if (!availabilityConfirmed) {
-        setBookingMessage('Please check availability before reserving.', true);
+      if (!currentResource) {
+        setBookingMessage('Select a facility before reserving.', true);
         return;
       }
 
-      window.location.href = getReservationPageUrl(select.value);
+      const prepared = getCheckAvailabilityPayload(currentResource);
+      if (prepared.error) {
+        setBookingMessage(prepared.error, true);
+        return;
+      }
+
+      reserveBtn.disabled = true;
+      const selectedPaymentKey = String(select.value || '').trim();
+      try {
+        const res = await fetch('/api/public/shared-resources/' + resourceId + '/check-availability', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(prepared.payload)
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          availabilityConfirmed = false;
+          const popupText = (data && data.error ? data.error : 'The selected facility is no longer available for the requested dates.')
+            + '\n\nPress OK to return to the booking page and choose an alternative.';
+          window.alert(popupText);
+          window.location.href = '/resource-booking.html?resourceId=' + encodeURIComponent(String(resourceId));
+          return;
+        }
+
+        availabilityConfirmed = true;
+        setBookingMessage(data.message || 'Availability Confirmed', false);
+        window.location.href = getReservationPageUrl(selectedPaymentKey);
+      } catch {
+        setBookingMessage('Network error checking availability.', true);
+      } finally {
+        reserveBtn.disabled = false;
+      }
     });
   }
 }
@@ -536,7 +573,13 @@ function populateResourceSelect(resources) {
   }
 }
 
-async function loadSelectedResource() {
+async function loadSelectedResource(options) {
+  const opts = options || {};
+  const preservePaymentSelection = opts.preservePaymentSelection === true;
+  const currentPaymentValue = preservePaymentSelection
+    ? String(document.getElementById('bookingPaymentSelect') && document.getElementById('bookingPaymentSelect').value || '').trim()
+    : '';
+
   const resourceId = getSelectedResourceId();
   if (!resourceId) {
     resetBookingContext();
@@ -558,7 +601,7 @@ async function loadSelectedResource() {
   document.getElementById('publicBookingResourceName').textContent = resource.short_description || 'Shared Resource';
   document.getElementById('publicBookingDescription').innerHTML = resource.full_description_html || '<p>No description provided.</p>';
 
-  populatePaymentSelectionDropdown(resource);
+  populatePaymentSelectionDropdown(resource, currentPaymentValue);
   updateReservationRateDisplay();
 
   const spacesRow = document.getElementById('bookingSpacesRequiredRow');
@@ -610,7 +653,7 @@ function setupCheckAvailability() {
     availabilityConfirmed = false;
 
     try {
-      await loadSelectedResource();
+      await loadSelectedResource({ preservePaymentSelection: true });
 
       const res = await fetch('/api/public/shared-resources/' + resourceId + '/check-availability', {
         method: 'POST',
