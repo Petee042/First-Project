@@ -1362,13 +1362,13 @@ async function initializeUserStore() {
       COALESCE(MAX(NULLIF(TRIM(COALESCE(rr.first_name, '')), '')), '') AS guest_first_name,
       COALESCE(MAX(NULLIF(TRIM(COALESCE(rr.family_name, '')), '')), '') AS guest_family_name,
       'reservation',
-      COALESCE(rr.reservation_identifier, rr.id::text),
+      COALESCE(MAX(NULLIF(TRIM(COALESCE(rr.reservation_identifier, '')), '')), MAX(rr.id)::text),
       MIN(rr.created_at),
       MAX(COALESCE(rr.updated_at, rr.created_at))
     FROM shared_resource_reservations rr
     WHERE rr.client_account_id IS NOT NULL
       AND NULLIF(TRIM(rr.email_address), '') IS NOT NULL
-    GROUP BY rr.client_account_id, LOWER(TRIM(rr.email_address)), TRIM(COALESCE(rr.telephone, '')), COALESCE(rr.reservation_identifier, rr.id::text)
+    GROUP BY rr.client_account_id, LOWER(TRIM(rr.email_address)), TRIM(COALESCE(rr.telephone, ''))
     ON CONFLICT (client_account_id, guest_email, guest_phone)
     DO UPDATE
     SET guest_first_name = COALESCE(NULLIF(EXCLUDED.guest_first_name, ''), guest_relationships.guest_first_name),
