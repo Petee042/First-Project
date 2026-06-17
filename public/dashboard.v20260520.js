@@ -2989,7 +2989,6 @@ async function loadDashboardData() {
   await fetchGuests();
   await fetchStripeConnectStatus();
   await fetchBankDetails();
-  await loadPrivateReservations();
 
   const managerSelect = document.getElementById('managerAssignmentMembership');
   if (managerSelect) {
@@ -3177,6 +3176,7 @@ async function sendScheduleEmailToRecipient(toEmail) {
     renderStripeConnectStatus(meData.stripeConnect || null);
 
     await fetchAccessContext();
+    await loadPrivateReservations();
     await loadDashboardData();
 
     const now = new Date();
