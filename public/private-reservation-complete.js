@@ -16,8 +16,10 @@
 
   if (mode === 'bank-transfer') {
     const warning = String(new URLSearchParams(window.location.search).get('warning') || '').trim();
+    const reason = String(new URLSearchParams(window.location.search).get('reason') || '').trim();
     msgEl.textContent = warning === 'email-unavailable'
-      ? 'Reservation saved, but email delivery is not configured on this server. The reservation was still recorded.'
+      ? ('Reservation saved, but email delivery is not configured on this server. The reservation was still recorded.'
+        + (reason ? (' ' + reason) : ''))
       : 'Reservation saved. Payment request email has been sent to the guest with your bank details.';
     msgEl.className = 'message success';
     return;

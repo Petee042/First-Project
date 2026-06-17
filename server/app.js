@@ -2118,7 +2118,16 @@ async function sendAppEmail(input) {
 
   const transportResult = getScheduleEmailTransporter();
   if (transportResult.error) {
-    return { ok: false, error: 'Email delivery is not configured on the server. Set POSTMARK_SERVER_TOKEN or SMTP_HOST/SMTP_USER/SMTP_PASS in Render.' };
+    const postmarkTokenConfigured = Boolean(POSTMARK_SERVER_TOKEN);
+    const postmarkFromConfigured = Boolean(POSTMARK_FROM);
+    const smtpConfigured = Boolean(getScheduleEmailTransportConfig());
+    return {
+      ok: false,
+      error: 'Email delivery is not configured on the server. postmarkTokenConfigured=' + String(postmarkTokenConfigured)
+        + ', postmarkFromConfigured=' + String(postmarkFromConfigured)
+        + ', smtpConfigured=' + String(smtpConfigured)
+        + '. Set POSTMARK_SERVER_TOKEN (and valid POSTMARK_FROM) or SMTP_HOST/SMTP_USER/SMTP_PASS in Render and redeploy.'
+    };
   }
 
   try {
@@ -9079,6 +9088,7 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
         : 'awaiting_online_payment';
 
     let emailDeliveryWarning = false;
+    let emailDeliveryReason = '';
 
     if (paymentMethod === 'Bank Transfer') {
       const bankResult = await pool.query(
@@ -9120,7 +9130,8 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
       }
 
       if (!emailResult.ok) {
-        console.warn('Bank transfer email was not sent because email delivery is not configured. Reservation will still be recorded.');
+        emailDeliveryReason = String(emailResult.error || '').trim();
+        console.warn('Bank transfer email was not sent because email delivery is not configured. Reservation will still be recorded.', emailDeliveryReason);
         emailDeliveryWarning = true;
       }
     }
@@ -9153,6 +9164,7 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
       reservation,
       nextUrl: '/private-reservation-complete.html?mode=' + encodeURIComponent(mode) + '&id=' + encodeURIComponent(String(reservation.id)),
       emailDeliveryWarning,
+      emailDeliveryReason,
       message: paymentMethod === 'No Charge'
         ? 'Private reservation confirmed and added to the listing calendar.'
         : paymentMethod === 'Bank Transfer'

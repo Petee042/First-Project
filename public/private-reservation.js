@@ -209,7 +209,10 @@ document.getElementById('privateReservationForm').addEventListener('submit', asy
 
     if (data.nextUrl) {
       const warning = data.emailDeliveryWarning ? '&warning=email-unavailable' : '';
-      window.location.href = data.nextUrl + warning;
+      const reason = data.emailDeliveryWarning && data.emailDeliveryReason
+        ? ('&reason=' + encodeURIComponent(String(data.emailDeliveryReason)))
+        : '';
+      window.location.href = data.nextUrl + warning + reason;
       return;
     }
 
