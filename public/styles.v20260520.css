@@ -813,6 +813,20 @@ textarea:focus {
   line-height: 1;
 }
 
+.resource-res-action-btn {
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  line-height: 1;
+}
+
+.resource-res-action-btn.resource-pay-bank-btn {
+  font-size: 0.62rem;
+  letter-spacing: -0.02em;
+}
+
 .config-item-list {
   margin-top: 0.5rem;
   border: 1px solid #e4e9f6;

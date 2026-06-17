@@ -3539,6 +3539,112 @@ function createPrivateReservationActionButton(symbol, title, className, onClick)
   return button;
 }
 
+function createSharedReservationActionButton(symbol, title, className, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn secondary config-icon-btn resource-res-action-btn ' + className;
+  button.textContent = symbol;
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+async function deleteSharedReservation(resourceId, reservationId, button) {
+  const parsedResourceId = Number(resourceId || 0);
+  const parsedReservationId = Number(reservationId || 0);
+  if (!Number.isInteger(parsedResourceId) || parsedResourceId <= 0 || !Number.isInteger(parsedReservationId) || parsedReservationId <= 0) {
+    setMessage('Select a valid shared resource reservation first.', true);
+    return;
+  }
+
+  const confirmed = window.confirm('Delete this shared resource reservation? This cannot be undone.');
+  if (!confirmed) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+  }
+  setMessage('Deleting reservation...', false);
+
+  try {
+    const res = await fetch(
+      '/api/shared-resources/' + encodeURIComponent(String(parsedResourceId))
+      + '/reservations/' + encodeURIComponent(String(parsedReservationId)),
+      { method: 'DELETE' }
+    );
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to delete reservation.');
+    }
+
+    await loadAllReservations();
+    setMessage('Reservation deleted.', false);
+  } catch (err) {
+    setMessage(err.message || 'Failed to delete reservation.', true);
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+async function confirmSharedReservationPayment(resourceId, reservationId, status, button) {
+  const parsedResourceId = Number(resourceId || 0);
+  const parsedReservationId = Number(reservationId || 0);
+  const nextStatus = String(status || '').trim();
+
+  if (!Number.isInteger(parsedResourceId) || parsedResourceId <= 0 || !Number.isInteger(parsedReservationId) || parsedReservationId <= 0 || !nextStatus) {
+    setMessage('Select a valid shared resource reservation first.', true);
+    return;
+  }
+
+  const confirmed = window.confirm('Confirm payment received for this reservation?');
+  if (!confirmed) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+  }
+  setMessage('Registering payment receipt...', false);
+
+  try {
+    const res = await fetch(
+      '/api/shared-resources/' + encodeURIComponent(String(parsedResourceId))
+      + '/reservations/' + encodeURIComponent(String(parsedReservationId))
+      + '/status',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus })
+      }
+    );
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to register payment receipt.');
+    }
+
+    await loadAllReservations();
+    setMessage('Payment receipt registered.', false);
+  } catch (err) {
+    setMessage(err.message || 'Failed to register payment receipt.', true);
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function cancelPrivateReservation(reservationId, button) {
   const id = Number(reservationId || 0);
   if (!Number.isInteger(id) || id <= 0) {
@@ -4028,7 +4134,7 @@ if (_copyConsolidatedIcsUrlBtn) _copyConsolidatedIcsUrlBtn.addEventListener('cli
     } catch {
       // ignore
     }
-    if (panelId === 'panel-ops') {
+    if (panelId === 'panel-dashboard') {
       loadAllReservations();
     }
   }
@@ -4115,13 +4221,28 @@ async function loadAllReservations() {
       statusCell.textContent = row.status || '—';
 
       const actionCell = document.createElement('td');
-      const editLink = document.createElement('a');
-      editLink.href = '/shared-resource.html?id=' + encodeURIComponent(row.shared_resource_id);
-      editLink.className = 'btn secondary config-edit-btn';
-      editLink.textContent = '✎';
-      editLink.title = 'View Resource';
-      editLink.setAttribute('aria-label', 'View Resource');
-      actionCell.appendChild(editLink);
+      const actionsWrap = document.createElement('div');
+      actionsWrap.className = 'feed-actions';
+
+      const deleteBtn = createSharedReservationActionButton('🗑', 'Delete Reservation', 'resource-delete-btn', () => {
+        deleteSharedReservation(row.shared_resource_id, row.id, deleteBtn);
+      });
+      actionsWrap.appendChild(deleteBtn);
+
+      const statusText = String(row.status || '').trim();
+      if (statusText === 'cash') {
+        const confirmCashBtn = createSharedReservationActionButton('🪙', 'Register Cash Payment Received', 'resource-pay-cash-btn', () => {
+          confirmSharedReservationPayment(row.shared_resource_id, row.id, 'Cash Received', confirmCashBtn);
+        });
+        actionsWrap.appendChild(confirmCashBtn);
+      } else if (statusText === 'Awaiting Bank Transfer') {
+        const confirmBankBtn = createSharedReservationActionButton('▭→▭', 'Register Bank Transfer Received', 'resource-pay-bank-btn', () => {
+          confirmSharedReservationPayment(row.shared_resource_id, row.id, 'Bank Transfer Confirmed', confirmBankBtn);
+        });
+        actionsWrap.appendChild(confirmBankBtn);
+      }
+
+      actionCell.appendChild(actionsWrap);
 
       tr.appendChild(resourceCell);
       tr.appendChild(guestCell);

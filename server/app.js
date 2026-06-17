@@ -4500,6 +4500,23 @@ async function updateSharedResourceReservationForUser(reservationId, resourceId,
   return { reservation: result.rows[0] };
 }
 
+async function deleteSharedResourceReservationForUser(reservationId, resourceId, userId) {
+  const result = await pool.query(
+    `
+      DELETE FROM shared_resource_reservations
+      WHERE id = $1 AND shared_resource_id = $2 AND user_id = $3
+      RETURNING id
+    `,
+    [reservationId, resourceId, userId]
+  );
+
+  if (!result.rows[0]) {
+    return { error: 'Reservation not found.' };
+  }
+
+  return { deleted: true, id: Number(result.rows[0].id) };
+}
+
 async function createSharedResourceForUser(userId, clientAccountId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
   const fullDescriptionHtml = sanitiseRichTextHtml(input.fullDescriptionHtml);
@@ -8297,6 +8314,43 @@ app.put('/api/shared-resources/:resourceId/reservations/:reservationId', require
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to update reservation.' });
+  }
+});
+
+// DELETE /api/shared-resources/:resourceId/reservations/:reservationId — delete reservation
+app.delete('/api/shared-resources/:resourceId/reservations/:reservationId', requireScopedRole('Manager'), async (req, res) => {
+  const resourceId = Number(req.params.resourceId);
+  const reservationId = Number(req.params.reservationId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0 || !Number.isInteger(reservationId) || reservationId <= 0) {
+    return res.status(400).json({ error: 'Invalid resource or reservation id.' });
+  }
+
+  try {
+    const resource = await getSharedResourceByIdForUser(resourceId, req.accessContext.effectiveOwnerUserId);
+    if (!resource) {
+      return res.status(404).json({ error: 'Shared resource not found.' });
+    }
+    if (!isSharedResourceAllowedByScope(req, resource)) {
+      return res.status(404).json({ error: 'Shared resource not found.' });
+    }
+
+    const result = await deleteSharedResourceReservationForUser(
+      reservationId,
+      resourceId,
+      req.accessContext.effectiveOwnerUserId
+    );
+
+    if (result.error === 'Reservation not found.') {
+      return res.status(404).json({ error: result.error });
+    }
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    return res.json({ deleted: true, id: reservationId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete reservation.' });
   }
 });
 

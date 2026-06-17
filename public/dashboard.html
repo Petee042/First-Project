@@ -63,6 +63,30 @@
           </div>
         </section>
 
+        <section class="listing-form-section">
+          <h3>Reservations</h3>
+          <p id="allReservationsMessage" class="message"></p>
+          <div class="table-wrap">
+            <table class="calendar-table" aria-label="All shared resource reservations">
+              <thead>
+                <tr>
+                  <th>Resource</th>
+                  <th>Guest</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="allReservationsTableBody">
+                <tr>
+                  <td colspan="6">Loading reservations...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
       </div><!-- /panel-dashboard -->
 
       <!-- ── Config tab ─────────────────────────────────────── -->
@@ -198,30 +222,6 @@
             </div>
           </form>
         </dialog>
-
-        <section class="listing-form-section">
-          <h3>Reservations</h3>
-          <p id="allReservationsMessage" class="message"></p>
-          <div class="table-wrap">
-            <table class="calendar-table" aria-label="All shared resource reservations">
-              <thead>
-                <tr>
-                  <th>Resource</th>
-                  <th>Guest</th>
-                  <th>Start</th>
-                  <th>End</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="allReservationsTableBody">
-                <tr>
-                  <td colspan="6">Loading reservations...</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
 
       </div><!-- /panel-ops -->
 
