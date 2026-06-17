@@ -7805,8 +7805,19 @@ app.post('/api/public/shared-resources/:resourceId/check-availability', async (r
 
   const checkinDate = normaliseDateKey(req.body.checkinDate);
   const checkoutDate = normaliseDateKey(req.body.checkoutDate);
-  const requestedStart = parseLocalDateTime(req.body.requestedStartDate, req.body.requestedStartTime);
-  const requestedEnd = parseLocalDateTime(req.body.requestedEndDate, req.body.requestedEndTime);
+  let requestedStart = parseLocalDateTime(req.body.requestedStartDate, req.body.requestedStartTime);
+  let requestedEnd = parseLocalDateTime(req.body.requestedEndDate, req.body.requestedEndTime);
+
+  if (!requestedStart || !requestedEnd) {
+    const startIso = String(req.body.requestedStartAt || '').trim();
+    const endIso = String(req.body.requestedEndAt || '').trim();
+    const startDate = new Date(startIso);
+    const endDate = new Date(endIso);
+    if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime())) {
+      requestedStart = startDate;
+      requestedEnd = endDate;
+    }
+  }
 
   if (!checkinDate || !checkoutDate || !requestedStart || !requestedEnd) {
     return res.status(400).json({ error: 'Checkin/checkout dates and requested start/end date-times are required.' });

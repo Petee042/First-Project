@@ -11,6 +11,7 @@ const checkoutDateParam = params.get('checkoutDate') || '';
 const spacesRequiredParam = params.get('spacesRequired') || '';
 
 let currentResource = null;
+let reservationGuestOptions = [];
 
 function formatReservationDateTime(isoStr) {
   if (!isoStr) return '-';
@@ -85,6 +86,138 @@ function renderPaymentMethodMessage(resource, paymentKey) {
   container.innerHTML = messageHtml;
 }
 
+function toLocalDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return year + '-' + month + '-' + day;
+}
+
+function toLocalTimeKey(date) {
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return hours + ':' + minutes;
+}
+
+function buildAvailabilityPayload() {
+  const startDate = new Date(startDateTimeParam);
+  const endDate = new Date(endDateTimeParam);
+  if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    return null;
+  }
+
+  return {
+    checkinDate: checkinDateParam,
+    checkoutDate: checkoutDateParam,
+    requestedStartDate: toLocalDateKey(startDate),
+    requestedStartTime: toLocalTimeKey(startDate),
+    requestedEndDate: toLocalDateKey(endDate),
+    requestedEndTime: toLocalTimeKey(endDate),
+    requestedStartAt: startDateTimeParam,
+    requestedEndAt: endDateTimeParam,
+    spacesRequired: spacesRequiredParam
+  };
+}
+
+async function recheckAvailabilityOrThrow() {
+  const payload = buildAvailabilityPayload();
+  if (!payload) {
+    throw new Error('Reservation start and end date/time are missing.');
+  }
+
+  const res = await fetch('/api/public/shared-resources/' + resourceId + '/check-availability', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'The selected facility is no longer available for those dates/times.');
+  }
+}
+
+function populateExistingGuestSelect(guestUsers) {
+  const select = document.getElementById('existingGuestSelect');
+  if (!select) {
+    return;
+  }
+
+  const list = Array.isArray(guestUsers) ? guestUsers : [];
+  const seenKeys = new Set();
+  reservationGuestOptions = list.filter((guest) => {
+    const email = String(guest && guest.email || '').trim().toLowerCase();
+    const firstName = String(guest && guest.firstName || '').trim().toLowerCase();
+    const familyName = String(guest && guest.familyName || '').trim().toLowerCase();
+    const key = email || (firstName + '|' + familyName);
+    if (!key || seenKeys.has(key)) {
+      return false;
+    }
+    seenKeys.add(key);
+    return true;
+  });
+
+  select.innerHTML = '<option value="">Select existing guest (optional)</option>';
+  reservationGuestOptions.forEach((guest, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    const name = String(guest.displayName || '').trim();
+    const email = String(guest.email || '').trim();
+    option.textContent = name && email ? (name + ' (' + email + ')') : (name || email || 'Guest');
+    select.appendChild(option);
+  });
+}
+
+function applyExistingGuest(indexValue) {
+  const index = Number(indexValue);
+  if (!Number.isInteger(index) || index < 0 || index >= reservationGuestOptions.length) {
+    return;
+  }
+
+  const guest = reservationGuestOptions[index] || {};
+  const firstName = String(guest.firstName || '').trim();
+  const familyName = String(guest.familyName || '').trim();
+  const email = String(guest.email || '').trim();
+  const telephone = String(guest.telephone || '').trim();
+
+  if (firstName) {
+    document.getElementById('guestFirstName').value = firstName;
+  }
+  if (familyName) {
+    document.getElementById('guestFamilyName').value = familyName;
+  }
+  if (email) {
+    document.getElementById('guestEmailAddress').value = email;
+  }
+  if (telephone) {
+    document.getElementById('guestTelephone').value = telephone;
+  }
+}
+
+async function loadReservationGuestOptions() {
+  const select = document.getElementById('existingGuestSelect');
+  if (!select) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/shared-reservations/guest-users');
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to load existing guests.');
+    }
+
+    populateExistingGuestSelect(Array.isArray(data.guestUsers) ? data.guestUsers : []);
+  } catch {
+    populateExistingGuestSelect([]);
+  }
+}
+
 async function loadPublicResource() {
   if (!Number.isInteger(resourceId) || resourceId <= 0) {
     setReservationMessage('Invalid resource id.', true);
@@ -112,10 +245,18 @@ async function loadPublicResource() {
   try {
     await loadPublicResource();
     renderReservationDetails();
+    await loadReservationGuestOptions();
   } catch (err) {
     setReservationMessage(err.message || 'Failed to initialize reservation page.', true);
   }
 })();
+
+const existingGuestSelect = document.getElementById('existingGuestSelect');
+if (existingGuestSelect) {
+  existingGuestSelect.addEventListener('change', () => {
+    applyExistingGuest(existingGuestSelect.value);
+  });
+}
 
 document.getElementById('backToPaymentBtn').addEventListener('click', () => {
   window.history.back();
@@ -141,6 +282,8 @@ document.getElementById('submitReservationBtn').addEventListener('click', async 
   setReservationMessage('Submitting reservation...', false);
 
   try {
+    await recheckAvailabilityOrThrow();
+
     const res = await fetch('/api/public/shared-resources/' + resourceId + '/reservations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -163,13 +306,7 @@ document.getElementById('submitReservationBtn').addEventListener('click', async 
       throw new Error(data.error || 'Failed to submit reservation.');
     }
 
-    const reference = data && data.reservation && data.reservation.reservation_identifier
-      ? data.reservation.reservation_identifier
-      : '';
-    setReservationMessage(
-      reference ? ('Reservation confirmed. Reference: ' + reference) : 'Reservation confirmed.',
-      false
-    );
+    window.location.href = '/dashboard.html?tab=panel-dashboard';
   } catch (err) {
     setReservationMessage(err.message || 'Failed to submit reservation.', true);
   } finally {

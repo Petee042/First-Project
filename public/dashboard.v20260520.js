@@ -4227,7 +4227,6 @@ async function loadAllReservations() {
       const deleteBtn = createSharedReservationActionButton('✖', 'Delete Reservation', 'resource-delete-btn', () => {
         deleteSharedReservation(row.shared_resource_id, row.id, deleteBtn);
       });
-      actionsWrap.appendChild(deleteBtn);
 
       const statusText = String(row.status || '').trim();
       if (statusText === 'cash') {
@@ -4241,6 +4240,8 @@ async function loadAllReservations() {
         });
         actionsWrap.appendChild(confirmBankBtn);
       }
+
+      actionsWrap.appendChild(deleteBtn);
 
       actionCell.appendChild(actionsWrap);
 
@@ -4268,7 +4269,7 @@ async function loadAllReservations() {
   const TAB_SUBMENUS = {
     'panel-dashboard': [
       { label: 'New Private Reservation', href: '/private-reservation.html' },
-      { label: 'New Resource Booking', href: '/resource-booking.html' }
+      { label: 'New Facility Booking', href: '/resource-booking.html' }
     ],
     'panel-config': [],
     'panel-ops': [],
