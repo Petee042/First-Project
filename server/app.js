@@ -2118,7 +2118,7 @@ async function sendAppEmail(input) {
 
   const transportResult = getScheduleEmailTransporter();
   if (transportResult.error) {
-    return { ok: false, error: 'Email delivery is not configured on the server.' };
+    return { ok: false, error: 'Email delivery is not configured on the server. Set POSTMARK_SERVER_TOKEN or SMTP_HOST/SMTP_USER/SMTP_PASS in Render.' };
   }
 
   try {
