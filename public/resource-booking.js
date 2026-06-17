@@ -5,7 +5,7 @@ let availabilityConfirmed = false;
 let currentCalculatedRate = null;
 
 function setBookingMessage(text, isError) {
-  const el = document.getElementById('publicBookingMessage');
+  const el = document.getElementById('resourceBookingMessage');
   if (!el) {
     return;
   }
@@ -13,19 +13,46 @@ function setBookingMessage(text, isError) {
   el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
 }
 
-function getResourceIdFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const direct = Number(params.get('resourceId'));
-  if (Number.isInteger(direct) && direct > 0) {
-    return direct;
+function getSelectedResourceId() {
+  const select = document.getElementById('resourceBookingResourceSelect');
+  if (!select) {
+    return null;
+  }
+  const id = Number(select.value || 0);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function setBookingFormEnabled(enabled) {
+  const form = document.getElementById('publicBookingRequestForm');
+  if (!form) {
+    return;
   }
 
-  const fallback = Number(params.get('id'));
-  if (Number.isInteger(fallback) && fallback > 0) {
-    return fallback;
-  }
+  Array.from(form.querySelectorAll('input, select, button')).forEach((el) => {
+    if (el.id === 'resourceBookingResourceSelect') {
+      return;
+    }
+    el.disabled = !enabled;
+  });
+}
 
-  return null;
+function resetBookingContext() {
+  currentResource = null;
+  availabilityConfirmed = false;
+  currentCalculatedRate = null;
+  document.getElementById('publicBookingResourceName').textContent = 'Resource';
+  document.getElementById('publicBookingDescription').innerHTML = '<p class="public-booking-placeholder">Select a facility to begin.</p>';
+  document.getElementById('bookingPaymentSelect').innerHTML = '<option value="">Select a payment option</option>';
+  document.getElementById('bookingRateLine').textContent = 'The rate for the reservation will be: --';
+
+  const spacesRow = document.getElementById('bookingSpacesRequiredRow');
+  const spacesInput = document.getElementById('spacesRequired');
+  spacesRow.classList.add('hidden');
+  spacesRow.style.display = 'none';
+  spacesInput.disabled = true;
+  spacesInput.value = '1';
+
+  setBookingFormEnabled(false);
 }
 
 function isEnabledValue(value) {
@@ -256,7 +283,6 @@ function calculateReservationRate(resource, start, end) {
       return null;
     }
 
-    // Updated business rule: any part day at start/end is billed as a full day.
     const inclusiveDays = getInclusiveCalendarDayCount(start, end);
     if (inclusiveDays <= 0) {
       return null;
@@ -277,7 +303,6 @@ function calculateReservationRate(resource, start, end) {
   }
 
   if (chargeBasis === 'hourly') {
-    // If mode metadata is stale/inconsistent but a single hourly rate exists, prefer single-rate charging.
     const useSingleRate = hourlyChargeMode === 'single_rate'
       || (hourlyChargeMode !== 'per_hour_of_day' && hasSingleHourlyRate);
 
@@ -335,21 +360,14 @@ function updateReservationRateDisplay() {
     return;
   }
 
-  // Pricing must always follow the explicit reservation window.
   const requestedStartDate = document.getElementById('requestedBookingStartDate').value;
   const requestedStartTime = getTimeStringFromInputs('requestedBookingStartHour', 'requestedBookingStartMinute');
   const requestedEndDate = document.getElementById('requestedBookingEndDate').value;
   const requestedEndTime = getTimeStringFromInputs('requestedBookingEndHour', 'requestedBookingEndMinute');
-  
+
   const start = parseLocalDateTime(requestedStartDate, requestedStartTime);
   const end = parseLocalDateTime(requestedEndDate, requestedEndTime);
 
-  const storedChargeBasis = String(getChargeConfigValue(currentResource, 'charge_basis', 'chargeBasis') || '');
-  const storedHourlyMode = String(getChargeConfigValue(currentResource, 'hourly_charge_mode', 'hourlyChargeMode') || '');
-  const storedDailyMode = String(getChargeConfigValue(currentResource, 'daily_charge_mode', 'dailyChargeMode') || '');
-  const storedDailyRate = getChargeConfigValue(currentResource, 'daily_rate', 'dailyRate');
-  const storedHourlyRate = getChargeConfigValue(currentResource, 'hourly_rate', 'hourlyRate');
-  const hourlyRates = readHourlyRates(currentResource);
   const total = calculateReservationRate(currentResource, start, end);
   currentCalculatedRate = total;
   if (total === null) {
@@ -390,15 +408,15 @@ function getCheckAvailabilityPayload(resource) {
 }
 
 function getReservationPageUrl(paymentKey) {
-  const resourceId = getResourceIdFromUrl();
+  const resourceId = getSelectedResourceId();
   const pageMap = {
-    free_of_charge: 'free-of-charge-reservation.html',
-    cash_on_site: 'cash-on-site-reservation.html',
-    bank_transfer: 'bank-transfer-reservation.html',
-    online_payment: 'online-payment-reservation.html'
+    free_of_charge: '/public-pages/free-of-charge-reservation.html',
+    cash_on_site: '/public-pages/cash-on-site-reservation.html',
+    bank_transfer: '/public-pages/bank-transfer-reservation.html',
+    online_payment: '/public-pages/online-payment-reservation.html'
   };
 
-  const pageName = pageMap[paymentKey] || 'free-of-charge-reservation.html';
+  const pageName = pageMap[paymentKey] || '/public-pages/free-of-charge-reservation.html';
 
   const startDate = document.getElementById('requestedBookingStartDate') ? document.getElementById('requestedBookingStartDate').value : '';
   const startTime = getTimeStringFromInputs('requestedBookingStartHour', 'requestedBookingStartMinute');
@@ -468,6 +486,12 @@ function initialiseBookingRequestForm() {
   const reserveBtn = document.getElementById('reserveBtn');
   if (reserveBtn) {
     reserveBtn.addEventListener('click', () => {
+      const resourceId = getSelectedResourceId();
+      if (!resourceId) {
+        setBookingMessage('Please select a facility first.', true);
+        return;
+      }
+
       const select = document.getElementById('bookingPaymentSelect');
       if (!select || !select.value) {
         setBookingMessage('Please select a payment option.', true);
@@ -484,57 +508,38 @@ function initialiseBookingRequestForm() {
   }
 }
 
-function setupCheckAvailability(resourceId) {
-  const button = document.getElementById('checkAvailabilityBtn');
-  if (!button) {
+function populateResourceSelect(resources) {
+  const select = document.getElementById('resourceBookingResourceSelect');
+  if (!select) {
     return;
   }
 
-  button.addEventListener('click', async () => {
-    if (!currentResource) {
-      setBookingMessage('Shared resource is not loaded yet.', true);
-      return;
-    }
-
-    const prepared = getCheckAvailabilityPayload(currentResource);
-    if (prepared.error) {
-      setBookingMessage(prepared.error, true);
-      return;
-    }
-
-    button.disabled = true;
-    availabilityConfirmed = false;
-
-    try {
-      // Refresh resource first so calculation/payment options use latest admin config.
-      await loadPublicResource();
-
-      const res = await fetch('/api/public/shared-resources/' + resourceId + '/check-availability', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(prepared.payload)
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setBookingMessage(data.error || 'Availability check failed.', true);
-        return;
-      }
-
-      availabilityConfirmed = true;
-      setBookingMessage(data.message || 'Availability Confirmed', false);
-    } catch {
-      setBookingMessage('Network error checking availability.', true);
-    } finally {
-      button.disabled = false;
-    }
+  const sorted = (Array.isArray(resources) ? resources : []).slice().sort((a, b) => {
+    const aName = String(a.short_description || a.name || '').toLowerCase();
+    const bName = String(b.short_description || b.name || '').toLowerCase();
+    return aName.localeCompare(bName);
   });
+
+  select.innerHTML = '<option value="">Select a facility</option>';
+  sorted.forEach((resource) => {
+    const option = document.createElement('option');
+    option.value = String(resource.id || '');
+    option.textContent = String(resource.short_description || ('Facility #' + String(resource.id || '')));
+    select.appendChild(option);
+  });
+
+  const fromQuery = Number(new URLSearchParams(window.location.search).get('resourceId') || 0);
+  if (Number.isInteger(fromQuery) && fromQuery > 0) {
+    select.value = String(fromQuery);
+  } else if (sorted.length === 1) {
+    select.value = String(sorted[0].id);
+  }
 }
 
-async function loadPublicResource() {
-  const resourceId = getResourceIdFromUrl();
+async function loadSelectedResource() {
+  const resourceId = getSelectedResourceId();
   if (!resourceId) {
-    setBookingMessage('Invalid or missing shared resource id in URL.', true);
+    resetBookingContext();
     return;
   }
 
@@ -578,26 +583,96 @@ async function loadPublicResource() {
       hint.textContent = '';
     }
   }
+
+  setBookingFormEnabled(true);
+}
+
+function setupCheckAvailability() {
+  const button = document.getElementById('checkAvailabilityBtn');
+  if (!button) {
+    return;
+  }
+
+  button.addEventListener('click', async () => {
+    const resourceId = getSelectedResourceId();
+    if (!resourceId || !currentResource) {
+      setBookingMessage('Select a facility before checking availability.', true);
+      return;
+    }
+
+    const prepared = getCheckAvailabilityPayload(currentResource);
+    if (prepared.error) {
+      setBookingMessage(prepared.error, true);
+      return;
+    }
+
+    button.disabled = true;
+    availabilityConfirmed = false;
+
+    try {
+      await loadSelectedResource();
+
+      const res = await fetch('/api/public/shared-resources/' + resourceId + '/check-availability', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(prepared.payload)
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setBookingMessage(data.error || 'Availability check failed.', true);
+        return;
+      }
+
+      availabilityConfirmed = true;
+      setBookingMessage(data.message || 'Availability Confirmed', false);
+    } catch {
+      setBookingMessage('Network error checking availability.', true);
+    } finally {
+      button.disabled = false;
+    }
+  });
 }
 
 (async () => {
   try {
-    const resourceId = getResourceIdFromUrl();
-    if (!resourceId) {
-      setBookingMessage('Invalid or missing shared resource id in URL.', true);
+    const meRes = await fetch('/api/me');
+    if (!meRes.ok) {
+      window.location.href = '/';
       return;
     }
 
     initialiseBookingRequestForm();
-    setupCheckAvailability(resourceId);
-    await loadPublicResource();
+    setupCheckAvailability();
+    resetBookingContext();
 
-    // If user changes charge logic on another tab/page and comes back,
-    // refresh the resource config so pricing uses latest saved settings.
-    window.addEventListener('focus', () => {
-      loadPublicResource().catch(() => {});
+    const resourcesRes = await fetch('/api/shared-resources');
+    const resourcesData = await resourcesRes.json();
+    if (!resourcesRes.ok) {
+      throw new Error(resourcesData.error || 'Failed to load facilities.');
+    }
+
+    const resources = Array.isArray(resourcesData.resources) ? resourcesData.resources : [];
+    populateResourceSelect(resources);
+
+    const resourceSelect = document.getElementById('resourceBookingResourceSelect');
+    resourceSelect.addEventListener('change', async () => {
+      try {
+        await loadSelectedResource();
+      } catch (err) {
+        resetBookingContext();
+        setBookingMessage(err.message || 'Unable to load selected facility.', true);
+      }
     });
+
+    if (getSelectedResourceId()) {
+      await loadSelectedResource();
+    }
   } catch (err) {
     setBookingMessage(err.message || 'Unable to load booking page.', true);
   }
 })();
+
+document.getElementById('backBtn').addEventListener('click', () => {
+  window.location.href = '/dashboard.html?tab=panel-dashboard';
+});

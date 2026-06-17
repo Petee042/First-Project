@@ -4147,7 +4147,7 @@ async function loadAllReservations() {
   const TAB_SUBMENUS = {
     'panel-dashboard': [
       { label: 'New Private Reservation', href: '/private-reservation.html' },
-      { label: 'New Resource Booking', href: '#' }
+      { label: 'New Resource Booking', href: '/resource-booking.html' }
     ],
     'panel-config': [],
     'panel-ops': [],
