@@ -3528,10 +3528,67 @@ function formatPrivateReservationAmount(amount) {
   return Number.isFinite(numeric) ? numeric.toFixed(2) : '—';
 }
 
+function createPrivateReservationActionButton(symbol, title, className, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn secondary ' + className;
+  button.textContent = symbol;
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+async function cancelPrivateReservation(reservationId, button) {
+  const id = Number(reservationId || 0);
+  if (!Number.isInteger(id) || id <= 0) {
+    setPrivateReservationsMessage('Select a valid reservation first.', true);
+    return;
+  }
+
+  const confirmed = window.confirm('Cancel this reservation? No automatic refund will be issued if the reservation is cancelled.');
+  if (!confirmed) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+  }
+  setPrivateReservationsMessage('Cancelling reservation...', false);
+
+  try {
+    const res = await fetch('/api/private-reservations/' + encodeURIComponent(String(id)), {
+      method: 'DELETE'
+    });
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to cancel reservation.');
+    }
+
+    await loadPrivateReservations();
+    setPrivateReservationsMessage('Reservation cancelled.', false);
+  } catch (err) {
+    setPrivateReservationsMessage(err.message || 'Failed to cancel reservation.', true);
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
 async function confirmPrivateReservationPayment(reservationId, button) {
   const id = Number(reservationId || 0);
   if (!Number.isInteger(id) || id <= 0) {
     setPrivateReservationsMessage('Select a valid reservation first.', true);
+    return;
+  }
+
+  const confirmed = window.confirm('Confirm payment receipt');
+  if (!confirmed) {
     return;
   }
 
@@ -3570,7 +3627,7 @@ async function loadPrivateReservations() {
     return;
   }
 
-  tbody.innerHTML = '<tr><td colspan="6">Loading private reservations...</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="5">Loading private reservations...</td></tr>';
   setPrivateReservationsMessage('', false);
 
   try {
@@ -3580,7 +3637,7 @@ async function loadPrivateReservations() {
       return;
     }
     if (res.status === 403) {
-      tbody.innerHTML = '<tr><td colspan="6">Access restricted.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5">Access restricted.</td></tr>';
       return;
     }
 
@@ -3591,7 +3648,7 @@ async function loadPrivateReservations() {
 
     const reservations = Array.isArray(data.reservations) ? data.reservations : [];
     if (!reservations.length) {
-      tbody.innerHTML = '<tr><td colspan="6">No private reservations found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5">No private reservations found.</td></tr>';
       return;
     }
 
@@ -3611,33 +3668,32 @@ async function loadPrivateReservations() {
       const amountCell = document.createElement('td');
       amountCell.textContent = formatPrivateReservationAmount(reservation.amount);
 
-      const paymentStatusCell = document.createElement('td');
-      paymentStatusCell.textContent = reservation.paymentStatus || '—';
-
       const actionCell = document.createElement('td');
+      const actionsWrap = document.createElement('div');
+      actionsWrap.className = 'feed-actions';
+
+      const cancelBtn = createPrivateReservationActionButton('✖', 'Cancel Reservation', 'private-res-cancel-btn', () => {
+        cancelPrivateReservation(reservation.id, cancelBtn);
+      });
+      actionsWrap.appendChild(cancelBtn);
+
       if (reservation.canConfirmPayment) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btn primary';
-        button.textContent = 'Confirm Payment';
-        button.addEventListener('click', () => {
-          confirmPrivateReservationPayment(reservation.id, button);
+        const confirmBtn = createPrivateReservationActionButton('✔', 'Confirm Payment Receipt', 'private-res-confirm-btn', () => {
+          confirmPrivateReservationPayment(reservation.id, confirmBtn);
         });
-        actionCell.appendChild(button);
-      } else {
-        actionCell.textContent = '—';
+        actionsWrap.appendChild(confirmBtn);
       }
+      actionCell.appendChild(actionsWrap);
 
       tr.appendChild(guestCell);
       tr.appendChild(arrivalCell);
       tr.appendChild(nightsCell);
       tr.appendChild(amountCell);
-      tr.appendChild(paymentStatusCell);
       tr.appendChild(actionCell);
       tbody.appendChild(tr);
     });
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="6">Failed to load private reservations.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5">Failed to load private reservations.</td></tr>';
     setPrivateReservationsMessage(err.message || 'Failed to load private reservations.', true);
   }
 }

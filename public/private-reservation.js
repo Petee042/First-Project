@@ -1,6 +1,7 @@
 'use strict';
 
 let allListings = [];
+let guestUsers = [];
 // availabilityMap: listingId -> 'available' | 'unavailable' | 'loading' | null
 const availabilityMap = {};
 let availabilityCheckId = 0;
@@ -109,6 +110,46 @@ function getSelectedListingId() {
   const selected = getSelectedListingIds();
   return selected.length ? selected[0] : null;
 }
+
+function renderGuestUsers(users) {
+  const select = document.getElementById('guestUserSelect');
+  if (!select) {
+    return;
+  }
+  const options = ['<option value="">Select existing guest (optional)</option>'];
+  (users || []).forEach(function(user) {
+    const id = Number(user && user.id || 0);
+    if (!Number.isInteger(id) || id <= 0) {
+      return;
+    }
+    const firstName = String(user.firstName || '').trim();
+    const familyName = String(user.familyName || '').trim();
+    const email = String(user.email || '').trim();
+    const displayName = String(user.displayName || [firstName, familyName].filter(Boolean).join(' ').trim() || email || ('User #' + id));
+    options.push(
+      '<option value="' + String(id)
+      + '" data-first-name="' + firstName.replace(/"/g, '&quot;')
+      + '" data-family-name="' + familyName.replace(/"/g, '&quot;')
+      + '" data-email="' + email.replace(/"/g, '&quot;')
+      + '">' + displayName + (email ? (' (' + email + ')') : '') + '</option>'
+    );
+  });
+  select.innerHTML = options.join('');
+}
+
+document.getElementById('guestUserSelect').addEventListener('change', function() {
+  const select = document.getElementById('guestUserSelect');
+  const option = select && select.selectedOptions && select.selectedOptions[0] ? select.selectedOptions[0] : null;
+  if (!option || !option.value) {
+    return;
+  }
+  const firstName = String(option.getAttribute('data-first-name') || '').trim();
+  const familyName = String(option.getAttribute('data-family-name') || '').trim();
+  const email = String(option.getAttribute('data-email') || '').trim();
+  if (firstName) document.getElementById('guestFirstName').value = firstName;
+  if (familyName) document.getElementById('guestFamilyName').value = familyName;
+  if (email) document.getElementById('guestEmail').value = email;
+});
 
 document.getElementById('backBtn').addEventListener('click', function() {
   window.location.href = '/dashboard.html?tab=panel-dashboard';
@@ -234,6 +275,19 @@ document.getElementById('privateReservationForm').addEventListener('submit', asy
     if (!meRes.ok) {
       window.location.href = '/';
       return;
+    }
+
+    const guestsRes = await fetch('/api/private-reservations/guest-users');
+    if (guestsRes.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+    if (guestsRes.ok) {
+      const guestsData = await guestsRes.json();
+      guestUsers = Array.isArray(guestsData.guestUsers) ? guestsData.guestUsers : [];
+      renderGuestUsers(guestUsers);
+    } else {
+      renderGuestUsers([]);
     }
 
     const listingsRes = await fetch('/api/listings');

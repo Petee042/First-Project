@@ -3280,6 +3280,143 @@ async function getGuestsForClientAccount(clientAccountId) {
   return result.rows;
 }
 
+async function ensureGuestSiteUserForClientAccount(input) {
+  const clientAccountId = Number(input && input.clientAccountId);
+  const ownerUserId = Number(input && input.ownerUserId);
+  const firstName = String(input && input.firstName || '').trim().slice(0, 120);
+  const familyName = String(input && input.familyName || '').trim().slice(0, 120);
+  const email = normaliseOptionalEmail(input && input.email);
+  const sourceType = String(input && input.sourceType || 'private_reservation').trim().slice(0, 60) || 'private_reservation';
+  const sourceId = String(input && input.sourceId || '').trim().slice(0, 120) || null;
+
+  if (!Number.isInteger(clientAccountId) || clientAccountId <= 0) {
+    throw new Error('Client account context is required.');
+  }
+  if (!email) {
+    throw new Error('A valid guest email address is required.');
+  }
+
+  let user = await findUserByEmail(email);
+  if (!user) {
+    const username = await generateUniqueUsernameFromEmail(email);
+    const temporaryPasswordHash = await bcrypt.hash(randomUUID() + 'Aa1!', SALT_ROUNDS);
+    const created = await pool.query(
+      `
+        INSERT INTO users (username, email, password_hash, first_name, family_name, country_of_residence, is_validated)
+        VALUES ($1, $2, $3, $4, $5, '', FALSE)
+        RETURNING id, username, email, first_name, family_name, country_of_residence, is_validated, created_at
+      `,
+      [username, email, temporaryPasswordHash, firstName, familyName]
+    );
+    user = created.rows[0] || null;
+  }
+
+  if (!user || !Number.isInteger(Number(user.id)) || Number(user.id) <= 0) {
+    throw new Error('Failed to create or resolve guest site user.');
+  }
+
+  await pool.query(
+    `
+      UPDATE users
+      SET first_name = CASE
+            WHEN NULLIF(TRIM(COALESCE(first_name, '')), '') IS NULL AND $1 <> '' THEN $1
+            ELSE first_name
+          END,
+          family_name = CASE
+            WHEN NULLIF(TRIM(COALESCE(family_name, '')), '') IS NULL AND $2 <> '' THEN $2
+            ELSE family_name
+          END
+      WHERE id = $3
+    `,
+    [firstName, familyName, Number(user.id)]
+  );
+
+  await pool.query(
+    `
+      INSERT INTO client_memberships (client_account_id, user_id, role, status, invited_by_user_id)
+      VALUES ($1, $2, 'Guest', 'active', $3)
+      ON CONFLICT (client_account_id, user_id, role)
+      DO UPDATE
+      SET status = 'active',
+          invited_by_user_id = COALESCE(client_memberships.invited_by_user_id, EXCLUDED.invited_by_user_id),
+          updated_at = CURRENT_TIMESTAMP
+    `,
+    [clientAccountId, Number(user.id), Number.isInteger(ownerUserId) && ownerUserId > 0 ? ownerUserId : null]
+  );
+
+  await pool.query(
+    `
+      INSERT INTO guest_relationships (
+        client_account_id,
+        guest_user_id,
+        guest_email,
+        guest_phone,
+        guest_first_name,
+        guest_family_name,
+        source_type,
+        source_id,
+        first_seen_at,
+        last_seen_at
+      )
+      VALUES ($1, $2, $3, '', $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT (client_account_id, guest_email, guest_phone)
+      DO UPDATE
+      SET guest_user_id = COALESCE(EXCLUDED.guest_user_id, guest_relationships.guest_user_id),
+          guest_first_name = COALESCE(NULLIF(EXCLUDED.guest_first_name, ''), guest_relationships.guest_first_name),
+          guest_family_name = COALESCE(NULLIF(EXCLUDED.guest_family_name, ''), guest_relationships.guest_family_name),
+          source_type = COALESCE(NULLIF(EXCLUDED.source_type, ''), guest_relationships.source_type),
+          source_id = COALESCE(NULLIF(EXCLUDED.source_id, ''), guest_relationships.source_id),
+          last_seen_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+    `,
+    [
+      clientAccountId,
+      Number(user.id),
+      email,
+      firstName,
+      familyName,
+      sourceType,
+      sourceId
+    ]
+  );
+
+  return user;
+}
+
+async function getGuestSiteUsersForClientAccount(clientAccountId) {
+  const id = Number(clientAccountId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `
+      WITH related_guest_users AS (
+        SELECT cm.user_id
+        FROM client_memberships cm
+        WHERE cm.client_account_id = $1
+          AND cm.role = 'Guest'
+          AND cm.status = 'active'
+        UNION
+        SELECT gr.guest_user_id AS user_id
+        FROM guest_relationships gr
+        WHERE gr.client_account_id = $1
+          AND gr.guest_user_id IS NOT NULL
+      )
+      SELECT u.id,
+             u.email,
+             COALESCE(NULLIF(TRIM(u.first_name), ''), '') AS first_name,
+             COALESCE(NULLIF(TRIM(u.family_name), ''), '') AS family_name
+      FROM related_guest_users rgu
+      JOIN users u ON u.id = rgu.user_id
+      ORDER BY LOWER(COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.family_name), ''), u.email)), u.id ASC
+    `,
+    [id]
+  );
+
+  return result.rows;
+}
+
 async function setUserStripeConnectState(userId, nextState) {
   const state = {
     stripe_account_id: nextState && nextState.stripe_account_id ? String(nextState.stripe_account_id).trim() : null,
@@ -3668,10 +3805,12 @@ function mapPrivateReservationRow(row) {
     departureDate: String(row && row.reservation_checkout_date || '').trim(),
     stayNights: Number.isInteger(stayNights) && stayNights > 0 ? stayNights : 0,
     amount: Number.isFinite(reservationAmount) ? reservationAmount : null,
+    emailAddress: String(row && row.email_address || '').trim(),
     paymentMethod: String(row && row.payment_method || '').trim(),
     status: String(row && row.status || '').trim(),
     paymentStatus: getPrivateReservationPaymentStatusLabel(row),
     canConfirmPayment: canConfirmPrivateReservationPayment(row),
+    canCancel: Number.isInteger(Number(row && row.id || 0)) && Number(row && row.id || 0) > 0,
     createdAt: row && row.created_at ? String(row.created_at) : ''
   };
 }
@@ -3696,6 +3835,7 @@ async function getPrivateReservationsForScope(req) {
              ra.reservation_checkout_date::text AS reservation_checkout_date,
              ra.first_name,
              ra.family_name,
+             ra.email_address,
              ra.reservation_amount,
              ra.payment_method,
              ra.status,
@@ -7074,6 +7214,16 @@ app.post('/api/stripe/webhook', async (req, res) => {
               paidAt: new Date().toISOString(),
               status: 'Confirmed'
             });
+
+            await ensureGuestSiteUserForClientAccount({
+              clientAccountId: reservation.client_account_id,
+              ownerUserId: reservation.user_id,
+              firstName: reservation.first_name,
+              familyName: reservation.family_name,
+              email: reservation.email_address,
+              sourceType: 'shared_resource_reservation',
+              sourceId: String(reservation.id)
+            });
           } else if (event.type === 'payment_intent.payment_failed') {
             await updateSharedResourceReservationPaymentById(reservation.id, {
               ...commonUpdate,
@@ -9119,6 +9269,75 @@ app.get('/api/private-reservations', requireScopedRole('Manager'), async (req, r
   }
 });
 
+app.get('/api/private-reservations/guest-users', requireScopedRole('Manager'), async (req, res) => {
+  try {
+    const guestUsers = await getGuestSiteUsersForClientAccount(req.accessContext.activeClientAccountId);
+    return res.json({
+      guestUsers: guestUsers.map((row) => {
+        const firstName = String(row && row.first_name || '').trim();
+        const familyName = String(row && row.family_name || '').trim();
+        const fullName = [firstName, familyName].filter(Boolean).join(' ').trim();
+        return {
+          id: Number(row && row.id || 0),
+          email: String(row && row.email || '').trim(),
+          firstName,
+          familyName,
+          displayName: fullName || String(row && row.email || '').trim()
+        };
+      })
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load guest users.' });
+  }
+});
+
+app.delete('/api/private-reservations/:id', requireScopedRole('Manager'), async (req, res) => {
+  const reservationId = Number(req.params.id || 0);
+  if (!Number.isInteger(reservationId) || reservationId <= 0) {
+    return res.status(400).json({ error: 'Valid reservation id is required.' });
+  }
+
+  try {
+    const existingResult = await pool.query(
+      `
+        SELECT id,
+               listing_id,
+               client_account_id
+        FROM reservation_activity
+        WHERE id = $1
+          AND client_account_id = $2
+        LIMIT 1
+      `,
+      [reservationId, req.accessContext.activeClientAccountId]
+    );
+
+    const existing = existingResult.rows[0] || null;
+    if (!existing) {
+      return res.status(404).json({ error: 'Private reservation not found.' });
+    }
+
+    const listing = await getListingByIdForUser(existing.listing_id, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Private reservation not found.' });
+    }
+
+    await pool.query(
+      `
+        DELETE FROM reservation_activity
+        WHERE id = $1
+          AND client_account_id = $2
+      `,
+      [reservationId, req.accessContext.activeClientAccountId]
+    );
+
+    return res.json({ deleted: true, id: reservationId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to cancel private reservation.' });
+  }
+});
+
 app.post('/api/private-reservations/:id/confirm-payment', requireScopedRole('Manager'), async (req, res) => {
   const reservationId = Number(req.params.id || 0);
   if (!Number.isInteger(reservationId) || reservationId <= 0) {
@@ -9135,6 +9354,7 @@ app.post('/api/private-reservations/:id/confirm-payment', requireScopedRole('Man
                ra.reservation_checkout_date::text AS reservation_checkout_date,
                ra.first_name,
                ra.family_name,
+               ra.email_address,
                ra.reservation_amount,
                ra.payment_method,
                ra.status,
@@ -9164,6 +9384,16 @@ app.post('/api/private-reservations/:id/confirm-payment', requireScopedRole('Man
       return res.status(400).json({ error: 'Only bank transfer reservations can be confirmed.' });
     }
 
+    await ensureGuestSiteUserForClientAccount({
+      clientAccountId: req.accessContext.activeClientAccountId,
+      ownerUserId: req.accessContext.effectiveOwnerUserId,
+      firstName: existing.first_name,
+      familyName: existing.family_name,
+      email: existing.email_address,
+      sourceType: 'private_reservation',
+      sourceId: String(existing.id)
+    });
+
     if (String(existing.status || '').trim().toLowerCase() !== 'awaiting_bank_transfer') {
       return res.json({ reservation: mapPrivateReservationRow(existing) });
     }
@@ -9180,6 +9410,7 @@ app.post('/api/private-reservations/:id/confirm-payment', requireScopedRole('Man
                   reservation_checkout_date::text AS reservation_checkout_date,
                   first_name,
                   family_name,
+                  email_address,
                   reservation_amount,
                   payment_method,
                   status,
@@ -9332,6 +9563,18 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
       status: nextStatus,
       notes: ''
     });
+
+    if (paymentMethod === 'No Charge') {
+      await ensureGuestSiteUserForClientAccount({
+        clientAccountId: req.accessContext.activeClientAccountId,
+        ownerUserId: req.accessContext.effectiveOwnerUserId,
+        firstName,
+        familyName,
+        email: emailAddress,
+        sourceType: 'private_reservation',
+        sourceId: String(reservation.id)
+      });
+    }
 
     const mode = paymentMethod === 'No Charge'
       ? 'no-charge'
