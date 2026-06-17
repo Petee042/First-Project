@@ -570,7 +570,7 @@ function renderTeamMembers(team) {
     if (canManageTeam() || canViewTeam()) {
       const actionBtn = document.createElement('button');
       actionBtn.type = 'button';
-      actionBtn.className = 'btn secondary';
+      actionBtn.className = 'btn secondary config-edit-btn';
       actionBtn.textContent = '✎';
       actionBtn.title = 'View/Update/Delete';
       actionBtn.setAttribute('aria-label', 'View/Update/Delete');
@@ -1180,7 +1180,7 @@ function renderListings(listings) {
     const actionCell = document.createElement('td');
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
-    openBtn.className = 'btn secondary';
+    openBtn.className = 'btn secondary config-edit-btn';
     openBtn.textContent = '✎';
     openBtn.title = 'View/Edit';
     openBtn.setAttribute('aria-label', 'View/Edit');
@@ -1242,7 +1242,7 @@ function renderProperties(properties) {
       const actionCell = document.createElement('td');
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
-      openBtn.className = 'btn secondary';
+      openBtn.className = 'btn secondary config-edit-btn';
       openBtn.textContent = '✎';
       openBtn.title = 'View/Edit';
       openBtn.setAttribute('aria-label', 'View/Edit');
@@ -1341,7 +1341,7 @@ function renderCleaners(cleaners) {
     const actionCell = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
-    editBtn.className = 'btn secondary';
+    editBtn.className = 'btn secondary config-edit-btn';
     editBtn.textContent = '✎';
     editBtn.title = 'View Details/Edit';
     editBtn.setAttribute('aria-label', 'View Details/Edit');
@@ -1428,7 +1428,7 @@ function renderSharedResources(resources) {
     const actionCell = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
-    editBtn.className = 'btn secondary';
+    editBtn.className = 'btn secondary config-edit-btn';
     editBtn.textContent = '✎';
     editBtn.title = 'View/Edit';
     editBtn.setAttribute('aria-label', 'View/Edit');
@@ -3853,7 +3853,7 @@ async function loadAllReservations() {
       const actionCell = document.createElement('td');
       const editLink = document.createElement('a');
       editLink.href = '/shared-resource.html?id=' + encodeURIComponent(row.shared_resource_id);
-      editLink.className = 'btn secondary';
+      editLink.className = 'btn secondary config-edit-btn';
       editLink.textContent = '✎';
       editLink.title = 'View Resource';
       editLink.setAttribute('aria-label', 'View Resource');

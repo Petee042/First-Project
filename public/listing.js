@@ -976,7 +976,7 @@ function renderFeeds(feeds) {
     const actionCell = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
-    editBtn.className = 'btn secondary';
+    editBtn.className = 'btn secondary config-edit-btn';
     editBtn.textContent = '✎';
     editBtn.title = 'Edit';
     editBtn.setAttribute('aria-label', 'Edit');
