@@ -213,7 +213,12 @@ document.getElementById('privateReservationForm').addEventListener('submit', asy
   if (!familyName) { setMessage('Family name is required.', true); return; }
   if (!email) { setMessage('Email address is required.', true); return; }
   if (!Number.isInteger(guestCount) || guestCount <= 0) { setMessage('Number of guests is required.', true); return; }
-  if (cost === '' || Number(cost) < 0) { setMessage('Cost is required.', true); return; }
+  if (paymentMethod === 'No Charge') {
+    if (cost !== '' && Number(cost) < 0) { setMessage('Cost cannot be negative.', true); return; }
+  } else if (cost === '' || Number(cost) < 0) {
+    setMessage('Cost is required.', true);
+    return;
+  }
   if (holdHours === '' || Number(holdHours) <= 0) { setMessage('Hold period in hours is required.', true); return; }
   if (!paymentMethod) { setMessage('Payment method is required.', true); return; }
 
@@ -232,7 +237,9 @@ document.getElementById('privateReservationForm').addEventListener('submit', asy
         familyName,
         email,
         guestCount,
-        cost: cost ? Number(cost) : null,
+        cost: paymentMethod === 'No Charge'
+          ? (cost === '' ? 0 : Number(cost))
+          : (cost === '' ? null : Number(cost)),
         holdHours: holdHours ? Number(holdHours) : null,
         paymentMethod
       })

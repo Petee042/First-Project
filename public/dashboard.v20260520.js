@@ -3655,6 +3655,9 @@ async function loadPrivateReservations() {
     tbody.innerHTML = '';
     reservations.forEach((reservation) => {
       const tr = document.createElement('tr');
+      if (reservation && reservation.isOverduePayment === true) {
+        tr.classList.add('conflict-row');
+      }
 
       const reservationIdCell = document.createElement('td');
       reservationIdCell.textContent = reservation.reservationIdentifier || '—';

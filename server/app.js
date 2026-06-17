@@ -1641,7 +1641,16 @@ function formatDateTimeForMessage(value) {
   if (Number.isNaN(date.getTime())) {
     return String(value || '');
   }
-  return date.toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  return date.toLocaleString('en-GB', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC'
+  }).replace(',', '');
 }
 
 async function generateGlobalReservationIdentifier(reservationType) {
@@ -3854,6 +3863,11 @@ function mapPrivateReservationRow(row) {
     ? Number(row.reservation_amount)
     : null;
   const stayNights = Number(row && row.stay_nights || 0);
+  const holdUntilAt = row && row.hold_until_at ? String(row.hold_until_at) : '';
+  const holdUntilMs = holdUntilAt ? new Date(holdUntilAt).getTime() : Number.NaN;
+  const isOverduePayment = String(row && row.status || '').trim().toLowerCase() === 'awaiting_bank_transfer'
+    && Number.isFinite(holdUntilMs)
+    && holdUntilMs <= Date.now();
 
   return {
     id: Number(row && row.id || 0),
@@ -3866,9 +3880,11 @@ function mapPrivateReservationRow(row) {
     stayNights: Number.isInteger(stayNights) && stayNights > 0 ? stayNights : 0,
     amount: Number.isFinite(reservationAmount) ? reservationAmount : null,
     emailAddress: String(row && row.email_address || '').trim(),
+    holdUntilAt,
     paymentMethod: String(row && row.payment_method || '').trim(),
     status: String(row && row.status || '').trim(),
     paymentStatus: getPrivateReservationPaymentStatusLabel(row),
+    isOverduePayment,
     canConfirmPayment: canConfirmPrivateReservationPayment(row),
     canCancel: Number.isInteger(Number(row && row.id || 0)) && Number(row && row.id || 0) > 0,
     createdAt: row && row.created_at ? String(row.created_at) : ''
@@ -3898,6 +3914,7 @@ async function getPrivateReservationsForScope(req) {
              ra.family_name,
              ra.email_address,
              ra.reservation_amount,
+             ra.hold_until_at,
              ra.payment_method,
              ra.status,
              ra.created_at,
@@ -9527,14 +9544,19 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
   if (!Number.isInteger(guestCount) || guestCount <= 0 || guestCount > 50) {
     return res.status(400).json({ error: 'Guest count is required.' });
   }
-  if (reservationAmount === null) {
+  if (!paymentMethod) {
+    return res.status(400).json({ error: 'Payment method is required.' });
+  }
+  if (paymentMethod === 'No Charge') {
+    // No charge reservations can explicitly carry a zero amount.
+    if (reservationAmount !== null && reservationAmount < 0) {
+      return res.status(400).json({ error: 'Cost cannot be negative.' });
+    }
+  } else if (reservationAmount === null) {
     return res.status(400).json({ error: 'Cost is required.' });
   }
   if (!Number.isInteger(holdHours) || holdHours <= 0 || holdHours > 720) {
     return res.status(400).json({ error: 'Hold period (hours) is required.' });
-  }
-  if (!paymentMethod) {
-    return res.status(400).json({ error: 'Payment method is required.' });
   }
 
   try {
@@ -9559,6 +9581,12 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
     const nowMs = Date.now();
     const holdUntilAt = new Date(nowMs + holdHours * 60 * 60 * 1000).toISOString();
     const reservationIdentifier = await generateGlobalReservationIdentifier('private_reservation');
+    const reservationAmountValue = paymentMethod === 'No Charge'
+      ? 0
+      : Number(reservationAmount);
+    const baseUrl = getPreferredAppBaseUrl(req) || '';
+    const termsUrl = (baseUrl ? (baseUrl + '/guest-terms-and-conditions.html') : '/guest-terms-and-conditions.html');
+    const termsStatement = 'By making payment you as The Guest are accepting the terms of The Host for The Reservation as stated in this email.';
     const nextStatus = paymentMethod === 'No Charge'
       ? 'confirmed'
       : paymentMethod === 'Bank Transfer'
@@ -9588,14 +9616,17 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
         'Number of guests: ' + String(guestCount),
         'Arrival date: ' + arrivalDate,
         'Departure date: ' + departureDate,
-        'Amount payable: ' + reservationAmount.toFixed(2),
+        'Amount payable: ' + reservationAmountValue.toFixed(2),
         'Payment due by: ' + dueText,
         '',
         'Bank details:',
         'Account name: ' + (bankAccountName || 'Not configured'),
         'Sort code: ' + (bankSortCode || 'Not configured'),
         'Account number: ' + (bankAccountNumber || 'Not configured'),
-        'Account type: ' + bankType
+        'Account type: ' + bankType,
+        '',
+        termsStatement,
+        'Terms and Conditions: ' + termsUrl
       ];
 
       const emailResult = await sendAppEmail({
@@ -9626,7 +9657,7 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
       familyName,
       emailAddress,
       guestCount,
-      reservationAmount,
+      reservationAmount: reservationAmountValue,
       holdUntilAt,
       paymentMethod,
       paymentDueAt: holdUntilAt,
@@ -9647,7 +9678,10 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
           'Departure date: ' + departureDate,
           'Number of guests: ' + String(guestCount),
           'Property: ' + String(listing.property_name || '').trim(),
-          'Listing: ' + String(listing.name || '').trim()
+          'Listing: ' + String(listing.name || '').trim(),
+          '',
+          termsStatement,
+          'Terms and Conditions: ' + termsUrl
         ].join('\n')
       });
 
