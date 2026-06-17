@@ -9078,6 +9078,8 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
         ? 'awaiting_bank_transfer'
         : 'awaiting_online_payment';
 
+    let emailDeliveryWarning = false;
+
     if (paymentMethod === 'Bank Transfer') {
       const bankResult = await pool.query(
         'SELECT bank_account_name, bank_sort_code, bank_account_number, bank_is_business FROM client_accounts WHERE id = $1 LIMIT 1',
@@ -9119,6 +9121,7 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
 
       if (!emailResult.ok) {
         console.warn('Bank transfer email was not sent because email delivery is not configured. Reservation will still be recorded.');
+        emailDeliveryWarning = true;
       }
     }
 
@@ -9149,6 +9152,7 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
     return res.json({
       reservation,
       nextUrl: '/private-reservation-complete.html?mode=' + encodeURIComponent(mode) + '&id=' + encodeURIComponent(String(reservation.id)),
+      emailDeliveryWarning,
       message: paymentMethod === 'No Charge'
         ? 'Private reservation confirmed and added to the listing calendar.'
         : paymentMethod === 'Bank Transfer'
