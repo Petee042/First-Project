@@ -3798,6 +3798,11 @@ async function getListingIdsForSharedResource(resource) {
   return listings.map((listing) => Number(listing.id));
 }
 
+function getSharedResourceReservationListingId(resource) {
+  const listingId = Number(resource && resource.listing_id);
+  return Number.isInteger(listingId) && listingId > 0 ? listingId : null;
+}
+
 function mapReservationActivityRowToEvent(row) {
   const firstName = String(row && row.first_name || '').trim();
   const familyName = String(row && row.family_name || '').trim();
@@ -7725,12 +7730,6 @@ app.post('/api/public/shared-resources/:resourceId/check-availability', async (r
       return res.status(400).json({ error: 'Requested checkin exceeds max days advance booking.' });
     }
 
-    const listingIds = await getListingIdsForSharedResource(resource);
-    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
-    if (!matchingListingId) {
-      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
-    }
-
     const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
     const maxUnits = normaliseSharedResourceMaxUnits(resource.max_units) || 1;
     const requestedSpacesRaw = normaliseSharedResourceMaxUnits(req.body.spacesRequired) || 1;
@@ -7852,11 +7851,7 @@ app.post('/api/public/shared-resources/:resourceId/online-payment/prepare', asyn
       return res.status(400).json({ error: 'Requested checkin exceeds max days advance booking.' });
     }
 
-    const listingIds = await getListingIdsForSharedResource(resource);
-    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
-    if (!matchingListingId) {
-      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
-    }
+    const reservationListingId = getSharedResourceReservationListingId(resource);
 
     const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
     const maxUnits = normaliseSharedResourceMaxUnits(resource.max_units) || 1;
@@ -7881,7 +7876,7 @@ app.post('/api/public/shared-resources/:resourceId/online-payment/prepare', asyn
       userId: resource.user_id,
       sharedResourceId: resourceId,
       reservationIdentifier,
-      listingId: matchingListingId,
+      listingId: reservationListingId,
       reservationCheckinDate: checkinDate,
       reservationCheckoutDate: checkoutDate,
       requestedStartAt: requestedStartAt.toISOString(),
@@ -8041,11 +8036,7 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
       return res.status(400).json({ error: 'Requested checkin exceeds max days advance booking.' });
     }
 
-    const listingIds = await getListingIdsForSharedResource(resource);
-    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
-    if (!matchingListingId) {
-      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
-    }
+    const reservationListingId = getSharedResourceReservationListingId(resource);
 
     const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
     const maxUnits = normaliseSharedResourceMaxUnits(resource.max_units) || 1;
@@ -8069,7 +8060,7 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
       userId: resource.user_id,
       sharedResourceId: resourceId,
       reservationIdentifier: await generateGlobalReservationIdentifier('shared_resource_reservation'),
-      listingId: matchingListingId,
+      listingId: reservationListingId,
       reservationCheckinDate: checkinDate,
       reservationCheckoutDate: checkoutDate,
       requestedStartAt: requestedStartAt.toISOString(),
@@ -8255,11 +8246,7 @@ app.put('/api/shared-resources/:resourceId/reservations/:reservationId', require
       return res.status(404).json({ error: 'Shared resource not found.' });
     }
 
-    const listingIds = await getListingIdsForSharedResource(resource);
-    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
-    if (!matchingListingId) {
-      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
-    }
+    const reservationListingId = getSharedResourceReservationListingId(resource);
 
     const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
     const maxUnits = normaliseSharedResourceMaxUnits(resource.max_units) || 1;
@@ -8288,7 +8275,7 @@ app.put('/api/shared-resources/:resourceId/reservations/:reservationId', require
         reservationCheckoutDate: checkoutDate,
         requestedStartAt: requestedStartAt.toISOString(),
         requestedEndAt: requestedEndAt.toISOString(),
-        listingId: matchingListingId,
+        listingId: reservationListingId,
         spacesRequired: requestedSpaces,
         firstName,
         familyName,
