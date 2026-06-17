@@ -1653,6 +1653,21 @@ function formatDateTimeForMessage(value) {
   }).replace(',', '');
 }
 
+function htmlToPlainText(value) {
+  return sanitizeHtml(String(value || ''), {
+    allowedTags: [],
+    allowedAttributes: {}
+  }).replace(/\s+/g, ' ').trim();
+}
+
+function getSharedReservationPaymentMethodLabel(paymentOption) {
+  const key = String(paymentOption || '').trim();
+  if (key === 'cash_on_site') return 'Cash On Site';
+  if (key === 'bank_transfer') return 'Bank Transfer';
+  if (key === 'online_payment') return 'Online Payment';
+  return 'Free Of Charge';
+}
+
 async function generateGlobalReservationIdentifier(reservationType) {
   const type = String(reservationType || 'reservation').trim().slice(0, 50) || 'reservation';
 
@@ -8102,6 +8117,9 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
   }
 
   try {
+    let emailDeliveryWarning = false;
+    let emailDeliveryReason = '';
+
     const resource = await getSharedResourceByIdPublic(resourceId);
     if (!resource) {
       return res.status(404).json({ error: 'Shared resource not found.' });
@@ -8187,7 +8205,47 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
       status: selectedOption.status
     });
 
-    return res.status(201).json({ reservation });
+    if (paymentOption === 'cash_on_site' || paymentOption === 'bank_transfer') {
+      const subject = String(resource.short_description || '').trim() || 'Facility Reservation';
+      const fullDescriptionText = htmlToPlainText(resource.full_description_html);
+      const guestName = [firstName, familyName].filter(Boolean).join(' ').trim();
+      const arrivalDateTime = formatDateTimeForMessage(requestedStartAt.toISOString());
+      const departureDateTime = formatDateTimeForMessage(requestedEndAt.toISOString());
+      const paymentMethodLabel = getSharedReservationPaymentMethodLabel(paymentOption);
+      const amountText = reservationAmount === null ? '0.00' : reservationAmount.toFixed(2);
+
+      const lines = [
+        fullDescriptionText || 'Reservation details',
+        '',
+        'Guest Name: ' + guestName,
+        'Arrival Date & Time: ' + arrivalDateTime,
+        'Departure Date & Time: ' + departureDateTime,
+        'Number of units: ' + String(requestedSpaces),
+        'Cost: ' + amountText,
+        'Payment Method: ' + paymentMethodLabel
+      ];
+
+      if (String(resource.resource_type || '').trim().toLowerCase() === 'parking' && vehicleRegistration) {
+        lines.push('Registration Number: ' + vehicleRegistration);
+      }
+
+      const emailResult = await sendAppEmail({
+        to: emailAddress,
+        subject,
+        textBody: lines.join('\n')
+      });
+
+      if (!emailResult.ok) {
+        emailDeliveryWarning = true;
+        emailDeliveryReason = String(emailResult.error || '').trim();
+      }
+    }
+
+    return res.status(201).json({
+      reservation,
+      emailDeliveryWarning,
+      emailDeliveryReason
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to create reservation.' });

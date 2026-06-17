@@ -860,7 +860,6 @@ async function loadAdminReservations() {
     if (isCreateMode) {
       document.getElementById('sharedResourceTitle').textContent = 'Create Facility';
       document.getElementById('deleteSharedResourceBtn').classList.add('hidden');
-      document.getElementById('sharedResourceReservationsSection').classList.add('hidden');
       document.getElementById('maxUnits').value = '1';
       document.getElementById('maxDaysAdvanceBooking').value = '365';
       if (draft) {
@@ -869,7 +868,6 @@ async function loadAdminReservations() {
       initialSharedResourceFormState = getSharedResourceFormState();
     } else {
       await loadSharedResource();
-      await loadAdminReservations();
       if (draft) {
         applySharedResourceDraft(draft);
       }
@@ -897,17 +895,20 @@ document.getElementById('sharedResourceListingId').addEventListener('change', ()
   renderListingOptions(listingId);
 });
 
-document.getElementById('adminSharedReservationsBody').addEventListener('click', (event) => {
-  const button = event.target && event.target.closest ? event.target.closest('button[data-edit-reservation-id]') : null;
-  if (!button) {
-    return;
-  }
-  const reservationId = Number(button.getAttribute('data-edit-reservation-id'));
-  if (!Number.isInteger(reservationId) || reservationId <= 0) {
-    return;
-  }
-  window.location.href = 'shared-resource-reservation-edit.html?resourceId=' + encodeURIComponent(resourceId) + '&reservationId=' + encodeURIComponent(reservationId);
-});
+const adminSharedReservationsBody = document.getElementById('adminSharedReservationsBody');
+if (adminSharedReservationsBody) {
+  adminSharedReservationsBody.addEventListener('click', (event) => {
+    const button = event.target && event.target.closest ? event.target.closest('button[data-edit-reservation-id]') : null;
+    if (!button) {
+      return;
+    }
+    const reservationId = Number(button.getAttribute('data-edit-reservation-id'));
+    if (!Number.isInteger(reservationId) || reservationId <= 0) {
+      return;
+    }
+    window.location.href = 'shared-resource-reservation-edit.html?resourceId=' + encodeURIComponent(resourceId) + '&reservationId=' + encodeURIComponent(reservationId);
+  });
+}
 
 document.getElementById('paymentFreeOfCharge').addEventListener('change', () => {
   syncPaymentOptionState();
