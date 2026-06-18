@@ -33,6 +33,7 @@ const cleanerBadgeColorMap = {};
 const sourceColorMap = {};
 const sourcePalette = ['#ff5a5f', '#003580', '#2a9d8f', '#e76f51', '#264653', '#f4a261', '#8a5cf6'];
 const cleanerBadgePalette = ['#0f766e', '#1d4ed8', '#b45309', '#be123c', '#4338ca', '#166534', '#92400e', '#0369a1'];
+const weekdayValueSet = new Set(['0', '1', '2', '3', '4', '5', '6']);
 
 function getListingFormState() {
   return JSON.stringify({
@@ -41,7 +42,8 @@ function getListingFormState() {
     dateBasis: String(document.getElementById('listingDateBasis').value || ''),
     usualCleanerId: String(document.getElementById('listingUsualCleaner').value || ''),
     emptyExport: String(document.getElementById('listingEmptyExport').checked),
-    blockAdvanceDays: String(document.getElementById('listingBlockAdvanceDays').value || '')
+    blockAdvanceDays: String(document.getElementById('listingBlockAdvanceDays').value || ''),
+    noChangeDays: getSelectedNoChangeDays().join(',')
   });
 }
 
@@ -147,6 +149,39 @@ function addUtcDays(date, days) {
   const copy = new Date(date.getTime());
   copy.setUTCDate(copy.getUTCDate() + days);
   return copy;
+}
+
+function normaliseWeekdayList(values) {
+  const numbers = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6);
+  return Array.from(new Set(numbers)).sort((a, b) => a - b);
+}
+
+function hasConsecutiveWeekdays(days) {
+  const daySet = new Set(normaliseWeekdayList(days));
+  return Array.from(daySet).some((day) => daySet.has((day + 1) % 7));
+}
+
+function getSelectedNoChangeDays() {
+  const select = document.getElementById('listingNoChangeDays');
+  if (!select) return [];
+  return Array.from(select.selectedOptions || [])
+    .map((option) => String(option.value || '').trim())
+    .filter((value) => weekdayValueSet.has(value))
+    .map((value) => Number(value))
+    .sort((a, b) => a - b);
+}
+
+function setSelectedNoChangeDays(values) {
+  const select = document.getElementById('listingNoChangeDays');
+  if (!select) return;
+
+  const days = normaliseWeekdayList(values);
+  const daySet = new Set(days.map((value) => String(value)));
+  Array.from(select.options || []).forEach((option) => {
+    option.selected = daySet.has(String(option.value || '').trim());
+  });
 }
 
 function dateKeyLess(a, b) {
@@ -1061,6 +1096,7 @@ async function loadListing() {
   document.getElementById('listingDateBasis').value = listing.date_basis === 'checkin' ? 'checkin' : 'checkout';
   document.getElementById('listingEmptyExport').checked = listing.empty_export === true || listing.empty_export === 'true';
   document.getElementById('listingBlockAdvanceDays').value = (listing.block_advance_days != null && listing.block_advance_days !== '') ? String(listing.block_advance_days) : '';
+  setSelectedNoChangeDays(Array.isArray(listing.no_change_days) ? listing.no_change_days : []);
 
   if (currentAccessRole === 'Manager') {
     if (!managerScopeState.hasAssignments) {
@@ -1397,6 +1433,7 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
   const emptyExport = document.getElementById('listingEmptyExport').checked;
   const blockAdvanceDaysRaw = document.getElementById('listingBlockAdvanceDays').value.trim();
   const blockAdvanceDays = blockAdvanceDaysRaw !== '' && Number.isInteger(Number(blockAdvanceDaysRaw)) && Number(blockAdvanceDaysRaw) > 0 ? Number(blockAdvanceDaysRaw) : null;
+  const noChangeDays = getSelectedNoChangeDays();
   const hasValidListingId = Number.isInteger(listingId) && listingId > 0;
   const shouldCreate = isCreateMode || !hasValidListingId;
 
@@ -1410,12 +1447,17 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     return;
   }
 
+  if (hasConsecutiveWeekdays(noChangeDays)) {
+    setListingMessage('No Changes On days must not be consecutive.', true);
+    return;
+  }
+
   button.disabled = true;
   try {
     const res = await fetch(shouldCreate ? '/api/listings' : ('/api/listings/' + listingId), {
       method: shouldCreate ? 'POST' : 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId, emptyExport, blockAdvanceDays })
+      body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId, emptyExport, blockAdvanceDays, noChangeDays })
     });
     const data = await res.json();
 

@@ -962,6 +962,11 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS no_change_days TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
     ALTER TABLE shared_resources
     ADD COLUMN IF NOT EXISTS client_account_id BIGINT REFERENCES client_accounts(id) ON DELETE SET NULL
   `);
@@ -1922,6 +1927,72 @@ function normaliseTelephone(value) {
 function normaliseDateBasis(value) {
   const basis = String(value || '').trim().toLowerCase();
   return basis === 'checkin' ? 'checkin' : 'checkout';
+}
+
+function parseNoChangeDays(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '').trim()
+      ? String(value || '').split(',')
+      : [];
+  const parsed = [];
+  let hasInvalid = false;
+
+  source.forEach((entry) => {
+    const raw = String(entry || '').trim();
+    if (!raw) {
+      return;
+    }
+    const day = Number(raw);
+    if (!Number.isInteger(day) || day < 0 || day > 6) {
+      hasInvalid = true;
+      return;
+    }
+    parsed.push(day);
+  });
+
+  const days = Array.from(new Set(parsed)).sort((a, b) => a - b);
+  return { days, hasInvalid };
+}
+
+function validateNoChangeDays(days) {
+  const daySet = new Set((Array.isArray(days) ? days : [])
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6));
+  const hasConsecutive = Array.from(daySet).some((day) => daySet.has((day + 1) % 7));
+  if (hasConsecutive) {
+    return 'No change days must not be consecutive.';
+  }
+  return null;
+}
+
+function normaliseNoChangeDaysForStore(value) {
+  const parsed = parseNoChangeDays(value);
+  if (parsed.hasInvalid) {
+    return { error: 'No change days must contain weekdays 0 (Sunday) to 6 (Saturday).' };
+  }
+  const validationError = validateNoChangeDays(parsed.days);
+  if (validationError) {
+    return { error: validationError };
+  }
+  return { text: parsed.days.join(','), days: parsed.days };
+}
+
+function getNoChangeDaysFromListing(listing) {
+  if (!listing) {
+    return [];
+  }
+  const parsed = parseNoChangeDays(listing.no_change_days);
+  return parsed.days;
+}
+
+function mapListingNoChangeDays(listing) {
+  if (!listing) {
+    return listing;
+  }
+  return {
+    ...listing,
+    no_change_days: getNoChangeDaysFromListing(listing)
+  };
 }
 
 function normaliseDateKey(value) {
@@ -5059,7 +5130,7 @@ async function getListingsForUser(userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.no_change_days, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.user_id = $1
@@ -5067,7 +5138,7 @@ async function getListingsForUser(userId) {
     `,
     [userId]
   );
-  return result.rows;
+  return result.rows.map(mapListingNoChangeDays);
 }
 
 async function getListingByIdForUser(listingId, userId) {
@@ -5077,7 +5148,7 @@ async function getListingByIdForUser(listingId, userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.no_change_days, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1 AND l.user_id = $2
@@ -5098,10 +5169,10 @@ async function getListingByIdForUser(listingId, userId) {
     );
     if (backfilled.rows[0]) {
       backfilled.rows[0].property_name = defaultProperty.name;
-      return backfilled.rows[0];
+      return mapListingNoChangeDays(backfilled.rows[0]);
     }
   }
-  return listing;
+  return mapListingNoChangeDays(listing);
 }
 
 async function getListingById(listingId) {
@@ -5109,7 +5180,7 @@ async function getListingById(listingId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.no_change_days, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1
@@ -5118,7 +5189,7 @@ async function getListingById(listingId) {
     [listingId]
   );
 
-  return result.rows[0] || null;
+  return mapListingNoChangeDays(result.rows[0] || null);
 }
 
 function buildIcsAccessToken(listing) {
@@ -5193,7 +5264,7 @@ function isValidIcsAccessToken(listing, token) {
   return timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
-async function createListingForUser(userId, name, propertyId, dateBasis, usualCleanerId) {
+async function createListingForUser(userId, name, propertyId, dateBasis, usualCleanerId, noChangeDays) {
   
 
   try {
@@ -5202,23 +5273,36 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
       return { error: 'Property not found.' };
     }
 
+    const noChangeDaysNormalised = normaliseNoChangeDaysForStore(noChangeDays);
+    if (noChangeDaysNormalised.error) {
+      return { error: noChangeDaysNormalised.error };
+    }
+
     const result = await pool.query(
       `
-        INSERT INTO listings (user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id)
+        INSERT INTO listings (user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, no_change_days)
         VALUES (
           $1,
           (SELECT client_account_id FROM properties WHERE id = $3),
           $2,
           $3,
           $4,
-          $5
+          $5,
+          $6
         )
-        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, created_at
+        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, no_change_days, created_at
       `,
-      [userId, name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId)]
+      [
+        userId,
+        name,
+        property.id,
+        normaliseDateBasis(dateBasis),
+        normaliseCleanerId(usualCleanerId),
+        noChangeDaysNormalised.text
+      ]
     );
     result.rows[0].property_name = property.name;
-    return { listing: result.rows[0] };
+    return { listing: mapListingNoChangeDays(result.rows[0]) };
   } catch (err) {
     if (err && err.code === '23505') {
       return { error: 'A listing with this name already exists.' };
@@ -5227,13 +5311,18 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
   }
 }
 
-async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId, emptyExport, blockAdvanceDays) {
+async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId, emptyExport, blockAdvanceDays, noChangeDays) {
   
 
   try {
     const property = await resolvePropertyForListing(userId, propertyId);
     if (!property) {
       return { error: 'Property not found.' };
+    }
+
+    const noChangeDaysNormalised = normaliseNoChangeDaysForStore(noChangeDays);
+    if (noChangeDaysNormalised.error) {
+      return { error: noChangeDaysNormalised.error };
     }
 
     const result = await pool.query(
@@ -5245,18 +5334,29 @@ async function updateListingForUser(listingId, userId, name, propertyId, dateBas
             date_basis = $3,
             usual_cleaner_id = $4,
             empty_export = $7,
-            block_advance_days = $8
+            block_advance_days = $8,
+            no_change_days = $9
         WHERE id = $5 AND user_id = $6
-        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, empty_export, block_advance_days, created_at
+        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, empty_export, block_advance_days, no_change_days, created_at
       `,
-      [name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId), listingId, userId, emptyExport === true, (blockAdvanceDays !== null && blockAdvanceDays !== undefined && Number.isInteger(Number(blockAdvanceDays)) && Number(blockAdvanceDays) > 0) ? Number(blockAdvanceDays) : null]
+      [
+        name,
+        property.id,
+        normaliseDateBasis(dateBasis),
+        normaliseCleanerId(usualCleanerId),
+        listingId,
+        userId,
+        emptyExport === true,
+        (blockAdvanceDays !== null && blockAdvanceDays !== undefined && Number.isInteger(Number(blockAdvanceDays)) && Number(blockAdvanceDays) > 0) ? Number(blockAdvanceDays) : null,
+        noChangeDaysNormalised.text
+      ]
     );
 
     if (!result.rows[0]) {
       return { error: 'Listing not found.' };
     }
     result.rows[0].property_name = property.name;
-    return { listing: result.rows[0] };
+    return { listing: mapListingNoChangeDays(result.rows[0]) };
   } catch (err) {
     if (err && err.code === '23505') {
       return { error: 'A listing with this name already exists.' };
@@ -8682,8 +8782,13 @@ app.post('/api/listings', requireScopedRole('Manager'), async (req, res) => {
   const propertyId = Number(req.body.propertyId);
   const dateBasis = normaliseDateBasis(req.body.dateBasis);
   const usualCleanerId = req.body.usualCleanerId;
+  const noChangeDays = req.body.noChangeDays;
+  const noChangeValidation = normaliseNoChangeDaysForStore(noChangeDays);
   if (!name) {
     return res.status(400).json({ error: 'Listing name is required.' });
+  }
+  if (noChangeValidation.error) {
+    return res.status(400).json({ error: noChangeValidation.error });
   }
 
   try {
@@ -8699,7 +8804,8 @@ app.post('/api/listings', requireScopedRole('Manager'), async (req, res) => {
       name,
       Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null,
       dateBasis,
-      usualCleanerId
+      usualCleanerId,
+      noChangeValidation.days
     );
     if (error) {
       return res.status(error === 'Property not found.' ? 404 : 409).json({ error });
@@ -8750,12 +8856,17 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
   const blockAdvanceDays = (blockAdvanceDaysRaw !== null && blockAdvanceDaysRaw !== undefined && blockAdvanceDaysRaw !== '')
     ? (Number.isInteger(Number(blockAdvanceDaysRaw)) && Number(blockAdvanceDaysRaw) > 0 ? Number(blockAdvanceDaysRaw) : null)
     : null;
+  const noChangeDays = req.body.noChangeDays;
+  const noChangeValidation = normaliseNoChangeDaysForStore(noChangeDays);
 
   if (!Number.isInteger(listingId) || listingId <= 0) {
     return res.status(400).json({ error: 'Invalid listing id.' });
   }
   if (!name) {
     return res.status(400).json({ error: 'Listing name is required.' });
+  }
+  if (noChangeValidation.error) {
+    return res.status(400).json({ error: noChangeValidation.error });
   }
 
   try {
@@ -8779,7 +8890,8 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
       dateBasis,
       usualCleanerId,
       emptyExport,
-      blockAdvanceDays
+      blockAdvanceDays,
+      noChangeValidation.days
     );
     if (error === 'Listing not found.') {
       return res.status(404).json({ error });
@@ -9239,6 +9351,88 @@ function buildAdvanceBlockEventForListing(listing) {
   };
 }
 
+function addDaysToDateKey(dateKey, days) {
+  const parsed = new Date(String(dateKey || '') + 'T00:00:00Z');
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  parsed.setUTCDate(parsed.getUTCDate() + Number(days || 0));
+  return parsed.toISOString().slice(0, 10);
+}
+
+function getWeekdayFromDateKey(dateKey) {
+  const parsed = new Date(String(dateKey || '') + 'T00:00:00Z');
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.getUTCDay();
+}
+
+function buildNoChangeBoundaryBlockEvents(listing, events) {
+  const noChangeDays = getNoChangeDaysFromListing(listing);
+  if (!noChangeDays.length) {
+    return [];
+  }
+
+  const noChangeDaySet = new Set(noChangeDays);
+  const blockMap = new Map();
+
+  const addBlock = (startKey, endKey, reason) => {
+    if (!startKey || !endKey || endKey <= startKey) {
+      return;
+    }
+    const key = startKey + '|' + endKey;
+    if (blockMap.has(key)) {
+      return;
+    }
+    blockMap.set(key, {
+      isReservation: false,
+      isUnavailableBlock: true,
+      source: 'AutomaticPeople',
+      start: startKey,
+      end: endKey,
+      title: 'Not available',
+      description: reason,
+      location: null,
+      raw: null
+    });
+  };
+
+  (events || []).forEach((event) => {
+    if (!event || event.isReservation === false) {
+      return;
+    }
+
+    const checkinKey = getDateKeyFromEventDateTime(event.start);
+    const checkoutKey = getDateKeyFromEventDateTime(event.end);
+    if (!checkinKey || !checkoutKey || checkoutKey <= checkinKey) {
+      return;
+    }
+
+    const checkinWeekday = getWeekdayFromDateKey(checkinKey);
+    if (checkinWeekday !== null && noChangeDaySet.has(checkinWeekday)) {
+      const nightBeforeCheckin = addDaysToDateKey(checkinKey, -1);
+      addBlock(
+        nightBeforeCheckin,
+        checkinKey,
+        'Blocked by no-change rule: existing check-in on a no-change day.'
+      );
+    }
+
+    const checkoutWeekday = getWeekdayFromDateKey(checkoutKey);
+    if (checkoutWeekday !== null && noChangeDaySet.has(checkoutWeekday)) {
+      const nightOfCheckoutEnd = addDaysToDateKey(checkoutKey, 1);
+      addBlock(
+        checkoutKey,
+        nightOfCheckoutEnd,
+        'Blocked by no-change rule: existing check-out on a no-change day.'
+      );
+    }
+  });
+
+  return Array.from(blockMap.values());
+}
+
 function appendAdvanceBlockEvent(listing, events) {
   const baseEvents = Array.isArray(events) ? events : [];
   const advanceBlockEvent = buildAdvanceBlockEventForListing(listing);
@@ -9253,6 +9447,22 @@ function appendAdvanceBlockEvent(listing, events) {
   });
 }
 
+function appendAvailabilityPolicyBlockEvents(listing, events) {
+  const withNoChangeBlocks = (() => {
+    const blocks = buildNoChangeBoundaryBlockEvents(listing, events);
+    if (!blocks.length) {
+      return Array.isArray(events) ? events : [];
+    }
+    return [...(Array.isArray(events) ? events : []), ...blocks].sort((a, b) => {
+      const aTime = a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
+      const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
+      return aTime - bTime;
+    });
+  })();
+
+  return appendAdvanceBlockEvent(listing, withNoChangeBlocks);
+}
+
 function buildIcsCalendar(listing, events) {
   const now = buildIcsDateString(new Date().toISOString());
   const prodId = '-//AutomaticPeople//Listing ' + listing.id + '//EN';
@@ -9264,25 +9474,6 @@ function buildIcsCalendar(listing, events) {
     'METHOD:PUBLISH',
     'X-WR-CALNAME:' + escapeIcsText(listing.name)
   ];
-
-  const blockAdvanceDays = listing.block_advance_days !== null && listing.block_advance_days !== undefined
-    ? Number(listing.block_advance_days) : null;
-  if (Number.isInteger(blockAdvanceDays) && blockAdvanceDays > 0) {
-    const pad = (n) => String(n).padStart(2, '0');
-    const fmtDate = (d) => String(d.getUTCFullYear()) + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate());
-    const cutoff = new Date();
-    cutoff.setUTCDate(cutoff.getUTCDate() + blockAdvanceDays + 1);
-    const farFuture = new Date();
-    farFuture.setUTCFullYear(farFuture.getUTCFullYear() + 5);
-    lines.push('BEGIN:VEVENT');
-    lines.push('UID:advance-block-' + listing.id + '@automaticpeople');
-    lines.push('DTSTAMP:' + now);
-    lines.push('DTSTART;VALUE=DATE:' + fmtDate(cutoff));
-    lines.push('DTEND;VALUE=DATE:' + fmtDate(farFuture));
-    lines.push('SUMMARY:Not available');
-    lines.push('TRANSP:OPAQUE');
-    lines.push('END:VEVENT');
-  }
 
   events.forEach((event, idx) => {
     const range = buildIcsDateRange(event);
@@ -9388,7 +9579,8 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
       return res.status(404).send('Listing not found.');
     }
 
-    const events = listing.empty_export ? [] : await getIcsEventsForListing(listingId);
+    const baseEvents = listing.empty_export ? [] : await getIcsEventsForListing(listingId);
+    const events = appendAvailabilityPolicyBlockEvents(listing, baseEvents);
 
     const icsContent = buildIcsCalendar(listing, events);
     const safeName = String(listing.name || 'listing').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
@@ -9434,8 +9626,8 @@ app.get('/api/calendar.ics', async (req, res) => {
     const combinedEvents = [];
     for (const listing of listings) {
       const listingEvents = await getIcsEventsForListing(listing.id);
-      const listingEventsWithAdvanceBlock = appendAdvanceBlockEvent(listing, listingEvents);
-      listingEventsWithAdvanceBlock.forEach((event) => {
+      const listingEventsWithPolicyBlocks = appendAvailabilityPolicyBlockEvents(listing, listingEvents);
+      listingEventsWithPolicyBlocks.forEach((event) => {
         combinedEvents.push({
           ...event,
           listingName: listing.name,
@@ -9510,7 +9702,7 @@ app.get('/api/listings/:listingId/events', requireScopedRole('Staff'), async (re
       const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
       return aTime - bTime;
     });
-    const eventsWithAdvanceBlock = appendAdvanceBlockEvent(listing, mergedEvents);
+    const eventsWithAdvanceBlock = appendAvailabilityPolicyBlockEvents(listing, mergedEvents);
 
     const fetchedAt = cached.length
       ? cached.map((c) => c.fetched_at).sort().pop()
@@ -9584,7 +9776,7 @@ app.post('/api/listings/:listingId/events/refresh', requireScopedRole('Manager')
       const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
       return aTime - bTime;
     });
-    const eventsWithAdvanceBlock = appendAdvanceBlockEvent(listing, mergedEvents);
+    const eventsWithAdvanceBlock = appendAvailabilityPolicyBlockEvents(listing, mergedEvents);
 
     const fetchedAt = cached.length
       ? cached.map((c) => c.fetched_at).sort().pop()
@@ -9907,7 +10099,10 @@ app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, 
       return res.status(404).json({ error: 'Listing not found.' });
     }
 
-    const existingEvents = await getReservationEventsForListing(listingId);
+    const existingEvents = appendAvailabilityPolicyBlockEvents(
+      listing,
+      await getReservationEventsForListing(listingId)
+    );
     const hasConflict = existingEvents.some((event) => {
       const eventStart = getDateKeyFromEventDateTime(event && event.start);
       const eventEnd = getDateKeyFromEventDateTime(event && event.end);
