@@ -1849,6 +1849,60 @@ async function buildSchedule(selectedListings, days, startDateUtc) {
   };
 }
 
+function buildScheduleEditSnapshot(rows) {
+  const snapshot = new Map();
+  (rows || []).forEach((row) => {
+    if (!row || !row.reservationKey) {
+      return;
+    }
+    snapshot.set(row.reservationKey, {
+      changeDate: row.changeDate || row.date || '',
+      cleanerId: Number.isInteger(Number(row.cleanerId)) && Number(row.cleanerId) > 0
+        ? Number(row.cleanerId)
+        : null,
+      cleanerName: row.cleanerName || ''
+    });
+  });
+  return snapshot;
+}
+
+function mergeScheduleRowsWithSnapshot(rows, snapshot) {
+  if (!snapshot || !snapshot.size) {
+    return rows || [];
+  }
+
+  (rows || []).forEach((row) => {
+    if (!row || !row.reservationKey) {
+      return;
+    }
+
+    const saved = snapshot.get(row.reservationKey);
+    if (!saved) {
+      return;
+    }
+
+    row.changeDate = saved.changeDate || row.changeDate || row.date;
+    row.cleanerId = Number.isInteger(saved.cleanerId) && saved.cleanerId > 0
+      ? saved.cleanerId
+      : null;
+
+    if (!row.cleanerId) {
+      row.cleanerName = 'Unallocated';
+      return;
+    }
+
+    if (saved.cleanerName) {
+      row.cleanerName = saved.cleanerName;
+      return;
+    }
+
+    const cleaner = (currentCleaners || []).find((item) => Number(item && item.cleaner_user_id ? item.cleaner_user_id : 0) === row.cleanerId);
+    row.cleanerName = cleaner ? getCleanerDisplayName(cleaner) : row.cleanerName;
+  });
+
+  return rows;
+}
+
 function formatDisplayDate(dateKey) {
   if (!dateKey) return '';
   const utcDate = utcDateFromKey(dateKey);
@@ -2738,6 +2792,7 @@ async function updateSchedulePreview() {
   const daysValue = Number(document.getElementById('cleaningDays').value);
   const startDateUtc = getSelectedStartDateUtc();
   const selectedListings = getSelectedCleaningListings();
+  const pendingScheduleEdits = buildScheduleEditSnapshot(currentScheduleRows);
   const requestId = ++schedulePreviewRequestId;
 
   if (!selectedListings.length) {
@@ -2773,7 +2828,7 @@ async function updateSchedulePreview() {
       }
     }
 
-    currentScheduleRows = result.rows || [];
+    currentScheduleRows = mergeScheduleRowsWithSnapshot(result.rows || [], pendingScheduleEdits);
     currentScheduleErrors = result.errors || [];
     renderSchedulePreviewTable(currentScheduleRows, currentScheduleErrors, notifications);
   } catch {
@@ -3977,12 +4032,14 @@ if (_cleaningScheduleForm) _cleaningScheduleForm.addEventListener('submit', asyn
     return;
   }
 
+  const pendingScheduleEdits = buildScheduleEditSnapshot(currentScheduleRows);
+
   button.disabled = true;
   setMessage('Building schedule from latest feeds...', false);
 
   try {
     const result = await buildSchedule(selectedListings, daysValue, startDateUtc);
-    currentScheduleRows = result.rows || [];
+    currentScheduleRows = mergeScheduleRowsWithSnapshot(result.rows || [], pendingScheduleEdits);
     currentScheduleErrors = result.errors || [];
     renderSchedulePreviewTable(currentScheduleRows, currentScheduleErrors, result.notifications || []);
 
