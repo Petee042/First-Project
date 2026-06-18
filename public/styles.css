@@ -584,6 +584,10 @@ textarea:focus {
   margin-top: 0.8rem;
 }
 
+.availability-block-advance-row .availability-info-btn {
+  margin-left: auto;
+}
+
 .no-change-days-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(110px, 1fr));
