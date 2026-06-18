@@ -40,7 +40,8 @@ function getListingFormState() {
     propertyId: String(document.getElementById('listingPropertyId').value || ''),
     dateBasis: String(document.getElementById('listingDateBasis').value || ''),
     usualCleanerId: String(document.getElementById('listingUsualCleaner').value || ''),
-    emptyExport: String(document.getElementById('listingEmptyExport').checked)
+    emptyExport: String(document.getElementById('listingEmptyExport').checked),
+    blockAdvanceDays: String(document.getElementById('listingBlockAdvanceDays').value || '')
   });
 }
 
@@ -656,6 +657,11 @@ function renderReservationCalendar(events) {
   const cleanerBadgesByDate = buildCleaningBadgesByDate(currentCleaningChanges);
   const sources = getCalendarSources(events);
 
+  const advanceDaysRaw = currentListingMeta && currentListingMeta.block_advance_days != null ? Number(currentListingMeta.block_advance_days) : null;
+  const advanceCutoff = (Number.isInteger(advanceDaysRaw) && advanceDaysRaw > 0)
+    ? new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()) + advanceDaysRaw * 86400000)
+    : null;
+
   monthLabel.textContent = formatMonthLabel(monthStart);
   calendar.innerHTML = '';
 
@@ -740,6 +746,12 @@ function renderReservationCalendar(events) {
       cell.className = 'calendar-day';
       if (dayEntry && dayEntry.conflict) {
         cell.classList.add('calendar-day-conflict');
+      }
+      if (advanceCutoff && date >= advanceCutoff) {
+        cell.classList.add('calendar-day-advance-blocked');
+        if (!cell.title) {
+          cell.title = 'Blocked: beyond advance booking limit';
+        }
       }
       cell.title = buildDayTooltip(dayEntry);
 
@@ -1048,6 +1060,7 @@ async function loadListing() {
   document.getElementById('listingPropertyId').value = String(listing.property_id || '');
   document.getElementById('listingDateBasis').value = listing.date_basis === 'checkin' ? 'checkin' : 'checkout';
   document.getElementById('listingEmptyExport').checked = listing.empty_export === true || listing.empty_export === 'true';
+  document.getElementById('listingBlockAdvanceDays').value = (listing.block_advance_days != null && listing.block_advance_days !== '') ? String(listing.block_advance_days) : '';
 
   if (currentAccessRole === 'Manager') {
     if (!managerScopeState.hasAssignments) {
@@ -1382,6 +1395,8 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
   const usualCleanerRaw = document.getElementById('listingUsualCleaner').value;
   const usualCleanerId = usualCleanerRaw ? Number(usualCleanerRaw) : null;
   const emptyExport = document.getElementById('listingEmptyExport').checked;
+  const blockAdvanceDaysRaw = document.getElementById('listingBlockAdvanceDays').value.trim();
+  const blockAdvanceDays = blockAdvanceDaysRaw !== '' && Number.isInteger(Number(blockAdvanceDaysRaw)) && Number(blockAdvanceDaysRaw) > 0 ? Number(blockAdvanceDaysRaw) : null;
   const hasValidListingId = Number.isInteger(listingId) && listingId > 0;
   const shouldCreate = isCreateMode || !hasValidListingId;
 
@@ -1400,7 +1415,7 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     const res = await fetch(shouldCreate ? '/api/listings' : ('/api/listings/' + listingId), {
       method: shouldCreate ? 'POST' : 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId, emptyExport })
+      body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId, emptyExport, blockAdvanceDays })
     });
     const data = await res.json();
 

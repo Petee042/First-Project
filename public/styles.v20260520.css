@@ -1773,6 +1773,16 @@ textarea:focus {
   border-color: #ef8f8f;
 }
 
+.calendar-day-advance-blocked {
+  border-color: #6b7280;
+  background: #f0f0f2;
+  opacity: 0.72;
+}
+
+.calendar-day-advance-blocked .calendar-day-number {
+  color: #6b7280;
+}
+
 @media (max-width: 620px) {
   .calendar-source-row {
     flex-direction: column;
