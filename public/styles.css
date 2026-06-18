@@ -108,7 +108,7 @@ body {
 .site-title {
   font-size: 1.75rem;
   font-weight: 700;
-  color: #4361ee;
+  color: #133070;
   text-align: center;
   margin-bottom: 0;
   letter-spacing: -0.5px;
@@ -151,12 +151,12 @@ body {
 }
 
 .tab.active {
-  color: #4361ee;
-  border-bottom-color: #4361ee;
+  color: #133070;
+  border-bottom-color: #133070;
 }
 
 .tab:focus-visible {
-  outline: 2px solid #4361ee;
+  outline: 2px solid #133070;
   outline-offset: 2px;
 }
 
@@ -223,18 +223,18 @@ select {
 }
 
 input:focus {
-  border-color: #4361ee;
-  box-shadow: 0 0 0 3px rgba(67,97,238,0.15);
+  border-color: #133070;
+  box-shadow: 0 0 0 3px rgba(19,48,112,0.15);
 }
 
 select:focus {
-  border-color: #4361ee;
-  box-shadow: 0 0 0 3px rgba(67,97,238,0.15);
+  border-color: #133070;
+  box-shadow: 0 0 0 3px rgba(19,48,112,0.15);
 }
 
 textarea:focus {
-  border-color: #4361ee;
-  box-shadow: 0 0 0 3px rgba(67,97,238,0.15);
+  border-color: #133070;
+  box-shadow: 0 0 0 3px rgba(19,48,112,0.15);
 }
 
 /* ── Buttons ──────────────────────────────────────────────── */
@@ -250,22 +250,22 @@ textarea:focus {
 }
 
 .btn.primary {
-  background: #4361ee;
+  background: #133070;
   color: #fff;
   width: 100%;
   margin-top: 0.5rem;
 }
 
-.btn.primary:hover { background: #3451d1; }
+.btn.primary:hover { background: #0f2555; }
 .btn.primary:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .btn.secondary {
   background: transparent;
-  color: #4361ee;
-  border: 1.5px solid #4361ee;
+  color: #133070;
+  border: 1.5px solid #133070;
 }
 
-.btn.secondary:hover { background: rgba(67,97,238,0.07); }
+.btn.secondary:hover { background: rgba(19,48,112,0.07); }
 
 .btn.inline-btn {
   display: inline-block;
@@ -358,16 +358,16 @@ textarea:focus {
 }
 
 .dashboard-tab-btn:hover {
-  color: #4361ee;
+  color: #133070;
 }
 
 .dashboard-tab-btn.active {
-  color: #4361ee;
-  border-bottom-color: #4361ee;
+  color: #133070;
+  border-bottom-color: #133070;
 }
 
 .dashboard-tab-btn:focus-visible {
-  outline: 2px solid #4361ee;
+  outline: 2px solid #133070;
   outline-offset: -2px;
 }
 
@@ -387,13 +387,13 @@ textarea:focus {
 }
 
 .dashboard-tab-link:hover {
-  color: #4361ee;
+  color: #133070;
   background: #f4f7ff;
 }
 
 .dashboard-tab-link.active {
-  color: #4361ee;
-  border-bottom-color: #4361ee;
+  color: #133070;
+  border-bottom-color: #133070;
 }
 
 .page-top-nav {
@@ -516,7 +516,7 @@ textarea:focus {
 .coming-soon {
   font-size: 1rem;
   color: #555;
-  border-left: 3px solid #4361ee;
+  border-left: 3px solid #133070;
   padding: 0.75rem 1rem;
   background: #f4f6ff;
   border-radius: 0 6px 6px 0;
@@ -886,6 +886,40 @@ textarea:focus {
   content: '\2709';
 }
 
+/* ── New Icons ────────────────────────────────────────────── */
+.action-logout::before,
+.logout-icon::before {
+  content: '\27A4';
+  font-size: 1.1rem;
+}
+
+.action-next::before,
+.next-icon::before {
+  content: '\25B6';
+  font-size: 0.9rem;
+}
+
+.action-previous::before,
+.previous-icon::before,
+.prev-icon::before {
+  content: '\25C0';
+  font-size: 0.9rem;
+}
+
+.action-bank-transfer::before,
+.bank-transfer-icon::before,
+.bank-icon::before {
+  content: '\1F3E6';
+  font-size: 1rem;
+}
+
+.action-cash::before,
+.cash-payment-icon::before,
+.cash-icon::before {
+  content: '\1F4B5';
+  font-size: 1rem;
+}
+
 .schedule-email-message {
   margin: 0.35rem 0 0;
   font-size: 0.86rem;
@@ -930,8 +964,8 @@ textarea:focus {
 
 .schedule-email-dialog-input:focus {
   outline: none;
-  border-color: #4361ee;
-  box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.1);
+  border-color: #133070;
+  box-shadow: 0 0 0 2px rgba(19, 48, 112, 0.1);
 }
 
 .schedule-email-dialog-actions {
@@ -967,8 +1001,8 @@ textarea:focus {
 .schedule-change-date:focus,
 .schedule-cleaner:focus {
   outline: none;
-  border-color: #4361ee;
-  box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.1);
+  border-color: #133070;
+  box-shadow: 0 0 0 2px rgba(19, 48, 112, 0.1);
 }
 
 .schedule-main-row {
@@ -1078,7 +1112,7 @@ textarea:focus {
   justify-content: center;
   border: 0;
   background: transparent;
-  color: #4361ee;
+  color: #133070;
   text-decoration: none;
   cursor: pointer;
 }
@@ -1091,11 +1125,11 @@ textarea:focus {
 }
 
 .back-arrow-control:hover {
-  color: #3451d1;
+  color: #0f2555;
 }
 
 .back-arrow-control:focus-visible {
-  outline: 2px solid #4361ee;
+  outline: 2px solid #133070;
   outline-offset: 2px;
   border-radius: 999px;
 }
@@ -1141,18 +1175,18 @@ textarea:focus {
 .btn.schedule-action-icon,
 .btn.action-icon {
   background: transparent;
-  color: #4361ee;
-  border: 1.5px solid #4361ee;
+  color: #133070;
+  border: 1.5px solid #133070;
 }
 
 .btn.schedule-action-icon:hover,
 .btn.action-icon:hover {
-  background: rgba(67, 97, 238, 0.07);
+  background: rgba(19, 48, 112, 0.07);
 }
 
 .btn.schedule-action-icon:focus-visible,
 .btn.action-icon:focus-visible {
-  outline: 2px solid #4361ee;
+  outline: 2px solid #133070;
   outline-offset: 2px;
 }
 
@@ -1186,7 +1220,7 @@ textarea:focus {
 }
 
 .floating-action-bar .action-save.btn.primary:hover {
-  background: rgba(67, 97, 238, 0.07);
+  background: rgba(19, 48, 112, 0.07);
 }
 
 .floating-action-bar .btn:disabled {
@@ -1607,8 +1641,8 @@ textarea:focus {
 
 .resource-editor:focus {
   outline: none;
-  border-color: #4361ee;
-  box-shadow: 0 0 0 3px rgba(67,97,238,0.15);
+  border-color: #133070;
+  box-shadow: 0 0 0 3px rgba(19,48,112,0.15);
 }
 
 .resource-payment-row {
@@ -1684,9 +1718,9 @@ textarea:focus {
 }
 
 .resource-payment-tab.is-active {
-  background: #4361ee;
+  background: #133070;
   color: #fff;
-  border-color: #4361ee;
+  border-color: #133070;
 }
 
 .resource-payment-tab.disabled {
