@@ -562,6 +562,28 @@ textarea:focus {
   min-width: 0;
 }
 
+.no-change-days-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(110px, 1fr));
+  gap: 0.35rem 0.75rem;
+  min-width: 250px;
+}
+
+.no-change-days-list label {
+  width: auto;
+  font-size: 0.9rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.no-change-days-list .listing-no-change-day-checkbox {
+  width: auto;
+  flex: none;
+  margin: 0;
+}
+
 .team-role-fieldset {
   margin: 0.5rem 0 0.8rem;
   border: 1px solid #d8dfef;
@@ -1588,6 +1610,12 @@ textarea:focus {
 
   .calendar-source-row label {
     width: auto;
+  }
+
+  .no-change-days-list {
+    grid-template-columns: 1fr;
+    min-width: 0;
+    width: 100%;
   }
 
   .calendar-btn {

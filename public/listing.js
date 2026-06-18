@@ -164,23 +164,50 @@ function hasConsecutiveWeekdays(days) {
 }
 
 function getSelectedNoChangeDays() {
-  const select = document.getElementById('listingNoChangeDays');
-  if (!select) return [];
-  return Array.from(select.selectedOptions || [])
-    .map((option) => String(option.value || '').trim())
+  return Array.from(document.querySelectorAll('.listing-no-change-day-checkbox:checked'))
+    .map((input) => String(input.value || '').trim())
     .filter((value) => weekdayValueSet.has(value))
     .map((value) => Number(value))
     .sort((a, b) => a - b);
 }
 
 function setSelectedNoChangeDays(values) {
-  const select = document.getElementById('listingNoChangeDays');
-  if (!select) return;
-
   const days = normaliseWeekdayList(values);
   const daySet = new Set(days.map((value) => String(value)));
-  Array.from(select.options || []).forEach((option) => {
-    option.selected = daySet.has(String(option.value || '').trim());
+  Array.from(document.querySelectorAll('.listing-no-change-day-checkbox')).forEach((input) => {
+    input.checked = daySet.has(String(input.value || '').trim());
+  });
+}
+
+function bindNoChangeDayCheckboxValidation() {
+  const inputs = Array.from(document.querySelectorAll('.listing-no-change-day-checkbox'));
+  if (!inputs.length) {
+    return;
+  }
+
+  function isChecked(dayValue) {
+    const input = inputs.find((item) => Number(item.value) === dayValue);
+    return Boolean(input && input.checked);
+  }
+
+  inputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      if (!input.checked) {
+        return;
+      }
+
+      const day = Number(input.value);
+      if (!Number.isInteger(day)) {
+        return;
+      }
+
+      const prevDay = (day + 6) % 7;
+      const nextDay = (day + 1) % 7;
+      if (isChecked(prevDay) || isChecked(nextDay)) {
+        input.checked = false;
+        setListingMessage('No Changes On days must not be consecutive.', true);
+      }
+    });
   });
 }
 
@@ -1056,6 +1083,8 @@ function clearFeedEditMode() {
   document.getElementById('saveFeedBtn').setAttribute('aria-label', 'Add Feed');
   document.getElementById('cancelFeedEditBtn').classList.add('hidden');
 }
+
+bindNoChangeDayCheckboxValidation();
 
 function hasValidListingId() {
   return Number.isInteger(listingId) && listingId > 0;
