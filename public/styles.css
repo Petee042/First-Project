@@ -562,11 +562,34 @@ textarea:focus {
   min-width: 0;
 }
 
+.availability-inline-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.availability-inline-label .circular-icon-btn {
+  margin-left: auto;
+}
+
+.availability-info-btn {
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.availability-no-change-label-row {
+  margin-top: 0.8rem;
+}
+
 .no-change-days-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(110px, 1fr));
   gap: 0.35rem 0.75rem;
   min-width: 250px;
+  margin-top: 0.35rem;
 }
 
 .no-change-days-list label {

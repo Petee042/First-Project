@@ -119,45 +119,37 @@
       <section class="listing-form-section" id="listingAvailabilitySection">
         <h3>Manage Availability</h3>
         <div class="calendar-source-row">
-          <label for="listingBlockAdvanceDays" style="width:auto;white-space:nowrap;">Block Reservations more than</label>
-          <button
-            type="button"
-            class="btn circular-icon-btn"
-            title="When set, dates beyond this many days from today will be exported as blocked in the ICS calendar and shown with a dark grey outline on the reservation calendar below."
-            aria-label="Block Reservations help"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="9"></circle>
-              <line x1="12" y1="10" x2="12" y2="16"></line>
-              <circle cx="12" cy="7" r="1"></circle>
-            </svg>
-          </button>
+          <div class="availability-inline-label">
+            <label for="listingBlockAdvanceDays" style="width:auto;white-space:nowrap;">Block Reservations more than</label>
+            <button
+              type="button"
+              class="btn circular-icon-btn availability-info-btn"
+              title="When set, dates beyond this many days from today will be exported as blocked in the ICS calendar and shown with a dark grey outline on the reservation calendar below."
+              aria-label="Block Reservations help"
+            >i</button>
+          </div>
           <input id="listingBlockAdvanceDays" type="number" min="1" max="3650" placeholder="e.g. 365" style="width:5.5rem;flex:none;" />
           <span style="white-space:nowrap;font-size:0.9rem;color:#444;">days in advance</span>
         </div>
-        <div class="calendar-source-row" style="align-items:flex-start;margin-top:0.8rem;">
-          <label style="width:auto;white-space:nowrap;margin-top:0.25rem;">No Changes On</label>
-          <button
-            type="button"
-            class="btn circular-icon-btn"
-            title="Select one or more non-consecutive weekdays. Example: Monday + Wednesday is allowed, Monday + Tuesday is not."
-            aria-label="No Changes On help"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="9"></circle>
-              <line x1="12" y1="10" x2="12" y2="16"></line>
-              <circle cx="12" cy="7" r="1"></circle>
-            </svg>
-          </button>
-          <div id="listingNoChangeDays" class="no-change-days-list" role="group" aria-label="No Changes On weekdays">
-            <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="0" /> Sunday</label>
-            <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="1" /> Monday</label>
-            <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="2" /> Tuesday</label>
-            <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="3" /> Wednesday</label>
-            <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="4" /> Thursday</label>
-            <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="5" /> Friday</label>
-            <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="6" /> Saturday</label>
+        <div class="calendar-source-row availability-no-change-label-row">
+          <div class="availability-inline-label">
+            <label style="width:auto;white-space:nowrap;">No Changes On</label>
+            <button
+              type="button"
+              class="btn circular-icon-btn availability-info-btn"
+              title="Select one or more non-consecutive weekdays. Example: Monday + Wednesday is allowed, Monday + Tuesday is not."
+              aria-label="No Changes On help"
+            >i</button>
           </div>
+        </div>
+        <div id="listingNoChangeDays" class="no-change-days-list" role="group" aria-label="No Changes On weekdays">
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="0" /> Sunday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="1" /> Monday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="2" /> Tuesday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="3" /> Wednesday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="4" /> Thursday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="5" /> Friday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="6" /> Saturday</label>
         </div>
       </section>
 
