@@ -1770,6 +1770,88 @@ textarea:focus {
   color: #5f6675;
 }
 
+.admin-calendar-lab-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(280px, 1fr));
+  gap: 0.9rem;
+}
+
+.admin-calendar-lab-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.admin-lab-row-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #2e3350;
+  margin: 0.45rem 0 0.35rem;
+}
+
+.admin-lab-row {
+  display: grid;
+  grid-template-columns: auto minmax(130px, 1fr);
+  gap: 0.35rem 0.55rem;
+  align-items: center;
+}
+
+.admin-lab-row label {
+  font-size: 0.8rem;
+  color: #4b587a;
+  white-space: nowrap;
+}
+
+.admin-lab-row .btn {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin-top: 0.2rem;
+}
+
+.admin-lab-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.admin-lab-calendar-grid .calendar-weekday {
+  text-align: center;
+}
+
+.admin-lab-calendar-grid .calendar-day {
+  min-height: 58px;
+}
+
+.admin-lab-bar-local {
+  background: #1d4ed8;
+}
+
+.admin-lab-bar-imported {
+  background: #dc2626;
+}
+
+.admin-lab-bar-mixed {
+  background: linear-gradient(90deg, #1d4ed8 0 50%, #dc2626 50% 100%);
+}
+
+.admin-lab-links-row {
+  margin-top: 0.65rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.55rem;
+  font-size: 0.88rem;
+}
+
+.admin-lab-links-row a {
+  color: #133070;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.admin-lab-links-row a:hover {
+  color: #0b1d46;
+}
 .resource-editor-row {
   align-items: flex-start;
 }
@@ -1971,6 +2053,13 @@ textarea:focus {
   }
 }
 
+  .admin-calendar-lab-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-lab-row {
+    grid-template-columns: 1fr;
+  }
 .resource-dialog {
   width: min(760px, calc(100vw - 2rem));
   border: 0;

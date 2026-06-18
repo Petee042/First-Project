@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Calendar ICS Test Lab - AutomaticPeople Admin</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <a class="top-brand-link" href="/Admin/index.html" aria-label="AutomaticPeople admin home">
+      <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
+    </a>
+    <div style="display:flex;gap:0.5rem;align-items:center;">
+      <a class="btn secondary" href="/Admin/index.html">Back</a>
+      <button id="adminLabLogoutBtn" class="btn secondary">Log Out</button>
+    </div>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide admin-card">
+      <h2>Calendar ICS Test Lab</h2>
+      <p id="calendarLabMessage" class="message"></p>
+
+      <div id="calendarLabGrid" class="admin-calendar-lab-grid hidden">
+        <section class="listing-form-section admin-calendar-lab-card" data-calendar-id="A">
+          <h3>Calendar A</h3>
+
+          <p class="admin-lab-row-title">Create Reservation</p>
+          <div class="admin-lab-row">
+            <label for="createStartA">Start date</label>
+            <input id="createStartA" type="date" />
+            <label for="createEndA">End date</label>
+            <input id="createEndA" type="date" />
+            <button type="button" class="btn primary" data-action="create">Create</button>
+          </div>
+
+          <p class="admin-lab-row-title">Delete Reservation</p>
+          <div class="admin-lab-row">
+            <label for="deleteStartA">Start date</label>
+            <input id="deleteStartA" type="date" />
+            <label for="deleteEndA">End date</label>
+            <input id="deleteEndA" type="date" />
+            <button type="button" class="btn secondary" data-action="delete">Delete</button>
+          </div>
+
+          <div class="calendar-month-header" style="margin-top:0.8rem;">
+            <button type="button" class="btn secondary inline-btn" data-action="prev-month">Prev</button>
+            <p class="month-label" data-role="month-label"></p>
+            <button type="button" class="btn secondary inline-btn" data-action="next-month">Next</button>
+          </div>
+
+          <div class="admin-lab-calendar-grid" data-role="calendar-grid"></div>
+
+          <div class="admin-lab-links-row">
+            <a href="#" data-action="export-ics">Export ICS</a>
+            <a href="#" data-action="import-ics">Import ICS</a>
+          </div>
+
+          <p class="hint" data-role="status"></p>
+        </section>
+
+        <section class="listing-form-section admin-calendar-lab-card" data-calendar-id="B">
+          <h3>Calendar B</h3>
+
+          <p class="admin-lab-row-title">Create Reservation</p>
+          <div class="admin-lab-row">
+            <label for="createStartB">Start date</label>
+            <input id="createStartB" type="date" />
+            <label for="createEndB">End date</label>
+            <input id="createEndB" type="date" />
+            <button type="button" class="btn primary" data-action="create">Create</button>
+          </div>
+
+          <p class="admin-lab-row-title">Delete Reservation</p>
+          <div class="admin-lab-row">
+            <label for="deleteStartB">Start date</label>
+            <input id="deleteStartB" type="date" />
+            <label for="deleteEndB">End date</label>
+            <input id="deleteEndB" type="date" />
+            <button type="button" class="btn secondary" data-action="delete">Delete</button>
+          </div>
+
+          <div class="calendar-month-header" style="margin-top:0.8rem;">
+            <button type="button" class="btn secondary inline-btn" data-action="prev-month">Prev</button>
+            <p class="month-label" data-role="month-label"></p>
+            <button type="button" class="btn secondary inline-btn" data-action="next-month">Next</button>
+          </div>
+
+          <div class="admin-lab-calendar-grid" data-role="calendar-grid"></div>
+
+          <div class="admin-lab-links-row">
+            <a href="#" data-action="export-ics">Export ICS</a>
+            <a href="#" data-action="import-ics">Import ICS</a>
+          </div>
+
+          <p class="hint" data-role="status"></p>
+        </section>
+
+        <section class="listing-form-section admin-calendar-lab-card" data-calendar-id="C">
+          <h3>Calendar C</h3>
+
+          <p class="admin-lab-row-title">Create Reservation</p>
+          <div class="admin-lab-row">
+            <label for="createStartC">Start date</label>
+            <input id="createStartC" type="date" />
+            <label for="createEndC">End date</label>
+            <input id="createEndC" type="date" />
+            <button type="button" class="btn primary" data-action="create">Create</button>
+          </div>
+
+          <p class="admin-lab-row-title">Delete Reservation</p>
+          <div class="admin-lab-row">
+            <label for="deleteStartC">Start date</label>
+            <input id="deleteStartC" type="date" />
+            <label for="deleteEndC">End date</label>
+            <input id="deleteEndC" type="date" />
+            <button type="button" class="btn secondary" data-action="delete">Delete</button>
+          </div>
+
+          <div class="calendar-month-header" style="margin-top:0.8rem;">
+            <button type="button" class="btn secondary inline-btn" data-action="prev-month">Prev</button>
+            <p class="month-label" data-role="month-label"></p>
+            <button type="button" class="btn secondary inline-btn" data-action="next-month">Next</button>
+          </div>
+
+          <div class="admin-lab-calendar-grid" data-role="calendar-grid"></div>
+
+          <div class="admin-lab-links-row">
+            <a href="#" data-action="export-ics">Export ICS</a>
+            <a href="#" data-action="import-ics">Import ICS</a>
+          </div>
+
+          <p class="hint" data-role="status"></p>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script src="/Admin/calendar-lab.js"></script>
+</body>
+</html>
