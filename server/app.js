@@ -9434,7 +9434,8 @@ app.get('/api/calendar.ics', async (req, res) => {
     const combinedEvents = [];
     for (const listing of listings) {
       const listingEvents = await getIcsEventsForListing(listing.id);
-      listingEvents.forEach((event) => {
+      const listingEventsWithAdvanceBlock = appendAdvanceBlockEvent(listing, listingEvents);
+      listingEventsWithAdvanceBlock.forEach((event) => {
         combinedEvents.push({
           ...event,
           listingName: listing.name,
