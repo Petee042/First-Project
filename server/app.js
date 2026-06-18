@@ -957,6 +957,11 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS block_advance_days INTEGER
+  `);
+
+  await pool.query(`
     ALTER TABLE shared_resources
     ADD COLUMN IF NOT EXISTS client_account_id BIGINT REFERENCES client_accounts(id) ON DELETE SET NULL
   `);
@@ -5072,7 +5077,7 @@ async function getListingByIdForUser(listingId, userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1 AND l.user_id = $2
@@ -5104,7 +5109,7 @@ async function getListingById(listingId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1
@@ -5222,7 +5227,7 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
   }
 }
 
-async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId, emptyExport) {
+async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId, emptyExport, blockAdvanceDays) {
   
 
   try {
@@ -5239,11 +5244,12 @@ async function updateListingForUser(listingId, userId, name, propertyId, dateBas
             client_account_id = (SELECT client_account_id FROM properties WHERE id = $2),
             date_basis = $3,
             usual_cleaner_id = $4,
-            empty_export = $7
+            empty_export = $7,
+            block_advance_days = $8
         WHERE id = $5 AND user_id = $6
-        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, empty_export, created_at
+        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, empty_export, block_advance_days, created_at
       `,
-      [name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId), listingId, userId, emptyExport === true]
+      [name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId), listingId, userId, emptyExport === true, (blockAdvanceDays !== null && blockAdvanceDays !== undefined && Number.isInteger(Number(blockAdvanceDays)) && Number(blockAdvanceDays) > 0) ? Number(blockAdvanceDays) : null]
     );
 
     if (!result.rows[0]) {
@@ -8740,6 +8746,10 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
   const dateBasis = normaliseDateBasis(req.body.dateBasis);
   const usualCleanerId = req.body.usualCleanerId;
   const emptyExport = req.body.emptyExport === true || req.body.emptyExport === 'true';
+  const blockAdvanceDaysRaw = req.body.blockAdvanceDays;
+  const blockAdvanceDays = (blockAdvanceDaysRaw !== null && blockAdvanceDaysRaw !== undefined && blockAdvanceDaysRaw !== '')
+    ? (Number.isInteger(Number(blockAdvanceDaysRaw)) && Number(blockAdvanceDaysRaw) > 0 ? Number(blockAdvanceDaysRaw) : null)
+    : null;
 
   if (!Number.isInteger(listingId) || listingId <= 0) {
     return res.status(400).json({ error: 'Invalid listing id.' });
@@ -8768,7 +8778,8 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
       Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null,
       dateBasis,
       usualCleanerId,
-      emptyExport
+      emptyExport,
+      blockAdvanceDays
     );
     if (error === 'Listing not found.') {
       return res.status(404).json({ error });
@@ -9207,6 +9218,25 @@ function buildIcsCalendar(listing, events) {
     'METHOD:PUBLISH',
     'X-WR-CALNAME:' + escapeIcsText(listing.name)
   ];
+
+  const blockAdvanceDays = listing.block_advance_days !== null && listing.block_advance_days !== undefined
+    ? Number(listing.block_advance_days) : null;
+  if (Number.isInteger(blockAdvanceDays) && blockAdvanceDays > 0) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const fmtDate = (d) => String(d.getUTCFullYear()) + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate());
+    const cutoff = new Date();
+    cutoff.setUTCDate(cutoff.getUTCDate() + blockAdvanceDays + 1);
+    const farFuture = new Date();
+    farFuture.setUTCFullYear(farFuture.getUTCFullYear() + 5);
+    lines.push('BEGIN:VEVENT');
+    lines.push('UID:advance-block-' + listing.id + '@automaticpeople');
+    lines.push('DTSTAMP:' + now);
+    lines.push('DTSTART;VALUE=DATE:' + fmtDate(cutoff));
+    lines.push('DTEND;VALUE=DATE:' + fmtDate(farFuture));
+    lines.push('SUMMARY:Not available');
+    lines.push('TRANSP:OPAQUE');
+    lines.push('END:VEVENT');
+  }
 
   events.forEach((event, idx) => {
     const range = buildIcsDateRange(event);

@@ -60,7 +60,12 @@
       </section>
 
       <section id="listingFeedsSection" class="calendar-section">
-        <h3>Calendar Feeds</h3>
+        <div class="config-block-header">
+          <h3>Calendar Feeds</h3>
+          <button type="submit" id="saveFeedBtn" form="feedForm" class="btn circular-icon-btn" title="Add Feed" aria-label="Add Feed">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
         <div class="table-wrap">
           <table class="calendar-table" aria-label="Calendar feeds">
             <thead>
@@ -89,7 +94,6 @@
             <input id="feedUrl" type="url" placeholder="https://...ics" required />
           </div>
           <div class="feed-actions">
-            <button type="submit" id="saveFeedBtn" class="btn primary calendar-btn">Add Feed</button>
             <button type="button" id="cancelFeedEditBtn" class="btn secondary hidden">Cancel Edit</button>
           </div>
         </form>
@@ -102,10 +106,24 @@
           <p class="ics-export-label">Listing calendar export (.ics)</p>
           <div class="ics-export-row">
             <input id="icsExportUrl" type="text" class="ics-export-url" readonly />
-            <button type="button" id="copyIcsUrlBtn" class="btn secondary ics-copy-btn">Copy</button>
+            <button type="button" id="copyIcsUrlBtn" class="btn circular-icon-btn" title="Copy ICS URL" aria-label="Copy ICS URL">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+            </button>
           </div>
           <p class="ics-export-help">Use this copied URL for Outlook/Google/Apple subscriptions. Older non-token links may fail to import.</p>
         </div>
+      </section>
+
+      <section class="listing-form-section" id="listingAvailabilitySection">
+        <h3>Manage Availability</h3>
+        <div class="calendar-source-row">
+          <label for="listingBlockAdvanceDays" style="width:auto;white-space:nowrap;">Block Reservations more than</label>
+          <input id="listingBlockAdvanceDays" type="number" min="1" max="3650" placeholder="e.g. 365" style="width:5.5rem;flex:none;" />
+          <span style="white-space:nowrap;font-size:0.9rem;color:#444;">days in advance</span>
+        </div>
+        <p class="help-text" style="margin-top:0.4rem;">When set, dates beyond this many days from today will be exported as blocked in the ICS calendar and shown with a dark grey outline on the reservation calendar below.</p>
       </section>
 
       <section class="listing-form-section" id="listingAssignmentEditor">

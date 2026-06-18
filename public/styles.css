@@ -682,6 +682,11 @@ textarea:focus {
   align-items: center;
   justify-content: space-between;
   gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+
+.config-block-header h3 {
+  margin-bottom: 0;
 }
 
 .config-icon-btn {
@@ -694,6 +699,39 @@ textarea:focus {
   justify-content: center;
   font-size: 1.15rem;
   line-height: 1;
+}
+
+.circular-icon-btn {
+  width: 2rem;
+  height: 2rem;
+  min-width: 2rem;
+  min-height: 2rem;
+  border-radius: 999px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1.5px solid #133070;
+  background: transparent;
+  color: #133070;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.circular-icon-btn svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  display: block;
+}
+
+.circular-icon-btn:hover {
+  background: rgba(19, 48, 112, 0.1);
+}
+
+.circular-icon-btn:focus-visible {
+  outline: 2px solid #133070;
+  outline-offset: 2px;
 }
 
 .ops-section-header {
@@ -969,6 +1007,12 @@ textarea:focus {
 .bank-transfer-icon::before,
 .bank-icon::before {
   content: '\1F3E6';
+  font-size: 1rem;
+}
+
+.action-copy::before,
+.copy-icon::before {
+  content: '\1F5D0';
   font-size: 1rem;
 }
 

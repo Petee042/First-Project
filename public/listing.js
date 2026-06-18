@@ -984,7 +984,8 @@ function renderFeeds(feeds) {
       document.getElementById('feedId').value = String(feed.id);
       document.getElementById('feedLabel').value = feed.label;
       document.getElementById('feedUrl').value = feed.url;
-      document.getElementById('saveFeedBtn').textContent = 'Save Feed';
+      document.getElementById('saveFeedBtn').title = 'Save Feed';
+      document.getElementById('saveFeedBtn').setAttribute('aria-label', 'Save Feed');
       document.getElementById('cancelFeedEditBtn').classList.remove('hidden');
       setListingMessage('Editing feed: ' + feed.label, false);
     });
@@ -1004,7 +1005,8 @@ function clearFeedEditMode() {
   document.getElementById('feedId').value = '';
   document.getElementById('feedLabel').value = '';
   document.getElementById('feedUrl').value = '';
-  document.getElementById('saveFeedBtn').textContent = 'Add Feed';
+  document.getElementById('saveFeedBtn').title = 'Add Feed';
+  document.getElementById('saveFeedBtn').setAttribute('aria-label', 'Add Feed');
   document.getElementById('cancelFeedEditBtn').classList.add('hidden');
 }
 
@@ -1510,9 +1512,10 @@ document.getElementById('copyIcsUrlBtn').addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(url);
     const btn = document.getElementById('copyIcsUrlBtn');
-    const orig = btn.textContent;
-    btn.textContent = 'Copied!';
-    setTimeout(() => { btn.textContent = orig; }, 1800);
+    const orig = btn.title;
+    btn.title = 'Copied!';
+    btn.setAttribute('aria-label', 'Copied!');
+    setTimeout(() => { btn.title = orig; btn.setAttribute('aria-label', orig); }, 1800);
   } catch {
     setListingMessage('Could not copy to clipboard.', true);
   }
