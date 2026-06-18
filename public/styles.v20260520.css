@@ -1047,7 +1047,8 @@ textarea:focus {
 .schedule-actions-row {
   display: flex;
   gap: 0.6rem;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .schedule-actions-panel {
