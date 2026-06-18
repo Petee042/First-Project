@@ -1792,22 +1792,12 @@ textarea:focus {
 .admin-lab-row {
   display: grid;
   grid-template-columns: auto minmax(130px, 1fr);
-  gap: 0.35rem 0.55rem;
+  justify-content: flex-end;
   align-items: center;
 }
 
 .admin-lab-row label {
   font-size: 0.8rem;
-  color: #4b587a;
-  white-space: nowrap;
-}
-
-.admin-lab-row .btn {
-  grid-column: 1 / -1;
-  width: 100%;
-  margin-top: 0.2rem;
-}
-
 .admin-lab-calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));

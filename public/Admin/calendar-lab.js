@@ -101,7 +101,7 @@ function buildIcs(state) {
 }
 
 function updateExportLink(state) {
-  if (!state || !state.exportLink) return;
+  if (!state || !state.exportUrlInput) return;
   if (state.exportUrl) {
     URL.revokeObjectURL(state.exportUrl);
     state.exportUrl = null;
@@ -111,8 +111,7 @@ function updateExportLink(state) {
   const blob = new Blob([icsText], { type: 'text/calendar;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   state.exportUrl = url;
-  state.exportLink.href = url;
-  state.exportLink.download = 'calendar-' + state.id.toLowerCase() + '.ics';
+  state.exportUrlInput.value = url;
 }
 
 function parseIcsEvents(icsText) {
@@ -278,8 +277,8 @@ function attachCalendarHandlers(state) {
   const deleteBtn = state.rootEl.querySelector('[data-action="delete"]');
   const prevBtn = state.rootEl.querySelector('[data-action="prev-month"]');
   const nextBtn = state.rootEl.querySelector('[data-action="next-month"]');
-  const importLink = state.rootEl.querySelector('[data-action="import-ics"]');
   const syncBtn = state.rootEl.querySelector('[data-action="sync-ics"]');
+  const copyExportBtn = state.rootEl.querySelector('[data-action="copy-export-url"]');
 
   createBtn.addEventListener('click', () => {
     const start = String(state.createStartEl.value || '').trim();
@@ -320,37 +319,38 @@ function attachCalendarHandlers(state) {
     renderCalendar(state);
   });
 
-  importLink.addEventListener('click', async (event) => {
-    event.preventDefault();
-    const url = window.prompt('Paste ICS URL to import into Calendar ' + state.id + ':', state.importUrl || '');
+  copyExportBtn.addEventListener('click', async () => {
+    const value = String(state.exportUrlInput && state.exportUrlInput.value || '').trim();
+    if (!value) {
+      setCalendarStatus(state, 'No export URL available to copy yet.', true);
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(value);
+      setCalendarStatus(state, 'Export URL copied.', false);
+    } catch {
+      state.exportUrlInput.focus();
+      state.exportUrlInput.select();
+      const copied = document.execCommand('copy');
+      setCalendarStatus(state, copied ? 'Export URL copied.' : 'Unable to copy automatically. Select and copy the URL manually.', !copied);
+    }
+  });
+
+  state.importUrlInput.addEventListener('change', () => {
+    state.importUrl = String(state.importUrlInput.value || '').trim();
+  });
+
+  syncBtn.addEventListener('click', async () => {
+    let url = String(state.importUrlInput && state.importUrlInput.value || state.importUrl || '').trim();
     if (!url) {
+      setCalendarStatus(state, 'Paste an Import ICS URL first, then click Sync.', true);
       return;
     }
 
     try {
       state.importUrl = url;
-      const importedCount = await importFromUrl(state, url);
-      setCalendarStatus(state, 'Imported ' + importedCount + ' reservation(s). Imported reservations are shown in red.', false);
-    } catch (err) {
-      setCalendarStatus(state, err.message || 'Failed to import ICS.', true);
-    }
-  });
-
-  syncBtn.addEventListener('click', async () => {
-    let url = String(state.importUrl || '').trim();
-    if (!url) {
-      const prompted = window.prompt('Paste ICS URL to sync into Calendar ' + state.id + ':', '');
-      if (!prompted) {
-        return;
-      }
-      url = String(prompted).trim();
-      if (!url) {
-        return;
-      }
-      state.importUrl = url;
-    }
-
-    try {
+      state.importUrlInput.value = url;
       const importedCount = await importFromUrl(state, url);
       setCalendarStatus(state, 'Sync complete: ' + importedCount + ' imported reservation(s) refreshed.', false);
     } catch (err) {
@@ -371,7 +371,8 @@ function registerCalendar(rootEl) {
     gridEl: rootEl.querySelector('[data-role="calendar-grid"]'),
     monthLabelEl: rootEl.querySelector('[data-role="month-label"]'),
     statusEl: rootEl.querySelector('[data-role="status"]'),
-    exportLink: rootEl.querySelector('[data-action="export-ics"]'),
+    exportUrlInput: rootEl.querySelector('[data-role="export-url"]'),
+    importUrlInput: rootEl.querySelector('[data-role="import-url"]'),
     createStartEl: rootEl.querySelector('#createStart' + id),
     createEndEl: rootEl.querySelector('#createEnd' + id),
     deleteStartEl: rootEl.querySelector('#deleteStart' + id),
