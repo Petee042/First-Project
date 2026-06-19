@@ -102,15 +102,8 @@ function buildIcs(state) {
 
 function updateExportLink(state) {
   if (!state || !state.exportUrlInput) return;
-  if (state.exportUrl) {
-    URL.revokeObjectURL(state.exportUrl);
-    state.exportUrl = null;
-  }
-
   const icsText = buildIcs(state);
-  const blob = new Blob([icsText], { type: 'text/calendar;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  state.exportUrl = url;
+  const url = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(icsText);
   state.exportUrlInput.value = url;
 }
 
@@ -344,7 +337,10 @@ function attachCalendarHandlers(state) {
   syncBtn.addEventListener('click', async () => {
     let url = String(state.importUrlInput && state.importUrlInput.value || state.importUrl || '').trim();
     if (!url) {
-      setCalendarStatus(state, 'Paste an Import ICS URL first, then click Sync.', true);
+      state.importUrl = '';
+      state.events = [];
+      applyStateUpdate(state);
+      setCalendarStatus(state, 'Import URL is blank. Calendar cleared.', false);
       return;
     }
 
@@ -377,7 +373,6 @@ function registerCalendar(rootEl) {
     createEndEl: rootEl.querySelector('#createEnd' + id),
     deleteStartEl: rootEl.querySelector('#deleteStart' + id),
     deleteEndEl: rootEl.querySelector('#deleteEnd' + id),
-    exportUrl: null,
     importUrl: ''
   };
 
@@ -403,15 +398,6 @@ async function init() {
     setPageMessage('Failed to initialize Calendar ICS Test Lab.', true);
   }
 }
-
-window.addEventListener('beforeunload', () => {
-  Object.values(calendarStates).forEach((state) => {
-    if (state.exportUrl) {
-      URL.revokeObjectURL(state.exportUrl);
-      state.exportUrl = null;
-    }
-  });
-});
 
 document.getElementById('adminLabLogoutBtn').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });

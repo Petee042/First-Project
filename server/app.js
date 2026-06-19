@@ -5784,6 +5784,27 @@ async function updateFeedForListing(feedId, listingId, userId, label, url) {
   return { feed: result.rows[0] };
 }
 
+async function deleteFeedForListing(feedId, listingId, userId) {
+  const listingResult = await pool.query(
+    'SELECT id FROM listings WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [listingId, userId]
+  );
+  if (!listingResult.rows[0]) {
+    return { error: 'Listing not found.' };
+  }
+
+  const result = await pool.query(
+    'DELETE FROM calendar_feeds WHERE id = $1 AND listing_id = $2 RETURNING id',
+    [feedId, listingId]
+  );
+
+  if (!result.rows[0]) {
+    return { error: 'Feed not found.' };
+  }
+
+  return { deletedFeedId: Number(result.rows[0].id) };
+}
+
 async function getFeedSourcesForUser(userId) {
   
 
@@ -9178,6 +9199,36 @@ app.put('/api/listings/:listingId/feeds/:feedId', requireScopedRole('Manager'), 
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to update feed.' });
+  }
+});
+
+// DELETE /api/listings/:listingId/feeds/:feedId — delete a feed
+app.delete('/api/listings/:listingId/feeds/:feedId', requireScopedRole('Manager'), async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  const feedId = Number(req.params.feedId);
+
+  if (!Number.isInteger(listingId) || listingId <= 0 || !Number.isInteger(feedId) || feedId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing/feed id.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const { deletedFeedId, error } = await deleteFeedForListing(feedId, listingId, req.accessContext.effectiveOwnerUserId);
+    if (error === 'Listing not found.') {
+      return res.status(404).json({ error });
+    }
+    if (error === 'Feed not found.') {
+      return res.status(404).json({ error });
+    }
+
+    return res.json({ message: 'Feed deleted.', deletedFeedId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete feed.' });
   }
 });
 
