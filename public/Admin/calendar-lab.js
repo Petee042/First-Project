@@ -475,7 +475,21 @@ function replaceImportedEvents(state, importedEvents) {
 }
 
 async function importFromUrl(state, url) {
-  const response = await fetch(url, { cache: 'no-store' });
+  let requestUrl = String(url || '').trim();
+
+  try {
+    const parsed = new URL(requestUrl, window.location.origin);
+    const isSameOrigin = parsed.origin === window.location.origin;
+    const isListingExport = /^\/api\/listings\/\d+\/calendar\.ics$/i.test(parsed.pathname);
+    if (isSameOrigin && isListingExport && !parsed.searchParams.has('source') && !parsed.searchParams.has('feedSource')) {
+      parsed.searchParams.set('source', 'Calendar ' + String(state && state.id || ''));
+      requestUrl = parsed.toString();
+    }
+  } catch {
+    // Keep original URL if parsing fails.
+  }
+
+  const response = await fetch(requestUrl, { cache: 'no-store' });
   if (!response.ok) {
     throw new Error('Unable to fetch ICS URL (HTTP ' + response.status + ').');
   }

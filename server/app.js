@@ -6103,7 +6103,8 @@ async function refreshEventsForListing(listingId) {
             isReservation,
             isUnavailableBlock,
             eventType: isReservation ? 'Reservation' : 'Block',
-            eventOrigin: String(metadata.origin || '').trim() || 'Remote',
+            // This event is fetched from an external feed for this listing, so origin is always remote here.
+            eventOrigin: 'Remote',
             source: String(metadata.source || '').trim() || feed.label,
             start: event.start,
             end: event.end,
