@@ -172,13 +172,22 @@ async function publishCalendarExport(state, icsText) {
   }
 
   try {
-    const res = await fetch('/api/admin/calendar-lab/publish', {
+    let res = await fetch('/api/calendar-lab/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key, icsText })
     });
+
+    if (!res.ok && (res.status === 404 || res.status === 405)) {
+      res = await fetch('/api/admin/calendar-lab/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key, icsText })
+      });
+    }
+
     if (!res.ok) {
-      setCalendarStatus(state, 'Unable to publish latest ICS snapshot.', true);
+      setCalendarStatus(state, 'Unable to publish latest ICS snapshot (HTTP ' + res.status + ').', true);
     }
   } catch {
     setCalendarStatus(state, 'Unable to publish latest ICS snapshot.', true);

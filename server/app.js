@@ -6715,8 +6715,7 @@ app.get('/api/admin/me', (req, res) => {
   return res.status(401).json({ error: 'Admin unauthorised' });
 });
 
-// POST /api/admin/calendar-lab/publish — publish latest ICS snapshot for stable export URL
-app.post('/api/admin/calendar-lab/publish', requireAdminAuth, (req, res) => {
+function handleCalendarLabPublish(req, res) {
   const key = String(req.body && req.body.key || '').trim();
   const icsText = String(req.body && req.body.icsText || '');
 
@@ -6733,7 +6732,13 @@ app.post('/api/admin/calendar-lab/publish', requireAdminAuth, (req, res) => {
   });
 
   return res.json({ message: 'Published.', key });
-});
+}
+
+// POST /api/admin/calendar-lab/publish — publish latest ICS snapshot for stable export URL
+app.post('/api/admin/calendar-lab/publish', requireAdminAuth, handleCalendarLabPublish);
+
+// POST /api/calendar-lab/publish — key-based publish endpoint used by admin test lab UI
+app.post('/api/calendar-lab/publish', handleCalendarLabPublish);
 
 // GET /api/calendar-lab/export.ics — public stable ICS export for calendar lab
 app.get('/api/calendar-lab/export.ics', (req, res) => {
