@@ -364,6 +364,7 @@ async function importFromUrl(state, url) {
 function attachCalendarHandlers(state) {
   const createBtn = state.rootEl.querySelector('[data-action="create"]');
   const deleteBtn = state.rootEl.querySelector('[data-action="delete"]');
+  const deleteAllBtn = state.rootEl.querySelector('[data-action="delete-all-events"]');
   const prevBtn = state.rootEl.querySelector('[data-action="prev-month"]');
   const nextBtn = state.rootEl.querySelector('[data-action="next-month"]');
   const syncBtn = state.rootEl.querySelector('[data-action="sync-ics"]');
@@ -397,6 +398,15 @@ function attachCalendarHandlers(state) {
     const removed = before - state.events.length;
     setCalendarStatus(state, removed > 0 ? 'Delete applied: ' + removed + ' reservation segment(s) removed/trimmed.' : 'No reservation dates matched the delete period.', false);
   });
+
+  if (deleteAllBtn) {
+    deleteAllBtn.addEventListener('click', () => {
+      const hadEvents = state.events.length > 0;
+      state.events = [];
+      applyStateUpdate(state);
+      setCalendarStatus(state, hadEvents ? 'All calendar events deleted.' : 'Calendar already has no events.', false);
+    });
+  }
 
   prevBtn.addEventListener('click', () => {
     state.viewDate = new Date(Date.UTC(state.viewDate.getUTCFullYear(), state.viewDate.getUTCMonth() - 1, 1));
