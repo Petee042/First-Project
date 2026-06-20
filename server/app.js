@@ -9584,6 +9584,46 @@ function appendAvailabilityPolicyBlockEvents(listing, events) {
   return appendAdvanceBlockEvent(listing, withNoChangeBlocks);
 }
 
+function normaliseCalendarSourceName(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function detectCalendarRequestSource(req) {
+  const explicitSource = String(req.query.source || req.query.feedSource || '').trim();
+  if (explicitSource) {
+    return explicitSource;
+  }
+
+  const userAgent = String(req.get('user-agent') || '').toLowerCase();
+  const referer = String(req.get('referer') || '').toLowerCase();
+  const host = String(req.hostname || '').toLowerCase();
+
+  const hints = [userAgent, referer, host].join(' ');
+  if (hints.includes('airbnb')) return 'Airbnb';
+  if (hints.includes('booking')) return 'Booking.com';
+  if (hints.includes('vrbo')) return 'VRBO';
+
+  return '';
+}
+
+function excludeEventsFromRequestSource(events, requestSource) {
+  const sourceKey = normaliseCalendarSourceName(requestSource);
+  if (!sourceKey) {
+    return Array.isArray(events) ? events : [];
+  }
+
+  return (Array.isArray(events) ? events : []).filter((event) => {
+    if (!event) return false;
+
+    const eventSourceKey = normaliseCalendarSourceName(event.source);
+    if (!eventSourceKey) {
+      return true;
+    }
+
+    return eventSourceKey !== sourceKey;
+  });
+}
+
 function buildIcsCalendar(listing, events) {
   const now = buildIcsDateString(new Date().toISOString());
   const prodId = '-//AutomaticPeople//Listing ' + listing.id + '//EN';
@@ -9700,8 +9740,10 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
       return res.status(404).send('Listing not found.');
     }
 
+    const requestSource = detectCalendarRequestSource(req);
     const baseEvents = listing.empty_export ? [] : await getIcsEventsForListing(listingId);
-    const events = appendAvailabilityPolicyBlockEvents(listing, baseEvents);
+    const sourceFilteredEvents = excludeEventsFromRequestSource(baseEvents, requestSource);
+    const events = appendAvailabilityPolicyBlockEvents(listing, sourceFilteredEvents);
 
     const icsContent = buildIcsCalendar(listing, events);
     const safeName = String(listing.name || 'listing').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
@@ -9709,6 +9751,9 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename="' + safeName + '.ics"');
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.setHeader('X-Calendar-Event-Count', String(events.length));
+    if (requestSource) {
+      res.setHeader('X-Calendar-Excluded-Source', String(requestSource));
+    }
     return res.send(icsContent);
   } catch (err) {
     console.error(err);
