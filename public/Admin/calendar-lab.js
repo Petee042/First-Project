@@ -207,13 +207,26 @@ function parseIcsEvents(icsText) {
   const blocks = text.split(/BEGIN:VEVENT/i).slice(1);
   const events = [];
 
+  function isUnavailableBlockSummary(summaryText) {
+    const summary = String(summaryText || '').trim().toLowerCase();
+    if (!summary) return false;
+    if (summary === 'not available') return true;
+    if (summary.includes('blocked by')) return true;
+    return false;
+  }
+
   blocks.forEach((block) => {
     const endSplit = block.split(/END:VEVENT/i);
     const body = endSplit[0] || '';
     const dtStartLine = body.match(/\nDTSTART[^:]*:([^\r\n]+)/i);
     const dtEndLine = body.match(/\nDTEND[^:]*:([^\r\n]+)/i);
+    const summaryLine = body.match(/\nSUMMARY:([^\r\n]+)/i);
     const startKey = dateKeyFromIcs(dtStartLine && dtStartLine[1]);
     let endKey = dateKeyFromIcs(dtEndLine && dtEndLine[1]);
+
+    if (isUnavailableBlockSummary(summaryLine && summaryLine[1])) {
+      return;
+    }
 
     if (!startKey) return;
     if (!endKey) {
