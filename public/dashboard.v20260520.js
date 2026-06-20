@@ -2398,9 +2398,16 @@ function buildBarTooltip(events) {
   }
 
   return events.map((event) => {
+    const metadata = parseApMetadataFromDescription(event && event.description);
+    const eventType = deriveOpsEventType(event, metadata);
+    const eventSource = deriveOpsEventSource(event, metadata, event && event.listingName);
+    const eventOrigin = deriveOpsEventOrigin(event, metadata);
     const checkin = formatDateKeyForTooltip(toDateKey(event.start));
     const checkout = formatDateKeyForTooltip(toDateKey(event.end));
-    return 'Summary: ' + (event.title || (event.raw && event.raw.SUMMARY) || '(untitled)')
+    return 'Type: ' + eventType
+      + '\nSource: ' + eventSource
+      + '\nOrigin: ' + eventOrigin
+      + '\nSummary: ' + (event.title || (event.raw && event.raw.SUMMARY) || '(untitled)')
       + '\nCheck-in: ' + checkin
       + '\nCheck-out: ' + checkout;
   }).join('\n\n');
@@ -2417,6 +2424,60 @@ function formatDateKeyForTooltip(key) {
 
 function getOpsEventSummary(event) {
   return event.title || (event.raw && event.raw.SUMMARY) || '(untitled)';
+}
+
+function parseApMetadataFromDescription(descriptionText) {
+  const metadata = {
+    type: '',
+    source: '',
+    origin: '',
+    scope: ''
+  };
+
+  String(descriptionText || '')
+    .split(/\n|\\n/)
+    .forEach((line) => {
+      const text = String(line || '').trim();
+      if (!text) return;
+
+      const idx = text.indexOf(':');
+      if (idx <= 0) return;
+      const key = text.slice(0, idx).trim().toUpperCase();
+      const value = text.slice(idx + 1).trim();
+      if (!value) return;
+
+      if (key === 'AP-TYPE') metadata.type = value;
+      if (key === 'AP-SOURCE') metadata.source = value;
+      if (key === 'AP-ORIGIN') metadata.origin = value;
+      if (key === 'AP-SCOPE') metadata.scope = value;
+    });
+
+  return metadata;
+}
+
+function deriveOpsEventType(event, metadata) {
+  const explicitType = String(metadata && metadata.type || event && event.eventType || '').trim().toLowerCase();
+  if (explicitType === 'block') return 'Block';
+  if (explicitType === 'reservation') return 'Reservation';
+  if (event && (event.isReservation === false || event.isUnavailableBlock === true)) return 'Block';
+  return 'Reservation';
+}
+
+function deriveOpsEventSource(event, metadata, listingName) {
+  const explicit = String(metadata && metadata.source || event && event.source || '').trim();
+  if (explicit) return explicit;
+  return String(listingName || getListingDisplayNameFromEvent(event) || 'Unknown source');
+}
+
+function deriveOpsEventOrigin(event, metadata) {
+  const explicit = String(metadata && metadata.origin || event && event.eventOrigin || '').trim();
+  if (explicit) return explicit;
+
+  const sourceKey = opsCalendarSourceKey(event && event.source || '');
+  if (sourceKey === 'direct booking' || sourceKey === 'automaticpeople' || Number(event && event.reservationActivityId || 0) > 0) {
+    return 'Local';
+  }
+  return 'Remote';
 }
 
 function isOpsAirbnbNotAvailableEvent(event, sourceLabel) {

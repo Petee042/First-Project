@@ -4003,6 +4003,8 @@ function mapReservationActivityRowToEvent(row) {
   return {
     isReservation: true,
     isUnavailableBlock: false,
+    eventType: 'Reservation',
+    eventOrigin: 'Local',
     source: 'Direct Booking',
     start: String(row && row.reservation_checkin_date || ''),
     end: String(row && row.reservation_checkout_date || ''),
@@ -5915,6 +5917,50 @@ function parseIcsDate(rawValue) {
   return value;
 }
 
+function decodeIcsTextValue(value) {
+  return String(value || '')
+    .replace(/\\n/gi, '\n')
+    .replace(/\\,/g, ',')
+    .replace(/\\;/g, ';')
+    .replace(/\\\\/g, '\\');
+}
+
+function parseIcsMetadataFromDescription(descriptionText) {
+  const metadata = {
+    type: '',
+    source: '',
+    origin: '',
+    scope: ''
+  };
+
+  const lines = String(descriptionText || '').split(/\n|\\n/);
+  lines.forEach((line) => {
+    const text = String(line || '').trim();
+    if (!text) return;
+
+    const separatorIdx = text.indexOf(':');
+    if (separatorIdx <= 0) return;
+    const key = text.slice(0, separatorIdx).trim().toUpperCase();
+    const value = text.slice(separatorIdx + 1).trim();
+    if (!value) return;
+
+    if (key === 'AP-TYPE') metadata.type = value;
+    if (key === 'AP-SOURCE') metadata.source = value;
+    if (key === 'AP-ORIGIN') metadata.origin = value;
+    if (key === 'AP-SCOPE') metadata.scope = value;
+  });
+
+  return metadata;
+}
+
+function stripIcsMetadataFromDescription(descriptionText) {
+  return String(descriptionText || '')
+    .split(/\n|\\n/)
+    .map((line) => String(line || '').trim())
+    .filter((line) => line && !/^AP-(TYPE|SOURCE|ORIGIN|SCOPE)\s*:/i.test(line))
+    .join('\n');
+}
+
 function parseIcsEvents(icsText) {
   const lines = unfoldIcsLines(icsText);
   const events = [];
@@ -5958,11 +6004,11 @@ function parseIcsEvents(icsText) {
     } else if (line.startsWith('DTEND')) {
       current.end = line;
     } else if (line.startsWith('SUMMARY:')) {
-      current.title = line.slice('SUMMARY:'.length).trim();
+      current.title = decodeIcsTextValue(line.slice('SUMMARY:'.length).trim());
     } else if (line.startsWith('DESCRIPTION:')) {
-      current.description = line.slice('DESCRIPTION:'.length).trim();
+      current.description = decodeIcsTextValue(line.slice('DESCRIPTION:'.length).trim());
     } else if (line.startsWith('LOCATION:')) {
-      current.location = line.slice('LOCATION:'.length).trim();
+      current.location = decodeIcsTextValue(line.slice('LOCATION:'.length).trim());
     }
   }
 
@@ -6044,17 +6090,29 @@ async function refreshEventsForListing(listingId) {
       if (fetched.error) {
         await storeFeedCache(listingId, feed.id, feed.label, [], fetched.error);
       } else {
-        const events = fetched.events.map((event) => ({
-          isReservation: isAirbnbSource(feed.label) ? isAirbnbReservedSummary(event.title) : true,
-          isUnavailableBlock: isAirbnbSource(feed.label) ? isAirbnbNotAvailableSummary(event.title) : false,
-          source: feed.label,
-          start: event.start,
-          end: event.end,
-          title: event.title,
-          description: event.description,
-          location: event.location,
-          raw: event.raw
-        }));
+        const events = fetched.events.map((event) => {
+          const metadata = parseIcsMetadataFromDescription(event.description);
+          const metadataType = String(metadata.type || '').trim().toLowerCase();
+          const hasTypeMetadata = metadataType === 'reservation' || metadataType === 'block';
+          const fallbackIsReservation = isAirbnbSource(feed.label) ? isAirbnbReservedSummary(event.title) : true;
+          const fallbackIsUnavailable = isAirbnbSource(feed.label) ? isAirbnbNotAvailableSummary(event.title) : false;
+          const isUnavailableBlock = hasTypeMetadata ? (metadataType === 'block') : fallbackIsUnavailable;
+          const isReservation = hasTypeMetadata ? (metadataType !== 'block') : fallbackIsReservation;
+
+          return {
+            isReservation,
+            isUnavailableBlock,
+            eventType: isReservation ? 'Reservation' : 'Block',
+            eventOrigin: String(metadata.origin || '').trim() || 'Remote',
+            source: String(metadata.source || '').trim() || feed.label,
+            start: event.start,
+            end: event.end,
+            title: event.title,
+            description: stripIcsMetadataFromDescription(event.description),
+            location: event.location,
+            raw: event.raw
+          };
+        });
         await storeFeedCache(listingId, feed.id, feed.label, events, null);
       }
     })
@@ -9423,6 +9481,7 @@ function buildIcsDateRange(event) {
 }
 
 function buildIcsEventSummary(listing, event) {
+  const isBlockEvent = Boolean(event && (event.isReservation === false || event.isUnavailableBlock === true || String(event.eventType || '').trim().toLowerCase() === 'block'));
   const listingName = String(
     (event && event.listingName)
       || (listing && listing.name)
@@ -9446,10 +9505,49 @@ function buildIcsEventSummary(listing, event) {
 
   const parts = [sourceLabel, propertyName, listingName].filter(Boolean);
   if (parts.length) {
-    return parts.join(' - ');
+    return isBlockEvent ? ('Block - ' + parts.join(' - ')) : parts.join(' - ');
   }
 
+  return isBlockEvent ? 'Block' : 'Reservation';
+}
+
+function buildIcsEventTypeLabel(event) {
+  if (event && (event.isReservation === false || event.isUnavailableBlock === true)) {
+    return 'Block';
+  }
+  const explicit = String(event && event.eventType || '').trim().toLowerCase();
+  if (explicit === 'block') {
+    return 'Block';
+  }
   return 'Reservation';
+}
+
+function inferEventOriginForIcs(event) {
+  const explicit = String(event && event.eventOrigin || '').trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const source = String(event && event.source || '').trim().toLowerCase();
+  if (source === 'direct booking' || source === 'automaticpeople') {
+    return 'Local';
+  }
+  if (Number(event && event.reservationActivityId || 0) > 0) {
+    return 'Local';
+  }
+  return 'Remote';
+}
+
+function buildIcsMetadataDescription(listing, event) {
+  const type = buildIcsEventTypeLabel(event);
+  const source = String(event && event.source || listing && listing.name || 'Unknown source').trim() || 'Unknown source';
+  const origin = inferEventOriginForIcs(event);
+  return [
+    'AP-TYPE: ' + type,
+    'AP-SOURCE: ' + source,
+    'AP-ORIGIN: ' + origin,
+    'AP-SCOPE: Listing'
+  ].join('\n');
 }
 
 function buildAdvanceBlockEventForListing(listing) {
@@ -9474,6 +9572,8 @@ function buildAdvanceBlockEventForListing(listing) {
   return {
     isReservation: false,
     isUnavailableBlock: true,
+    eventType: 'Block',
+    eventOrigin: 'Local',
     source: 'AutomaticPeople',
     start: toIsoDate(blockStart),
     end: toIsoDate(blockEnd),
@@ -9521,6 +9621,8 @@ function buildNoChangeBoundaryBlockEvents(listing, events) {
     blockMap.set(key, {
       isReservation: false,
       isUnavailableBlock: true,
+      eventType: 'Block',
+      eventOrigin: 'Local',
       source: 'AutomaticPeople',
       start: startKey,
       end: endKey,
@@ -9665,8 +9767,11 @@ function buildIcsCalendar(listing, events) {
       lines.push('DTEND:' + dtend);
     }
     lines.push('SUMMARY:' + escapeIcsText(buildIcsEventSummary(listing, event)));
-    if (event.description) {
-      lines.push('DESCRIPTION:' + escapeIcsText(event.description));
+    const plainDescription = stripIcsMetadataFromDescription(event.description);
+    const metadataDescription = buildIcsMetadataDescription(listing, event);
+    const eventDescription = [plainDescription, metadataDescription].filter(Boolean).join('\n');
+    if (eventDescription) {
+      lines.push('DESCRIPTION:' + escapeIcsText(eventDescription));
     }
     if (event.location) {
       lines.push('LOCATION:' + escapeIcsText(event.location));

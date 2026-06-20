@@ -32,7 +32,11 @@ function persistCalendarState(state) {
     events: (state.events || []).map((event) => ({
       start: String(event.start || ''),
       end: String(event.end || ''),
-      source: event.source === 'imported' ? 'imported' : 'local'
+      source: event.source === 'imported' ? 'imported' : 'local',
+      eventType: String(event.eventType || 'Reservation'),
+      eventSource: String(event.eventSource || ''),
+      eventOrigin: String(event.eventOrigin || ''),
+      summary: String(event.summary || '')
     })),
     importUrl: String(state.importUrl || ''),
     viewDate: state.viewDate instanceof Date ? state.viewDate.toISOString() : null
@@ -105,8 +109,90 @@ function normalizeEvent(event) {
   const start = String(event.start || '').trim();
   const end = String(event.end || '').trim();
   const source = event.source === 'imported' ? 'imported' : 'local';
+  const eventType = String(event.eventType || '').trim().toLowerCase() === 'block' ? 'Block' : 'Reservation';
+  const eventSource = String(event.eventSource || '').trim();
+  const eventOrigin = String(event.eventOrigin || '').trim() || (source === 'local' ? 'Local' : 'Remote');
+  const summary = String(event.summary || '').trim();
   if (!parseDateKey(start) || !parseDateKey(end) || end <= start) return null;
-  return { start, end, source };
+  return {
+    start,
+    end,
+    source,
+    eventType,
+    eventSource,
+    eventOrigin,
+    summary
+  };
+}
+
+function escapeIcsText(value) {
+  return String(value || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+}
+
+function parseApMetadataFromDescription(descriptionText) {
+  const metadata = {
+    type: '',
+    source: '',
+    origin: '',
+    scope: ''
+  };
+
+  String(descriptionText || '')
+    .split(/\n|\\n/)
+    .forEach((line) => {
+      const text = String(line || '').trim();
+      if (!text) return;
+
+      const idx = text.indexOf(':');
+      if (idx <= 0) return;
+      const key = text.slice(0, idx).trim().toUpperCase();
+      const value = text.slice(idx + 1).trim();
+      if (!value) return;
+
+      if (key === 'AP-TYPE') metadata.type = value;
+      if (key === 'AP-SOURCE') metadata.source = value;
+      if (key === 'AP-ORIGIN') metadata.origin = value;
+      if (key === 'AP-SCOPE') metadata.scope = value;
+    });
+
+  return metadata;
+}
+
+function stripApMetadataFromDescription(descriptionText) {
+  return String(descriptionText || '')
+    .split(/\n|\\n/)
+    .map((line) => String(line || '').trim())
+    .filter((line) => line && !/^AP-(TYPE|SOURCE|ORIGIN|SCOPE)\s*:/i.test(line))
+    .join('\n');
+}
+
+function isBlockSummary(summaryText) {
+  const summary = String(summaryText || '').trim().toLowerCase();
+  if (!summary) return false;
+  if (summary === 'not available') return true;
+  if (summary.includes('blocked by')) return true;
+  return false;
+}
+
+function buildCalendarLabEventTooltip(events) {
+  if (!events || !events.length) {
+    return '';
+  }
+
+  return events.map((event) => {
+    const start = String(event.start || '');
+    const end = String(event.end || '');
+    const eventType = String(event.eventType || 'Reservation');
+    const eventSource = String(event.eventSource || (event.source === 'local' ? 'This calendar' : 'Imported source'));
+    const origin = String(event.eventOrigin || (event.source === 'local' ? 'Local' : 'Remote'));
+    const summary = String(event.summary || eventType).trim();
+    return 'Type: ' + eventType
+      + '\nSource: ' + eventSource
+      + '\nOrigin: ' + origin
+      + '\nSummary: ' + summary
+      + '\nStart: ' + start
+      + '\nEnd: ' + end;
+  }).join('\n\n');
 }
 
 function buildIcs(state) {
@@ -123,13 +209,26 @@ function buildIcs(state) {
   state.events.forEach((event, idx) => {
     const start = event.start.replace(/-/g, '');
     const end = event.end.replace(/-/g, '');
-    const summary = event.source === 'imported' ? 'Imported Reservation' : 'Reservation';
+    const eventType = String(event.eventType || 'Reservation');
+    const eventSource = String(event.eventSource || ('Calendar ' + state.id));
+    const eventOrigin = String(event.eventOrigin || (event.source === 'local' ? 'Local' : 'Remote'));
+    const summary = String(event.summary || eventType).trim() || eventType;
+    const plainDescription = stripApMetadataFromDescription(event.description || '');
+    const metadataDescription = [
+      'AP-TYPE: ' + eventType,
+      'AP-SOURCE: ' + eventSource,
+      'AP-ORIGIN: ' + eventOrigin,
+      'AP-SCOPE: CalendarLab'
+    ].join('\n');
+    const description = [plainDescription, metadataDescription].filter(Boolean).join('\n');
+
     lines.push('BEGIN:VEVENT');
     lines.push('UID:calendar-lab-' + state.id + '-' + idx + '@automaticpeople');
     lines.push('DTSTAMP:' + dtStamp);
     lines.push('DTSTART;VALUE=DATE:' + start);
     lines.push('DTEND;VALUE=DATE:' + end);
-    lines.push('SUMMARY:' + summary);
+    lines.push('SUMMARY:' + escapeIcsText(summary));
+    lines.push('DESCRIPTION:' + escapeIcsText(description));
     lines.push('END:VEVENT');
   });
 
@@ -207,26 +306,20 @@ function parseIcsEvents(icsText) {
   const blocks = text.split(/BEGIN:VEVENT/i).slice(1);
   const events = [];
 
-  function isUnavailableBlockSummary(summaryText) {
-    const summary = String(summaryText || '').trim().toLowerCase();
-    if (!summary) return false;
-    if (summary === 'not available') return true;
-    if (summary.includes('blocked by')) return true;
-    return false;
-  }
-
   blocks.forEach((block) => {
     const endSplit = block.split(/END:VEVENT/i);
     const body = endSplit[0] || '';
     const dtStartLine = body.match(/\nDTSTART[^:]*:([^\r\n]+)/i);
     const dtEndLine = body.match(/\nDTEND[^:]*:([^\r\n]+)/i);
     const summaryLine = body.match(/\nSUMMARY:([^\r\n]+)/i);
+    const descriptionLine = body.match(/\nDESCRIPTION:([^\r\n]+)/i);
     const startKey = dateKeyFromIcs(dtStartLine && dtStartLine[1]);
     let endKey = dateKeyFromIcs(dtEndLine && dtEndLine[1]);
-
-    if (isUnavailableBlockSummary(summaryLine && summaryLine[1])) {
-      return;
-    }
+    const summary = String(summaryLine && summaryLine[1] || '').replace(/\\n/gi, '\n').trim();
+    const description = String(descriptionLine && descriptionLine[1] || '').replace(/\\n/gi, '\n').trim();
+    const metadata = parseApMetadataFromDescription(description);
+    const metadataType = String(metadata.type || '').trim().toLowerCase();
+    const eventType = metadataType === 'block' || isBlockSummary(summary) ? 'Block' : 'Reservation';
 
     if (!startKey) return;
     if (!endKey) {
@@ -240,7 +333,15 @@ function parseIcsEvents(icsText) {
       endKey = toDateKey(addUtcDays(startDate, 1));
     }
 
-    events.push({ start: startKey, end: endKey, source: 'imported' });
+    events.push({
+      start: startKey,
+      end: endKey,
+      source: 'imported',
+      eventType,
+      eventSource: String(metadata.source || '').trim() || 'Imported ICS',
+      eventOrigin: 'Remote',
+      summary
+    });
   });
 
   return events;
@@ -280,8 +381,10 @@ function renderCalendar(state) {
     const date = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), dayNum));
     const key = toDateKey(date);
 
-    const hasLocal = state.events.some((event) => event.source === 'local' && key >= event.start && key < event.end);
-    const hasImported = state.events.some((event) => event.source === 'imported' && key >= event.start && key < event.end);
+    const dayEvents = state.events.filter((event) => key >= event.start && key < event.end);
+
+    const hasLocal = dayEvents.some((event) => event.source === 'local');
+    const hasImported = dayEvents.some((event) => event.source === 'imported');
 
     const num = document.createElement('div');
     num.className = 'calendar-day-number';
@@ -297,15 +400,13 @@ function renderCalendar(state) {
 
       const bar = document.createElement('div');
       bar.className = 'day-bar';
+      bar.title = buildCalendarLabEventTooltip(dayEvents);
       if (hasLocal && hasImported) {
         bar.classList.add('admin-lab-bar-mixed');
-        bar.title = 'Local + Imported reservation date';
       } else if (hasImported) {
         bar.classList.add('admin-lab-bar-imported');
-        bar.title = 'Imported reservation date';
       } else {
         bar.classList.add('admin-lab-bar-local');
-        bar.title = 'Local reservation date';
       }
 
       slot.appendChild(bar);
@@ -330,12 +431,28 @@ function applyDeleteRange(events, deleteStart, deleteEnd) {
     }
 
     if (deleteStart > event.start) {
-      const left = normalizeEvent({ start: event.start, end: deleteStart, source: event.source });
+      const left = normalizeEvent({
+        start: event.start,
+        end: deleteStart,
+        source: event.source,
+        eventType: event.eventType,
+        eventSource: event.eventSource,
+        eventOrigin: event.eventOrigin,
+        summary: event.summary
+      });
       if (left) output.push(left);
     }
 
     if (deleteEnd < event.end) {
-      const right = normalizeEvent({ start: deleteEnd, end: event.end, source: event.source });
+      const right = normalizeEvent({
+        start: deleteEnd,
+        end: event.end,
+        source: event.source,
+        eventType: event.eventType,
+        eventSource: event.eventSource,
+        eventOrigin: event.eventOrigin,
+        summary: event.summary
+      });
       if (right) output.push(right);
     }
   });
@@ -391,7 +508,15 @@ function attachCalendarHandlers(state) {
       return;
     }
 
-    state.events.push({ start, end, source: 'local' });
+    state.events.push({
+      start,
+      end,
+      source: 'local',
+      eventType: 'Reservation',
+      eventSource: 'Calendar ' + state.id,
+      eventOrigin: 'Local',
+      summary: 'Reservation'
+    });
     state.events.sort((a, b) => (a.start + a.end).localeCompare(b.start + b.end));
     applyStateUpdate(state);
     setCalendarStatus(state, 'Reservation created.', false);
@@ -467,7 +592,7 @@ function attachCalendarHandlers(state) {
       state.importUrl = url;
       state.importUrlInput.value = url;
       const importedCount = await importFromUrl(state, url);
-      setCalendarStatus(state, 'Sync complete: ' + importedCount + ' imported reservation(s) refreshed.', false);
+      setCalendarStatus(state, 'Sync complete: ' + importedCount + ' imported event(s) refreshed.', false);
     } catch (err) {
       setCalendarStatus(state, err.message || 'Failed to sync ICS.', true);
     }

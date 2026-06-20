@@ -473,6 +473,60 @@ function getEventSummary(event) {
   return event.title || (event.raw && event.raw.SUMMARY) || '(untitled)';
 }
 
+function parseApMetadataFromDescription(descriptionText) {
+  const metadata = {
+    type: '',
+    source: '',
+    origin: '',
+    scope: ''
+  };
+
+  String(descriptionText || '')
+    .split(/\n|\\n/)
+    .forEach((line) => {
+      const text = String(line || '').trim();
+      if (!text) return;
+
+      const idx = text.indexOf(':');
+      if (idx <= 0) return;
+      const key = text.slice(0, idx).trim().toUpperCase();
+      const value = text.slice(idx + 1).trim();
+      if (!value) return;
+
+      if (key === 'AP-TYPE') metadata.type = value;
+      if (key === 'AP-SOURCE') metadata.source = value;
+      if (key === 'AP-ORIGIN') metadata.origin = value;
+      if (key === 'AP-SCOPE') metadata.scope = value;
+    });
+
+  return metadata;
+}
+
+function deriveEventType(event, metadata) {
+  const explicitType = String(metadata && metadata.type || event && event.eventType || '').trim().toLowerCase();
+  if (explicitType === 'block') return 'Block';
+  if (explicitType === 'reservation') return 'Reservation';
+  if (event && (event.isReservation === false || event.isUnavailableBlock === true)) return 'Block';
+  return 'Reservation';
+}
+
+function deriveEventSource(event, metadata) {
+  const source = String(metadata && metadata.source || event && event.source || '').trim();
+  if (source) return source;
+  return String(currentListingMeta && currentListingMeta.name || 'Unknown source');
+}
+
+function deriveEventOrigin(event, metadata) {
+  const explicit = String(metadata && metadata.origin || event && event.eventOrigin || '').trim();
+  if (explicit) return explicit;
+
+  const sourceKey = normaliseSourceKey(event && event.source || '');
+  if (sourceKey === 'direct booking' || sourceKey === 'automaticpeople' || Number(event && event.reservationActivityId || 0) > 0) {
+    return 'Local';
+  }
+  return 'Remote';
+}
+
 function isAirbnbNotAvailableEvent(event, sourceLabel) {
   const sourceKey = normaliseSourceKey(sourceLabel || (event && event.source));
   if (!sourceKey.includes('airbnb')) {
@@ -490,9 +544,16 @@ function buildBarTooltip(events) {
   if (!events || !events.length) return '';
 
   return events.map((event) => {
+    const metadata = parseApMetadataFromDescription(event && event.description);
+    const eventType = deriveEventType(event, metadata);
+    const eventSource = deriveEventSource(event, metadata);
+    const eventOrigin = deriveEventOrigin(event, metadata);
     const checkin = formatDateKeyForTooltip(toDateKey(event.start));
     const checkout = formatDateKeyForTooltip(toDateKey(event.end));
-    return 'Summary: ' + getEventSummary(event)
+    return 'Type: ' + eventType
+      + '\nSource: ' + eventSource
+      + '\nOrigin: ' + eventOrigin
+      + '\nSummary: ' + getEventSummary(event)
       + '\nCheck-in: ' + checkin
       + '\nCheck-out: ' + checkout;
   }).join('\n\n');
