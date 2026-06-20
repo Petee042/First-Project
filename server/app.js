@@ -6090,7 +6090,7 @@ async function refreshEventsForListing(listingId) {
       if (fetched.error) {
         await storeFeedCache(listingId, feed.id, feed.label, [], fetched.error);
       } else {
-        const events = fetched.events.map((event) => {
+        const events = dedupeBlockEvents(fetched.events.map((event) => {
           const metadata = parseIcsMetadataFromDescription(event.description);
           const metadataType = String(metadata.type || '').trim().toLowerCase();
           const hasTypeMetadata = metadataType === 'reservation' || metadataType === 'block';
@@ -6112,7 +6112,7 @@ async function refreshEventsForListing(listingId) {
             location: event.location,
             raw: event.raw
           };
-        });
+        }));
         await storeFeedCache(listingId, feed.id, feed.label, events, null);
       }
     })
@@ -9682,20 +9682,79 @@ function appendAdvanceBlockEvent(listing, events) {
   });
 }
 
+function isBlockEvent(event) {
+  if (!event) return false;
+  if (event.isReservation === false || event.isUnavailableBlock === true) {
+    return true;
+  }
+  const explicitType = String(event.eventType || '').trim().toLowerCase();
+  return explicitType === 'block';
+}
+
+function getBlockIdentityKey(event) {
+  const start = getDateKeyFromEventDateTime(event && event.start);
+  const end = getDateKeyFromEventDateTime(event && event.end);
+  if (!start || !end || end <= start) {
+    return null;
+  }
+  return start + '|' + end;
+}
+
+function getBlockPriorityScore(event) {
+  let score = 0;
+  const source = String(event && event.source || '').trim().toLowerCase();
+  const origin = String(event && event.eventOrigin || '').trim().toLowerCase();
+  if (source === 'automaticpeople') {
+    score += 4;
+  }
+  if (origin === 'local') {
+    score += 2;
+  }
+  if (event && event.description) {
+    score += 1;
+  }
+  return score;
+}
+
+function dedupeBlockEvents(events) {
+  const blockByKey = new Map();
+  const passthrough = [];
+
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    if (!isBlockEvent(event)) {
+      passthrough.push(event);
+      return;
+    }
+
+    const key = getBlockIdentityKey(event);
+    if (!key) {
+      passthrough.push(event);
+      return;
+    }
+
+    const existing = blockByKey.get(key);
+    if (!existing || getBlockPriorityScore(event) > getBlockPriorityScore(existing)) {
+      blockByKey.set(key, event);
+    }
+  });
+
+  return [...passthrough, ...Array.from(blockByKey.values())].sort((a, b) => {
+    const aTime = a && a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
+    const bTime = b && b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
+    return aTime - bTime;
+  });
+}
+
 function appendAvailabilityPolicyBlockEvents(listing, events) {
   const withNoChangeBlocks = (() => {
     const blocks = buildNoChangeBoundaryBlockEvents(listing, events);
     if (!blocks.length) {
-      return Array.isArray(events) ? events : [];
+      return dedupeBlockEvents(Array.isArray(events) ? events : []);
     }
-    return [...(Array.isArray(events) ? events : []), ...blocks].sort((a, b) => {
-      const aTime = a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
-      const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
-      return aTime - bTime;
-    });
+    return dedupeBlockEvents([...(Array.isArray(events) ? events : []), ...blocks]);
   })();
 
-  return appendAdvanceBlockEvent(listing, withNoChangeBlocks);
+  return dedupeBlockEvents(appendAdvanceBlockEvent(listing, withNoChangeBlocks));
 }
 
 function normaliseCalendarSourceName(value) {
