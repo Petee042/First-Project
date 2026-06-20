@@ -155,6 +155,21 @@
           </div>
           <span id="opsCalendarFetchedAt" class="calendar-fetched-at"></span>
           <p id="opsCalendarMessage" class="message"></p>
+          <div class="ops-calendar-debug-tools" aria-label="Reservation calendar debug tools">
+            <div class="ops-calendar-debug-row">
+              <label for="opsDebugCreateStartDate">Create reservation</label>
+              <input id="opsDebugCreateStartDate" type="date" />
+              <input id="opsDebugCreateEndDate" type="date" />
+              <button type="button" id="opsDebugCreateBtn" class="btn secondary">Create</button>
+            </div>
+            <div class="ops-calendar-debug-row">
+              <label for="opsDebugDeleteDate">Delete by date</label>
+              <input id="opsDebugDeleteDate" type="date" />
+              <button type="button" id="opsDebugDeleteByDateBtn" class="btn secondary">Delete Matching</button>
+              <button type="button" id="opsDebugDeleteAllBtn" class="btn secondary">Delete All Reservations</button>
+            </div>
+            <p id="opsCalendarDebugMessage" class="message"></p>
+          </div>
           <div class="calendar-month-header">
             <button type="button" id="opsCalendarPrevBtn" class="btn action-icon prev-icon" aria-label="Previous Month" title="Previous Month"></button>
             <h4 id="opsCalendarMonthLabel" class="month-label">Month</h4>

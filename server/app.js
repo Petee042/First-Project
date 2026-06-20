@@ -9983,6 +9983,122 @@ app.post('/api/listings/:listingId/events/refresh', requireScopedRole('Manager')
   }
 });
 
+// POST /api/listings/:listingId/debug-reservations — create a debug direct reservation event
+app.post('/api/listings/:listingId/debug-reservations', requireScopedRole('Manager'), async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  const startDate = normaliseDateKey(req.body.startDate || req.body.checkinDate || req.body.arrivalDate);
+  const endDate = normaliseDateKey(req.body.endDate || req.body.checkoutDate || req.body.departureDate);
+
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+  if (!startDate || !endDate || endDate <= startDate) {
+    return res.status(400).json({ error: 'Start and end dates are required (end must be after start).' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const reservationIdentifier = await generateGlobalReservationIdentifier('private_reservation');
+    const reservation = await createReservationActivityForListing({
+      userId: req.accessContext.effectiveOwnerUserId,
+      clientAccountId: req.accessContext.activeClientAccountId,
+      listingId,
+      reservationIdentifier,
+      checkinDate: startDate,
+      checkoutDate: endDate,
+      firstName: 'Debug',
+      familyName: 'Reservation',
+      emailAddress: 'debug-reservation@automaticpeople.local',
+      guestCount: 1,
+      reservationAmount: 0,
+      holdUntilAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      paymentMethod: 'No Charge',
+      paymentDueAt: null,
+      status: 'confirmed',
+      notes: 'Created from Ops reservation calendar debug tools.'
+    });
+
+    return res.json({
+      message: 'Debug reservation created.',
+      reservation: reservation || null
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create debug reservation.' });
+  }
+});
+
+// DELETE /api/listings/:listingId/debug-reservations — delete all active direct reservations for listing
+app.delete('/api/listings/:listingId/debug-reservations', requireScopedRole('Manager'), async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const result = await pool.query(
+      `
+        DELETE FROM reservation_activity
+        WHERE listing_id = $1
+          AND client_account_id = $2
+          AND status = ANY($3::text[])
+      `,
+      [listingId, req.accessContext.activeClientAccountId, Array.from(DIRECT_RESERVATION_ACTIVE_STATUSES)]
+    );
+
+    return res.json({ message: 'Debug delete-all completed.', deletedCount: Number(result.rowCount || 0) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete reservations.' });
+  }
+});
+
+// POST /api/listings/:listingId/debug-reservations/delete-by-date — delete active direct reservations overlapping date
+app.post('/api/listings/:listingId/debug-reservations/delete-by-date', requireScopedRole('Manager'), async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  const targetDate = normaliseDateKey(req.body.date || req.body.targetDate);
+
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+  if (!targetDate) {
+    return res.status(400).json({ error: 'Valid date is required.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const result = await pool.query(
+      `
+        DELETE FROM reservation_activity
+        WHERE listing_id = $1
+          AND client_account_id = $2
+          AND status = ANY($3::text[])
+          AND reservation_checkin_date <= $4::date
+          AND reservation_checkout_date > $4::date
+      `,
+      [listingId, req.accessContext.activeClientAccountId, Array.from(DIRECT_RESERVATION_ACTIVE_STATUSES), targetDate]
+    );
+
+    return res.json({ message: 'Debug delete-by-date completed.', deletedCount: Number(result.rowCount || 0) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete reservations by date.' });
+  }
+});
+
 // POST /api/private-reservations — create a direct reservation activity entry
 app.get('/api/private-reservations', requireScopedRole('Manager'), async (req, res) => {
   try {

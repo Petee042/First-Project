@@ -2068,6 +2068,133 @@ function opsCalendarSetMessage(text, isError) {
   el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
 }
 
+function opsCalendarSetDebugMessage(text, isError) {
+  const el = document.getElementById('opsCalendarDebugMessage');
+  if (!el) {
+    return;
+  }
+  el.textContent = text || '';
+  el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
+}
+
+function opsCalendarCanRunDebugActions() {
+  return Boolean(currentAccessContext && currentAccessContext.activeRole === 'Manager');
+}
+
+function applyOpsCalendarDebugAccess() {
+  const canDebug = opsCalendarCanRunDebugActions();
+  ['opsDebugCreateBtn', 'opsDebugDeleteByDateBtn', 'opsDebugDeleteAllBtn', 'opsDebugCreateStartDate', 'opsDebugCreateEndDate', 'opsDebugDeleteDate']
+    .forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.disabled = !canDebug;
+      }
+    });
+
+  if (!canDebug) {
+    opsCalendarSetDebugMessage('Debug controls are available to Managers only.', true);
+  } else {
+    opsCalendarSetDebugMessage('', false);
+  }
+}
+
+function getSingleOpsSelectedListingOrThrow() {
+  const selectedListings = getOpsSelectedListings();
+  if (!selectedListings.length) {
+    throw new Error('Select one listing to use debug tools.');
+  }
+  if (selectedListings.length > 1) {
+    throw new Error('Select only one listing to use debug tools.');
+  }
+  return selectedListings[0];
+}
+
+async function opsCalendarCreateDebugReservation() {
+  if (!opsCalendarCanRunDebugActions()) {
+    opsCalendarSetDebugMessage('Manager access is required for debug actions.', true);
+    return;
+  }
+
+  try {
+    const listing = getSingleOpsSelectedListingOrThrow();
+    const startDate = String(document.getElementById('opsDebugCreateStartDate')?.value || '').trim();
+    const endDate = String(document.getElementById('opsDebugCreateEndDate')?.value || '').trim();
+    if (!startDate || !endDate || endDate <= startDate) {
+      throw new Error('Enter a valid start and end date (end must be after start).');
+    }
+
+    const res = await fetch('/api/listings/' + encodeURIComponent(listing.id) + '/debug-reservations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ startDate, endDate })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to create debug reservation.');
+    }
+
+    opsCalendarSetDebugMessage('Debug reservation created for ' + (listing.name || ('Listing #' + listing.id)) + '.', false);
+    await refreshOpsCalendar(true);
+  } catch (err) {
+    opsCalendarSetDebugMessage(err.message || 'Failed to create debug reservation.', true);
+  }
+}
+
+async function opsCalendarDeleteAllDebugReservations() {
+  if (!opsCalendarCanRunDebugActions()) {
+    opsCalendarSetDebugMessage('Manager access is required for debug actions.', true);
+    return;
+  }
+
+  try {
+    const listing = getSingleOpsSelectedListingOrThrow();
+    const res = await fetch('/api/listings/' + encodeURIComponent(listing.id) + '/debug-reservations', {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to delete reservations.');
+    }
+
+    const deletedCount = Number(data.deletedCount || 0);
+    opsCalendarSetDebugMessage('Deleted ' + deletedCount + ' reservation(s) for ' + (listing.name || ('Listing #' + listing.id)) + '.', false);
+    await refreshOpsCalendar(true);
+  } catch (err) {
+    opsCalendarSetDebugMessage(err.message || 'Failed to delete reservations.', true);
+  }
+}
+
+async function opsCalendarDeleteDebugReservationsByDate() {
+  if (!opsCalendarCanRunDebugActions()) {
+    opsCalendarSetDebugMessage('Manager access is required for debug actions.', true);
+    return;
+  }
+
+  try {
+    const listing = getSingleOpsSelectedListingOrThrow();
+    const date = String(document.getElementById('opsDebugDeleteDate')?.value || '').trim();
+    if (!date) {
+      throw new Error('Enter a date to delete matching reservations.');
+    }
+
+    const res = await fetch('/api/listings/' + encodeURIComponent(listing.id) + '/debug-reservations/delete-by-date', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to delete reservations by date.');
+    }
+
+    const deletedCount = Number(data.deletedCount || 0);
+    opsCalendarSetDebugMessage('Deleted ' + deletedCount + ' reservation(s) including ' + date + '.', false);
+    await refreshOpsCalendar(true);
+  } catch (err) {
+    opsCalendarSetDebugMessage(err.message || 'Failed to delete reservations by date.', true);
+  }
+}
+
 function opsCalendarSetFetchedAt(isoString) {
   const el = document.getElementById('opsCalendarFetchedAt');
   if (!el) {
@@ -2079,6 +2206,7 @@ function opsCalendarSetFetchedAt(isoString) {
   }
   const date = new Date(isoString);
   el.textContent = 'Last updated: ' + date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  applyOpsCalendarDebugAccess();
 }
 
 function renderOpsCalendarListingSelector(listings) {
@@ -3962,6 +4090,40 @@ const _opsCalendarNextBtn = document.getElementById('opsCalendarNextBtn');
 if (_opsCalendarNextBtn) _opsCalendarNextBtn.addEventListener('click', () => {
   opsCalCurrentMonth = new Date(Date.UTC(opsCalCurrentMonth.getUTCFullYear(), opsCalCurrentMonth.getUTCMonth() + 1, 1));
   renderOpsCalendarForCurrentMonth();
+});
+
+const _opsDebugCreateBtn = document.getElementById('opsDebugCreateBtn');
+if (_opsDebugCreateBtn) _opsDebugCreateBtn.addEventListener('click', async () => {
+  _opsDebugCreateBtn.disabled = true;
+  try {
+    await opsCalendarCreateDebugReservation();
+  } finally {
+    applyOpsCalendarDebugAccess();
+  }
+});
+
+const _opsDebugDeleteByDateBtn = document.getElementById('opsDebugDeleteByDateBtn');
+if (_opsDebugDeleteByDateBtn) _opsDebugDeleteByDateBtn.addEventListener('click', async () => {
+  _opsDebugDeleteByDateBtn.disabled = true;
+  try {
+    await opsCalendarDeleteDebugReservationsByDate();
+  } finally {
+    applyOpsCalendarDebugAccess();
+  }
+});
+
+const _opsDebugDeleteAllBtn = document.getElementById('opsDebugDeleteAllBtn');
+if (_opsDebugDeleteAllBtn) _opsDebugDeleteAllBtn.addEventListener('click', async () => {
+  const confirmed = window.confirm('Delete all active reservations for the selected listing?');
+  if (!confirmed) {
+    return;
+  }
+  _opsDebugDeleteAllBtn.disabled = true;
+  try {
+    await opsCalendarDeleteAllDebugReservations();
+  } finally {
+    applyOpsCalendarDebugAccess();
+  }
 });
 
 const _refreshScheduleBtn = document.getElementById('refreshScheduleBtn');
