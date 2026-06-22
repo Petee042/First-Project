@@ -87,6 +87,32 @@
           </div>
         </section>
 
+        <section class="listing-form-section" id="eventLogSection">
+          <div class="config-block-header">
+            <h3>Calendar Event Log</h3>
+            <button type="button" id="eventLogRefreshBtn" class="btn secondary config-icon-btn" title="Refresh Event Log" aria-label="Refresh Event Log">↻</button>
+          </div>
+          <p id="eventLogMessage" class="message"></p>
+          <div class="table-wrap">
+            <table class="calendar-table" aria-label="Calendar event log">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Type</th>
+                  <th>Listing</th>
+                  <th>Channel</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="eventLogTableBody">
+                <tr>
+                  <td colspan="5">Loading event log...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
       </div><!-- /panel-dashboard -->
 
       <!-- ── Config tab ─────────────────────────────────────── -->

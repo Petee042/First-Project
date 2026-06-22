@@ -525,6 +525,104 @@ async function initializeUserStore() {
     )
   `);
 
+  // ── Calendar redesign: listing_channels (proper Channels with import/export URLs, replaces calendar_feeds)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS listing_channels (
+      id BIGSERIAL PRIMARY KEY,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      import_url TEXT NOT NULL DEFAULT '',
+      export_url TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Migrate existing calendar_feeds into listing_channels (idempotent)
+  await pool.query(`
+    INSERT INTO listing_channels (listing_id, label, import_url, created_at, updated_at)
+    SELECT listing_id, label, url, created_at, created_at
+    FROM calendar_feeds
+    WHERE NOT EXISTS (
+      SELECT 1 FROM listing_channels lc
+      WHERE lc.listing_id = calendar_feeds.listing_id AND lc.label = calendar_feeds.label
+    )
+  `);
+
+  // ── Calendar redesign: listing_calendar_events (per-event store replacing JSON-blob cached_events)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS listing_calendar_events (
+      id BIGSERIAL PRIMARY KEY,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL DEFAULT 'remote',
+      channel_id BIGINT REFERENCES listing_channels(id) ON DELETE SET NULL,
+      guest_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      guest_first_name TEXT NOT NULL DEFAULT '',
+      guest_family_name TEXT NOT NULL DEFAULT '',
+      guest_email TEXT NOT NULL DEFAULT '',
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      is_in_conflict BOOLEAN NOT NULL DEFAULT FALSE,
+      is_modified BOOLEAN NOT NULL DEFAULT FALSE,
+      ics_uid TEXT,
+      ics_summary TEXT NOT NULL DEFAULT '',
+      reservation_activity_id BIGINT REFERENCES reservation_activity(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_synced_at TIMESTAMPTZ
+    )
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_calendar_events
+    DROP CONSTRAINT IF EXISTS listing_calendar_events_event_type_check
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_calendar_events
+    ADD CONSTRAINT listing_calendar_events_event_type_check
+    CHECK (event_type IN ('local', 'remote', 'block'))
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_listing_calendar_events_listing
+    ON listing_calendar_events (listing_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_listing_calendar_events_dates
+    ON listing_calendar_events (listing_id, start_date, end_date)
+  `);
+
+  // ── Dashboard event log: persistent record of calendar changes and conflicts
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS listing_event_log (
+      id BIGSERIAL PRIMARY KEY,
+      client_account_id BIGINT REFERENCES client_accounts(id) ON DELETE CASCADE,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      entry_type TEXT NOT NULL,
+      channel_label TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL,
+      old_start_date DATE,
+      old_end_date DATE,
+      new_start_date DATE,
+      new_end_date DATE,
+      affected_event_id BIGINT,
+      conflicting_event_id BIGINT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_listing_event_log_client
+    ON listing_event_log (client_account_id, created_at DESC)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_listing_event_log_listing
+    ON listing_event_log (listing_id, created_at DESC)
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS booked_in_changes (
       id BIGSERIAL PRIMARY KEY,
@@ -6132,6 +6230,350 @@ async function refreshAllListingsEvents() {
   }
 }
 
+// ── New Calendar Event Store & Sync Engine ───────────────────────────────────
+
+async function getChannelsForListing(listingId) {
+  const result = await pool.query(
+    `SELECT id, listing_id, label, import_url AS url, export_url, created_at, updated_at
+     FROM listing_channels WHERE listing_id = $1 ORDER BY id ASC`,
+    [listingId]
+  );
+  return result.rows;
+}
+
+function mapCalendarEventRowToApiEvent(row) {
+  const isLocal = row.event_type === 'local';
+  const isBlock = row.event_type === 'block';
+  const guestName = [
+    String(row.guest_first_name || '').trim(),
+    String(row.guest_family_name || '').trim()
+  ].filter(Boolean).join(' ');
+
+  return {
+    isReservation: !isBlock,
+    isUnavailableBlock: isBlock,
+    eventType: isBlock ? 'Block' : 'Reservation',
+    eventOrigin: isLocal ? 'Local' : 'Remote',
+    source: String(row.channel_label || (isLocal ? 'Direct Booking' : 'Unknown')).trim(),
+    start: row.start_date instanceof Date
+      ? row.start_date.toISOString().slice(0, 10)
+      : String(row.start_date || '').slice(0, 10),
+    end: row.end_date instanceof Date
+      ? row.end_date.toISOString().slice(0, 10)
+      : String(row.end_date || '').slice(0, 10),
+    title: guestName || String(row.ics_summary || (isBlock ? 'Not available' : 'Reservation')).trim(),
+    description: row.notes || '',
+    location: null,
+    raw: null,
+    // Extended fields for enhanced tooltip and conflict display
+    calendarEventId: Number(row.id),
+    channelLabel: row.channel_label || null,
+    notes: String(row.notes || ''),
+    isInConflict: row.is_in_conflict === true,
+    isModified: row.is_modified === true,
+    lastSyncedAt: row.last_synced_at ? String(row.last_synced_at) : null,
+    reservationActivityId: row.reservation_activity_id ? Number(row.reservation_activity_id) : null
+  };
+}
+
+async function getStoredCalendarEventsForListing(listingId) {
+  const result = await pool.query(
+    `SELECT lce.*, lc.label AS channel_label
+     FROM listing_calendar_events lce
+     LEFT JOIN listing_channels lc ON lc.id = lce.channel_id
+     WHERE lce.listing_id = $1
+     ORDER BY lce.start_date ASC, lce.id ASC`,
+    [listingId]
+  );
+  return result.rows.map(mapCalendarEventRowToApiEvent);
+}
+
+async function writeEventLog(entry) {
+  try {
+    await pool.query(
+      `INSERT INTO listing_event_log (
+         client_account_id, listing_id, entry_type, channel_label,
+         description, old_start_date, old_end_date, new_start_date, new_end_date,
+         affected_event_id, conflicting_event_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        entry.clientAccountId || null,
+        entry.listingId,
+        entry.entryType,
+        entry.channelLabel || '',
+        entry.description,
+        entry.oldStartDate || null,
+        entry.oldEndDate || null,
+        entry.newStartDate || null,
+        entry.newEndDate || null,
+        entry.affectedEventId || null,
+        entry.conflictingEventId || null
+      ]
+    );
+  } catch (logErr) {
+    console.error('[EventLog] Failed to write event log:', logErr && logErr.message);
+  }
+}
+
+// Import rules pipeline — structured for future channel-specific rules.
+// Each rule: { id: string, apply(rawEvent, channel, listing) => event | null }
+const CALENDAR_IMPORT_RULES = [];
+
+function applyImportRulesForEvent(rawEvent, channel, listing) {
+  let event = { ...rawEvent };
+  for (const rule of CALENDAR_IMPORT_RULES) {
+    const result = rule.apply(event, channel, listing);
+    if (!result) return null; // rule discarded the event
+    event = result;
+  }
+  return event;
+}
+
+// Dynamic block rules — applied in sequence when building calendar for display/export.
+// Each rule: { id: string, name: string, apply(listing, events) => blockEvents[] }
+// Sequence is significant: advance booking block runs first, then no-change-day blocks.
+const DYNAMIC_BLOCK_RULES = [
+  {
+    id: 'advance_booking',
+    name: 'Advance Booking Block',
+    apply: (listing, _events) => {
+      const block = buildAdvanceBlockEventForListing(listing);
+      return block ? [block] : [];
+    }
+  },
+  {
+    id: 'no_change_day',
+    name: 'No Change Day Boundaries',
+    apply: (listing, events) => buildNoChangeBoundaryBlockEvents(listing, events)
+  }
+];
+
+function applyDynamicBlockRules(listing, storedEvents) {
+  let result = Array.isArray(storedEvents) ? [...storedEvents] : [];
+  for (const rule of DYNAMIC_BLOCK_RULES) {
+    const blocks = rule.apply(listing, result);
+    if (blocks.length) {
+      result = dedupeBlockEvents([...result, ...blocks]);
+    }
+  }
+  return result;
+}
+
+async function syncChannelEvents(listing, channel, clientAccountId) {
+  const listingId = Number(listing.id);
+  const channelId = Number(channel.id);
+  const importUrl = String(channel.import_url || channel.url || '').trim();
+  if (!importUrl) return;
+
+  const fetched = await fetchEventsFromCalendarUrl(importUrl);
+  if (fetched.error) {
+    console.error(`[CalendarSync] Listing ${listingId} channel "${channel.label}": ${fetched.error}`);
+    return;
+  }
+
+  const now = new Date().toISOString();
+
+  for (const rawEvent of fetched.events) {
+    const processedEvent = applyImportRulesForEvent(rawEvent, channel, listing);
+    if (!processedEvent) continue;
+
+    const importStart = getDateKeyFromEventDateTime(processedEvent.start);
+    const importEnd = getDateKeyFromEventDateTime(processedEvent.end);
+    if (!importStart || !importEnd || importEnd <= importStart) continue;
+
+    // Find existing events from same channel overlapping this date range
+    const sameChannelResult = await pool.query(
+      `SELECT id, start_date::text AS start_date, end_date::text AS end_date, is_in_conflict, notes
+       FROM listing_calendar_events
+       WHERE listing_id = $1 AND channel_id = $2 AND event_type = 'remote'
+         AND start_date < $4::date AND end_date > $3::date
+       ORDER BY id ASC`,
+      [listingId, channelId, importStart, importEnd]
+    );
+    const overlapping = sameChannelResult.rows;
+
+    // Exact date match — update last_synced_at only
+    const exactMatch = overlapping.find(
+      (e) => String(e.start_date).slice(0, 10) === importStart &&
+              String(e.end_date).slice(0, 10) === importEnd
+    );
+
+    if (exactMatch) {
+      // If already in conflict, no further action (avoid duplicate alerts)
+      await pool.query(
+        'UPDATE listing_calendar_events SET last_synced_at = $1 WHERE id = $2',
+        [now, exactMatch.id]
+      );
+      continue;
+    }
+
+    // Single partial overlap from same channel = dates have changed on existing reservation
+    if (overlapping.length === 1 && !overlapping[0].is_in_conflict) {
+      const existing = overlapping[0];
+      const oldStart = String(existing.start_date).slice(0, 10);
+      const oldEnd = String(existing.end_date).slice(0, 10);
+
+      await pool.query(
+        `UPDATE listing_calendar_events
+         SET start_date = $1::date, end_date = $2::date, is_modified = TRUE,
+             last_synced_at = $3, ics_summary = COALESCE(NULLIF($4, ''), ics_summary)
+         WHERE id = $5`,
+        [importStart, importEnd, now, processedEvent.title || '', existing.id]
+      );
+
+      // Remove stale changeover record — dates have changed, revert to unallocated
+      await pool.query(
+        `DELETE FROM booked_in_changes
+         WHERE listing_id = $1 AND reservation_checkin_date = $2::date
+           AND reservation_checkout_date = $3::date`,
+        [listingId, oldStart, oldEnd]
+      );
+
+      if (clientAccountId) {
+        await writeEventLog({
+          clientAccountId,
+          listingId,
+          entryType: 'reservation_change',
+          channelLabel: channel.label,
+          description: `Reservation on ${channel.label} changed: was ${oldStart}–${oldEnd}, now ${importStart}–${importEnd}.`,
+          oldStartDate: oldStart,
+          oldEndDate: oldEnd,
+          newStartDate: importStart,
+          newEndDate: importEnd,
+          affectedEventId: Number(existing.id)
+        });
+      }
+      continue;
+    }
+
+    // Check for conflicts with other channels or local reservations (in listing_calendar_events)
+    const conflictResult = await pool.query(
+      `SELECT lce.id, lce.event_type, lce.start_date::text AS start_date, lce.end_date::text AS end_date,
+              lc.label AS channel_label
+       FROM listing_calendar_events lce
+       LEFT JOIN listing_channels lc ON lc.id = lce.channel_id
+       WHERE lce.listing_id = $1
+         AND lce.event_type IN ('local', 'remote')
+         AND (lce.channel_id IS NULL OR lce.channel_id <> $2)
+         AND lce.start_date < $4::date AND lce.end_date > $3::date`,
+      [listingId, channelId, importStart, importEnd]
+    );
+
+    // Also check direct local reservations (reservation_activity)
+    const localConflictResult = await pool.query(
+      `SELECT id FROM reservation_activity
+       WHERE listing_id = $1 AND status = ANY($4::text[])
+         AND reservation_checkin_date < $3::date AND reservation_checkout_date > $2::date`,
+      [listingId, importStart, importEnd, Array.from(DIRECT_RESERVATION_ACTIVE_STATUSES)]
+    );
+
+    const isConflict = conflictResult.rows.length > 0 || overlapping.length > 1 || localConflictResult.rows.length > 0;
+
+    // Insert new remote calendar event
+    const newEventResult = await pool.query(
+      `INSERT INTO listing_calendar_events
+         (listing_id, event_type, channel_id, start_date, end_date, ics_summary,
+          last_synced_at, is_in_conflict, created_at)
+       VALUES ($1, 'remote', $2, $3::date, $4::date, $5, $6, $7, CURRENT_TIMESTAMP)
+       RETURNING id`,
+      [listingId, channelId, importStart, importEnd,
+       String(processedEvent.title || '').trim(), now, isConflict]
+    );
+    const newEventId = Number(newEventResult.rows[0].id);
+
+    if (isConflict) {
+      const conflictEventIds = [
+        ...conflictResult.rows.map((r) => Number(r.id)),
+        ...overlapping.filter((r) => !r.is_in_conflict).map((r) => Number(r.id))
+      ].filter((id) => Number.isInteger(id) && id > 0);
+
+      if (conflictEventIds.length) {
+        await pool.query(
+          'UPDATE listing_calendar_events SET is_in_conflict = TRUE WHERE id = ANY($1::bigint[])',
+          [conflictEventIds]
+        );
+      }
+
+      const conflictingNames = [
+        ...conflictResult.rows.map((r) => r.channel_label || (r.event_type === 'local' ? 'Local' : 'Unknown')),
+        ...localConflictResult.rows.map(() => 'Local Reservation')
+      ].join('; ');
+
+      const conflictDesc = `CONFLICT on listing ${listingId}: ${channel.label} reservation ${importStart}–${importEnd} overlaps with: ${conflictingNames || 'existing event'}.`;
+
+      if (clientAccountId) {
+        await writeEventLog({
+          clientAccountId,
+          listingId,
+          entryType: 'conflict',
+          channelLabel: channel.label,
+          description: conflictDesc,
+          newStartDate: importStart,
+          newEndDate: importEnd,
+          affectedEventId: newEventId,
+          conflictingEventId: conflictEventIds[0] || null
+        });
+      }
+
+      // Email conflict alert to the listing manager
+      const mgr = await pool.query(
+        `SELECT p.manager_email FROM listings l
+         JOIN properties p ON p.id = l.property_id
+         WHERE l.id = $1 AND NULLIF(TRIM(p.manager_email), '') IS NOT NULL LIMIT 1`,
+        [listingId]
+      );
+      if (mgr.rows[0] && mgr.rows[0].manager_email) {
+        sendAppEmail({
+          to: mgr.rows[0].manager_email,
+          subject: `Calendar Conflict – Listing ${listingId}`,
+          textBody: conflictDesc + '\n\nPlease log in to review and resolve this conflict.'
+        }).catch((e) => {
+          console.error('[CalendarSync] Conflict email failed:', e && e.message);
+        });
+      }
+    }
+  }
+}
+
+async function refreshListingCalendar(listing, clientAccountId) {
+  const channels = await getChannelsForListing(Number(listing.id));
+  for (const channel of channels) {
+    try {
+      await syncChannelEvents(listing, channel, clientAccountId);
+    } catch (err) {
+      console.error(`[CalendarSync] Channel ${channel.id} listing ${listing.id}:`, err && err.message);
+    }
+  }
+}
+
+async function getAllListingsWithChannels() {
+  const result = await pool.query(
+    'SELECT DISTINCT listing_id AS id FROM listing_channels ORDER BY listing_id ASC'
+  );
+  return result.rows;
+}
+
+async function refreshAllListingsCalendars() {
+  try {
+    const refs = await getAllListingsWithChannels();
+    for (const ref of refs) {
+      const listing = await getListingById(ref.id);
+      if (!listing) continue;
+      const caResult = await pool.query(
+        'SELECT client_account_id FROM listings WHERE id = $1 LIMIT 1', [ref.id]
+      );
+      const clientAccountId = caResult.rows[0] ? Number(caResult.rows[0].client_account_id) || null : null;
+      await refreshListingCalendar(listing, clientAccountId).catch((err) => {
+        console.error('[CalendarSync] Cron error listing', ref.id, err && err.message);
+      });
+    }
+    console.log(`[CalendarSync] Completed ${refs.length} listings at ${new Date().toISOString()}`);
+  } catch (err) {
+    console.error('[CalendarSync] Refresh all failed:', err && err.message);
+  }
+}
+
 async function fetchEventsFromCalendarUrl(calendarUrl) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
@@ -10148,6 +10590,62 @@ app.post('/api/listings/:listingId/events/refresh', requireScopedRole('Manager')
   }
 });
 
+// GET /api/listings/:listingId/event-log — dashboard event log for a listing
+app.get('/api/listings/:listingId/event-log', requireScopedRole('Manager'), async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const result = await pool.query(
+      `SELECT id, listing_id, entry_type, channel_label, description,
+              old_start_date::text AS old_start_date, old_end_date::text AS old_end_date,
+              new_start_date::text AS new_start_date, new_end_date::text AS new_end_date,
+              affected_event_id, conflicting_event_id, created_at
+       FROM listing_event_log
+       WHERE listing_id = $1
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [listingId]
+    );
+
+    return res.json({ entries: result.rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load event log.' });
+  }
+});
+
+// GET /api/event-log — dashboard event log for all listings in active client account
+app.get('/api/event-log', requireScopedRole('Manager'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT lel.id, lel.listing_id, l.name AS listing_name,
+              lel.entry_type, lel.channel_label, lel.description,
+              lel.old_start_date::text AS old_start_date, lel.old_end_date::text AS old_end_date,
+              lel.new_start_date::text AS new_start_date, lel.new_end_date::text AS new_end_date,
+              lel.affected_event_id, lel.conflicting_event_id, lel.created_at
+       FROM listing_event_log lel
+       JOIN listings l ON l.id = lel.listing_id
+       WHERE lel.client_account_id = $1
+       ORDER BY lel.created_at DESC
+       LIMIT 200`,
+      [req.accessContext.activeClientAccountId]
+    );
+
+    return res.json({ entries: result.rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load event log.' });
+  }
+});
+
 // POST /api/listings/:listingId/debug-reservations — create a debug direct reservation event
 app.post('/api/listings/:listingId/debug-reservations', requireScopedRole('Manager'), async (req, res) => {
   const listingId = Number(req.params.listingId);
@@ -10935,8 +11433,12 @@ async function startServer() {
 
     // Run initial refresh 15 s after startup, then every 10 minutes
     setTimeout(() => {
+      // Legacy cached_events refresh (old ICS blob store)
       refreshAllListingsEvents();
       setInterval(refreshAllListingsEvents, 10 * 60 * 1000);
+      // New per-event calendar store sync with conflict detection
+      refreshAllListingsCalendars();
+      setInterval(refreshAllListingsCalendars, 10 * 60 * 1000);
     }, 15000);
   } catch (err) {
     console.error('Failed to start server:', err);

@@ -550,12 +550,36 @@ function buildBarTooltip(events) {
     const eventOrigin = deriveEventOrigin(event, metadata);
     const checkin = formatDateKeyForTooltip(toDateKey(event.start));
     const checkout = formatDateKeyForTooltip(toDateKey(event.end));
-    return 'Type: ' + eventType
-      + '\nSource: ' + eventSource
-      + '\nOrigin: ' + eventOrigin
-      + '\nSummary: ' + getEventSummary(event)
-      + '\nCheck-in: ' + checkin
-      + '\nCheck-out: ' + checkout;
+
+    const lines = [
+      'Type: ' + eventType,
+      'Source: ' + eventSource,
+      'Origin: ' + eventOrigin,
+      'Check-in: ' + checkin,
+      'Check-out: ' + checkout
+    ];
+
+    // Extended fields from the new calendar event store
+    if (event.channelLabel) {
+      lines.push('Channel: ' + event.channelLabel);
+    }
+    if (event.notes) {
+      lines.push('Notes: ' + event.notes);
+    }
+    if (event.isInConflict) {
+      lines.push('⚠ IN CONFLICT');
+    }
+    if (event.isModified) {
+      lines.push('✎ Dates changed since first imported');
+    }
+    if (event.lastSyncedAt) {
+      const syncDate = new Date(event.lastSyncedAt);
+      if (!Number.isNaN(syncDate.getTime())) {
+        lines.push('Last synced: ' + syncDate.toLocaleString());
+      }
+    }
+
+    return lines.join('\n');
   }).join('\n\n');
 }
 

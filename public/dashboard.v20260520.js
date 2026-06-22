@@ -3424,6 +3424,7 @@ async function sendScheduleEmailToRecipient(toEmail) {
     await fetchAccessContext();
     await loadPrivateReservations();
     await loadDashboardData();
+    await loadEventLog();
 
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -4418,6 +4419,7 @@ if (_copyConsolidatedIcsUrlBtn) _copyConsolidatedIcsUrlBtn.addEventListener('cli
     }
     if (panelId === 'panel-dashboard') {
       loadAllReservations();
+      loadEventLog();
     }
   }
 
@@ -4616,3 +4618,106 @@ async function loadAllReservations() {
     });
   });
 })();
+
+// ── Calendar Event Log ────────────────────────────────────────
+
+function setEventLogMessage(text, isError) {
+  const el = document.getElementById('eventLogMessage');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
+}
+
+function formatEventLogTime(isoString) {
+  if (!isoString) return '—';
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return isoString;
+  return d.toLocaleDateString([], { dateStyle: 'short' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatEventLogType(entryType) {
+  const type = String(entryType || '').trim();
+  if (type === 'conflict') return '⚠ Conflict';
+  if (type === 'reservation_changed') return '✎ Date Change';
+  if (type === 'new_reservation') return '+ New';
+  if (type === 'sync') return '↻ Sync';
+  return type || '—';
+}
+
+async function loadEventLog() {
+  const tbody = document.getElementById('eventLogTableBody');
+  if (!tbody) return;
+
+  tbody.innerHTML = '<tr><td colspan="5">Loading event log...</td></tr>';
+  setEventLogMessage('', false);
+
+  try {
+    const res = await fetch('/api/event-log');
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+    if (res.status === 403) {
+      tbody.innerHTML = '<tr><td colspan="5">Access restricted.</td></tr>';
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to load event log.');
+    }
+
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+    if (!entries.length) {
+      tbody.innerHTML = '<tr><td colspan="5">No calendar events logged yet.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = '';
+    entries.forEach((entry) => {
+      const tr = document.createElement('tr');
+      if (entry.entry_type === 'conflict') {
+        tr.classList.add('conflict-row');
+      }
+
+      const timeCell = document.createElement('td');
+      timeCell.textContent = formatEventLogTime(entry.created_at);
+
+      const typeCell = document.createElement('td');
+      typeCell.textContent = formatEventLogType(entry.entry_type);
+
+      const listingCell = document.createElement('td');
+      listingCell.textContent = entry.listing_name || ('Listing #' + entry.listing_id) || '—';
+
+      const channelCell = document.createElement('td');
+      channelCell.textContent = entry.channel_label || entry.channel_id || '—';
+
+      const detailsCell = document.createElement('td');
+      detailsCell.textContent = String(entry.details || '').slice(0, 200);
+      if (entry.details && entry.details.length > 200) {
+        detailsCell.title = entry.details;
+      }
+
+      tr.appendChild(timeCell);
+      tr.appendChild(typeCell);
+      tr.appendChild(listingCell);
+      tr.appendChild(channelCell);
+      tr.appendChild(detailsCell);
+      tbody.appendChild(tr);
+    });
+
+    setEventLogMessage('', false);
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="5">Failed to load event log.</td></tr>';
+    setEventLogMessage(err.message || 'Failed to load event log.', true);
+  }
+}
+
+const _eventLogRefreshBtn = document.getElementById('eventLogRefreshBtn');
+if (_eventLogRefreshBtn) _eventLogRefreshBtn.addEventListener('click', async () => {
+  _eventLogRefreshBtn.disabled = true;
+  try {
+    await loadEventLog();
+  } finally {
+    _eventLogRefreshBtn.disabled = false;
+  }
+});
