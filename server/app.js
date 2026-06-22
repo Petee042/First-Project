@@ -6206,36 +6206,82 @@ async function refreshEventsForListing(listingId) {
   const feeds = await getFeedsForListingInternal(listingId);
   await Promise.all(
     feeds.map(async (feed) => {
-      const fetched = await fetchEventsFromCalendarUrl(feed.url);
+      const importingChannelLabel = String(feed.label || '').trim() || 'Calendar Feed';
+      const importUrl = String(feed.url || '').trim();
+      const exportingChannelLabel = await findExportingChannelLabel(importUrl);
+
+      let fetched;
+      try {
+        fetched = await fetchEventsFromCalendarUrl(importUrl);
+      } catch (err) {
+        const errorText = (err && err.message) ? String(err.message) : 'Failed to fetch ICS feed.';
+        await storeFeedCache(listingId, feed.id, feed.label, [], errorText);
+        await logIcsTransaction({
+          listingId,
+          channelId: null,
+          importingChannelLabel,
+          exportingChannelLabel,
+          importUrl,
+          status: 'error',
+          eventCount: 0,
+          rawPayload: '',
+          errorText
+        });
+        return;
+      }
+
       if (fetched.error) {
         await storeFeedCache(listingId, feed.id, feed.label, [], fetched.error);
-      } else {
-        const events = dedupeBlockEvents(fetched.events.map((event) => {
-          const metadata = parseIcsMetadataFromDescription(event.description);
-          const metadataType = String(metadata.type || '').trim().toLowerCase();
-          const hasTypeMetadata = metadataType === 'reservation' || metadataType === 'block';
-          const fallbackIsReservation = isAirbnbSource(feed.label) ? isAirbnbReservedSummary(event.title) : true;
-          const fallbackIsUnavailable = isAirbnbSource(feed.label) ? isAirbnbNotAvailableSummary(event.title) : false;
-          const isUnavailableBlock = hasTypeMetadata ? (metadataType === 'block') : fallbackIsUnavailable;
-          const isReservation = hasTypeMetadata ? (metadataType !== 'block') : fallbackIsReservation;
-
-          return {
-            isReservation,
-            isUnavailableBlock,
-            eventType: isReservation ? 'Reservation' : 'Block',
-            // This event is fetched from an external feed for this listing, so origin is always remote here.
-            eventOrigin: 'Remote',
-            source: String(metadata.source || '').trim() || feed.label,
-            start: event.start,
-            end: event.end,
-            title: event.title,
-            description: stripIcsMetadataFromDescription(event.description),
-            location: event.location,
-            raw: event.raw
-          };
-        }));
-        await storeFeedCache(listingId, feed.id, feed.label, events, null);
+        await logIcsTransaction({
+          listingId,
+          channelId: null,
+          importingChannelLabel,
+          exportingChannelLabel,
+          importUrl,
+          status: 'error',
+          eventCount: 0,
+          rawPayload: '',
+          errorText: fetched.error
+        });
+        return;
       }
+
+      const events = dedupeBlockEvents(fetched.events.map((event) => {
+        const metadata = parseIcsMetadataFromDescription(event.description);
+        const metadataType = String(metadata.type || '').trim().toLowerCase();
+        const hasTypeMetadata = metadataType === 'reservation' || metadataType === 'block';
+        const fallbackIsReservation = isAirbnbSource(feed.label) ? isAirbnbReservedSummary(event.title) : true;
+        const fallbackIsUnavailable = isAirbnbSource(feed.label) ? isAirbnbNotAvailableSummary(event.title) : false;
+        const isUnavailableBlock = hasTypeMetadata ? (metadataType === 'block') : fallbackIsUnavailable;
+        const isReservation = hasTypeMetadata ? (metadataType !== 'block') : fallbackIsReservation;
+
+        return {
+          isReservation,
+          isUnavailableBlock,
+          eventType: isReservation ? 'Reservation' : 'Block',
+          // This event is fetched from an external feed for this listing, so origin is always remote here.
+          eventOrigin: 'Remote',
+          source: String(metadata.source || '').trim() || feed.label,
+          start: event.start,
+          end: event.end,
+          title: event.title,
+          description: stripIcsMetadataFromDescription(event.description),
+          location: event.location,
+          raw: event.raw
+        };
+      }));
+      await storeFeedCache(listingId, feed.id, feed.label, events, null);
+      await logIcsTransaction({
+        listingId,
+        channelId: null,
+        importingChannelLabel,
+        exportingChannelLabel,
+        importUrl,
+        status: 'success',
+        eventCount: fetched.events.length,
+        rawPayload: fetched.rawText || '',
+        errorText: null
+      });
     })
   );
 }
@@ -11488,6 +11534,43 @@ app.get('/api/admin/ics-log', requireAdminAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load ICS transaction log.' });
+  }
+});
+
+// POST /api/admin/ics-log/client-import — append admin-triggered sync transactions (calendar lab/manual sync)
+app.post('/api/admin/ics-log/client-import', requireAdminAuth, async (req, res) => {
+  try {
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const parsedListingId = Number(body.listingId);
+    const parsedChannelId = Number(body.channelId);
+    const listingId = Number.isInteger(parsedListingId) && parsedListingId > 0 ? parsedListingId : null;
+    const channelId = Number.isInteger(parsedChannelId) && parsedChannelId > 0 ? parsedChannelId : null;
+    const importUrl = String(body.importUrl || '').trim();
+    const statusRaw = String(body.status || 'success').trim().toLowerCase();
+    const status = statusRaw === 'error' ? 'error' : 'success';
+    const eventCount = Math.max(Number(body.eventCount) || 0, 0);
+    const rawPayload = String(body.rawPayload || '');
+    const errorText = body.errorText ? String(body.errorText).trim().slice(0, 4000) : null;
+    const importingChannelLabel = String(body.importingChannelLabel || '').trim() || 'Manual ICS Import';
+    const providedExportingLabel = String(body.exportingChannelLabel || '').trim();
+    const exportingChannelLabel = providedExportingLabel || await findExportingChannelLabel(importUrl);
+
+    await logIcsTransaction({
+      listingId,
+      channelId,
+      importingChannelLabel,
+      exportingChannelLabel,
+      importUrl,
+      status,
+      eventCount,
+      rawPayload,
+      errorText
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to write ICS transaction log entry.' });
   }
 });
 

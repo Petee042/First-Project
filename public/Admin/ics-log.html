@@ -66,34 +66,37 @@
     .ics-status-success { background: #d4edda; color: #155724; }
     .ics-status-error   { background: #f8d7da; color: #721c24; }
 
-    /* Payload cell — truncated, tooltip on hover */
+    /* Payload cell — truncated preview */
+    .ics-info-cell {
+      text-align: center;
+      width: 2.2rem;
+    }
+    .ics-info-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.35rem;
+      height: 1.35rem;
+      border-radius: 999px;
+      border: 1px solid #3a5a8a;
+      color: #274c77;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.78rem;
+      background: #eef4ff;
+      cursor: pointer;
+    }
+    .ics-info-link:hover,
+    .ics-info-link:focus {
+      background: #dce9ff;
+      outline: none;
+    }
     .ics-payload-cell {
       max-width: 240px;
       overflow: hidden;
       text-overflow: ellipsis;
-      cursor: default;
+      cursor: text;
       position: relative;
-    }
-
-    /* Custom tooltip for the full payload */
-    .ics-payload-tooltip {
-      display: none;
-      position: fixed;
-      z-index: 9999;
-      max-width: 600px;
-      max-height: 420px;
-      overflow: auto;
-      background: #1e1e2e;
-      color: #cdd6f4;
-      font-family: 'Courier New', monospace;
-      font-size: 0.72rem;
-      line-height: 1.5;
-      padding: 0.75rem 1rem;
-      border-radius: 6px;
-      white-space: pre-wrap;
-      word-break: break-all;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.4);
-      pointer-events: none;
     }
 
     /* Pagination */
@@ -123,7 +126,7 @@
   <main class="dashboard">
     <div class="card-container wide admin-card">
       <h2>ICS Transaction Log</h2>
-      <p class="hint">Every ICS calendar import attempt is recorded here. Hover the <strong>Payload</strong> cell to view the full raw ICS data passed in that transaction.</p>
+      <p class="hint">Every ICS calendar import attempt is recorded here. Use <strong>(i)</strong> in the first column to open full payload details in a new tab.</p>
       <p id="icsLogMessage" class="message" aria-live="polite"></p>
 
       <section class="listing-form-section">
@@ -143,17 +146,18 @@
           <table class="ics-log-table" aria-label="ICS transaction log">
             <thead>
               <tr>
+                <th title="Open full transaction details">Info</th>
                 <th>DTG</th>
                 <th>Importing Channel</th>
                 <th>Exporting Channel</th>
                 <th>Status</th>
                 <th>Events</th>
                 <th>Import URL</th>
-                <th title="Hover to view full ICS payload">Payload</th>
+                <th>Payload Preview</th>
               </tr>
             </thead>
             <tbody id="icsLogTableBody">
-              <tr><td colspan="7">Loading…</td></tr>
+              <tr><td colspan="8">Loading…</td></tr>
             </tbody>
           </table>
         </div>
@@ -166,10 +170,6 @@
       </section>
     </div>
   </main>
-
-  <!-- Floating payload tooltip -->
-  <div id="icsPayloadTooltip" class="ics-payload-tooltip" role="tooltip" aria-hidden="true"></div>
-
   <script src="/Admin/ics-log.js"></script>
 </body>
 </html>

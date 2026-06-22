@@ -18,7 +18,6 @@ const refreshBtn   = document.getElementById('icsLogRefreshBtn');
 const prevBtn      = document.getElementById('icsLogPrevBtn');
 const nextBtn      = document.getElementById('icsLogNextBtn');
 const pageInfo     = document.getElementById('icsLogPageInfo');
-const tooltip      = document.getElementById('icsPayloadTooltip');
 const logoutBtn    = document.getElementById('adminLogoutBtn');
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -59,7 +58,7 @@ function setMessage(text, isError) {
 async function loadLog() {
   setMessage('');
   countEl.textContent = 'Loading…';
-  tableBody.innerHTML = '<tr><td colspan="7">Loading…</td></tr>';
+  tableBody.innerHTML = '<tr><td colspan="8">Loading…</td></tr>';
   prevBtn.disabled = true;
   nextBtn.disabled = true;
 
@@ -73,7 +72,7 @@ async function loadLog() {
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
       setMessage(data.error || 'Failed to load ICS log.', true);
-      tableBody.innerHTML = '<tr><td colspan="7">Error loading data.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="8">Error loading data.</td></tr>';
       return;
     }
     const data = await resp.json();
@@ -82,7 +81,7 @@ async function loadLog() {
   } catch (err) {
     console.error('ICS log fetch error:', err);
     setMessage('Network error loading ICS log.', true);
-    tableBody.innerHTML = '<tr><td colspan="7">Network error.</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="8">Network error.</td></tr>';
   }
 }
 
@@ -128,7 +127,7 @@ function renderPage() {
   nextBtn.disabled = currentPage >= totalPages;
 
   if (pageRows.length === 0) {
-    tableBody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#888;">No entries found.</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#888;">No entries found.</td></tr>';
     return;
   }
 
@@ -142,87 +141,70 @@ function renderPage() {
     const importUrl     = escapeHtml(truncate(entry.import_url, 60));
     const rawPayload    = String(entry.raw_payload || entry.error_text || '');
     const payloadPreview = escapeHtml(truncate(rawPayload, 60) || '(empty)');
-    // Store full payload as a data attribute for the tooltip
+    const detailTitle = [
+      formatDTG(entry.logged_at),
+      String(entry.importing_channel_label || '').trim(),
+      String(entry.status || '').trim()
+    ].filter(Boolean).join(' | ');
+    const encodedTitle = encodeURIComponent(detailTitle || 'ICS Transaction Payload');
     const payloadFull   = escapeHtml(rawPayload || '(no payload)');
 
     return `<tr>
+      <td class="ics-info-cell"><a href="#" class="ics-info-link" data-title="${encodedTitle}" data-payload="${payloadFull}" aria-label="Open full payload details in a new tab">(i)</a></td>
       <td>${dtg}</td>
       <td>${importing}</td>
       <td>${exporting}</td>
       <td>${statusBadge}</td>
       <td style="text-align:right;">${eventCount}</td>
       <td title="${escapeHtml(entry.import_url || '')}">${importUrl}</td>
-      <td class="ics-payload-cell"
-          data-payload="${payloadFull}"
-          tabindex="0"
-          aria-label="Hover to view full payload">${payloadPreview}</td>
+      <td class="ics-payload-cell">${payloadPreview}</td>
     </tr>`;
   }).join('');
 
-  // Attach tooltip events
-  tableBody.querySelectorAll('.ics-payload-cell').forEach(cell => {
-    cell.addEventListener('mouseenter', onPayloadMouseEnter);
-    cell.addEventListener('mousemove',  onPayloadMouseMove);
-    cell.addEventListener('mouseleave', onPayloadMouseLeave);
-    cell.addEventListener('focus',      onPayloadFocus);
-    cell.addEventListener('blur',       onPayloadBlur);
+  tableBody.querySelectorAll('.ics-info-link').forEach(link => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault();
+      const title = decodeURIComponent(link.getAttribute('data-title') || 'ICS Transaction Payload');
+      const payload = decodeHtmlEntities(link.getAttribute('data-payload') || '(empty)');
+      openPayloadTab(title, payload);
+    });
   });
 }
 
-// ── Tooltip ───────────────────────────────────────────────────────────────
-
-function showTooltip(payloadHtml, x, y) {
-  tooltip.innerHTML = payloadHtml;
-  tooltip.style.display = 'block';
-  tooltip.removeAttribute('aria-hidden');
-  positionTooltip(x, y);
+function decodeHtmlEntities(text) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(String(text || ''), 'text/html');
+  return (doc.documentElement && doc.documentElement.textContent) ? doc.documentElement.textContent : String(text || '');
 }
 
-function positionTooltip(x, y) {
-  const margin = 16;
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const tw = Math.min(600, vw - margin * 2);
-  const th = 420;
+function openPayloadTab(title, payload) {
+  const tab = window.open('about:blank', '_blank');
+  if (!tab) {
+    setMessage('Popup blocked by browser. Allow popups to view payload details in a new tab.', true);
+    return;
+  }
 
-  let left = x + 18;
-  let top  = y + 12;
-
-  if (left + tw > vw - margin) left = x - tw - 8;
-  if (left < margin) left = margin;
-  if (top + th > vh - margin) top = y - th - 8;
-  if (top < margin) top = margin;
-
-  tooltip.style.left = left + 'px';
-  tooltip.style.top  = top + 'px';
-}
-
-function hideTooltip() {
-  tooltip.style.display = 'none';
-  tooltip.setAttribute('aria-hidden', 'true');
-}
-
-function onPayloadMouseEnter(e) {
-  const payload = e.currentTarget.getAttribute('data-payload') || '(empty)';
-  showTooltip(payload, e.clientX, e.clientY);
-}
-
-function onPayloadMouseMove(e) {
-  positionTooltip(e.clientX, e.clientY);
-}
-
-function onPayloadMouseLeave() {
-  hideTooltip();
-}
-
-function onPayloadFocus(e) {
-  const payload = e.currentTarget.getAttribute('data-payload') || '(empty)';
-  const rect = e.currentTarget.getBoundingClientRect();
-  showTooltip(payload, rect.left, rect.bottom);
-}
-
-function onPayloadBlur() {
-  hideTooltip();
+  const escapedTitle = escapeHtml(title || 'ICS Transaction Payload');
+  const escapedPayload = escapeHtml(payload || '(empty)');
+  tab.document.open();
+  tab.document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapedTitle}</title>
+  <style>
+    body { margin: 0; padding: 1rem; font-family: Consolas, 'Courier New', monospace; background: #0f172a; color: #e2e8f0; }
+    h1 { margin: 0 0 0.8rem; font-size: 1rem; font-family: Segoe UI, Arial, sans-serif; color: #bfdbfe; }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-word; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 1rem; max-height: calc(100vh - 4rem); overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>${escapedTitle}</h1>
+  <pre>${escapedPayload}</pre>
+</body>
+</html>`);
+  tab.document.close();
 }
 
 // ── Event Listeners ───────────────────────────────────────────────────────

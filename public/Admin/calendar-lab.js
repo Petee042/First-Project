@@ -510,7 +510,36 @@ async function importFromUrl(state, url) {
 
   replaceImportedEvents(state, imported);
   applyStateUpdate(state);
-  return imported.length;
+  return {
+    importedCount: imported.length,
+    rawPayload: text,
+    requestUrl
+  };
+}
+
+async function logIcsTransactionFromCalendarLab(state, details) {
+  const payload = {
+    listingId: null,
+    channelId: null,
+    importingChannelLabel: 'Calendar Lab ' + String(state && state.id || '').trim(),
+    exportingChannelLabel: '',
+    importUrl: String(details && details.importUrl || '').trim(),
+    status: String(details && details.status || 'success').toLowerCase() === 'error' ? 'error' : 'success',
+    eventCount: Math.max(Number(details && details.eventCount) || 0, 0),
+    rawPayload: String(details && details.rawPayload || ''),
+    errorText: details && details.errorText ? String(details.errorText) : null
+  };
+
+  try {
+    await fetch('/api/admin/ics-log/client-import', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (_e) {
+    // Do not block Calendar Lab UX if logging fails.
+  }
 }
 
 function attachCalendarHandlers(state) {
@@ -613,9 +642,23 @@ function attachCalendarHandlers(state) {
     try {
       state.importUrl = url;
       state.importUrlInput.value = url;
-      const importedCount = await importFromUrl(state, url);
-      setCalendarStatus(state, 'Sync complete: ' + importedCount + ' imported event(s) refreshed.', false);
+      const result = await importFromUrl(state, url);
+      await logIcsTransactionFromCalendarLab(state, {
+        importUrl: result.requestUrl || url,
+        status: 'success',
+        eventCount: result.importedCount,
+        rawPayload: result.rawPayload,
+        errorText: null
+      });
+      setCalendarStatus(state, 'Sync complete: ' + result.importedCount + ' imported event(s) refreshed.', false);
     } catch (err) {
+      await logIcsTransactionFromCalendarLab(state, {
+        importUrl: url,
+        status: 'error',
+        eventCount: 0,
+        rawPayload: '',
+        errorText: err && err.message ? err.message : 'Failed to sync ICS.'
+      });
       setCalendarStatus(state, err.message || 'Failed to sync ICS.', true);
     }
   });
