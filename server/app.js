@@ -11516,10 +11516,12 @@ app.get('/api/admin/ics-log', requireAdminAuth, async (req, res) => {
     const offset = Math.max(Number(req.query.offset) || 0, 0);
     const result = await pool.query(
       `SELECT id, logged_at, listing_id, channel_id,
+              l.name AS listing_name,
               importing_channel_label, exporting_channel_label,
               import_url, status, event_count,
               raw_payload, error_text
-       FROM ics_transaction_log
+       FROM ics_transaction_log itl
+       LEFT JOIN listings l ON l.id = itl.listing_id
        ORDER BY logged_at DESC
        LIMIT $1 OFFSET $2`,
       [limit, offset]

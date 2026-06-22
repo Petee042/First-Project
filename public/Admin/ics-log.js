@@ -58,7 +58,7 @@ function setMessage(text, isError) {
 async function loadLog() {
   setMessage('');
   countEl.textContent = 'Loading…';
-  tableBody.innerHTML = '<tr><td colspan="8">Loading…</td></tr>';
+  tableBody.innerHTML = '<tr><td colspan="10">Loading…</td></tr>';
   prevBtn.disabled = true;
   nextBtn.disabled = true;
 
@@ -72,7 +72,7 @@ async function loadLog() {
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
       setMessage(data.error || 'Failed to load ICS log.', true);
-      tableBody.innerHTML = '<tr><td colspan="8">Error loading data.</td></tr>';
+      tableBody.innerHTML = '<tr><td colspan="10">Error loading data.</td></tr>';
       return;
     }
     const data = await resp.json();
@@ -81,7 +81,7 @@ async function loadLog() {
   } catch (err) {
     console.error('ICS log fetch error:', err);
     setMessage('Network error loading ICS log.', true);
-    tableBody.innerHTML = '<tr><td colspan="8">Network error.</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="10">Network error.</td></tr>';
   }
 }
 
@@ -95,6 +95,8 @@ function applyFilters() {
     if (status && String(entry.status || '').toLowerCase() !== status) return false;
     if (query) {
       const haystack = [
+        entry.listing_id,
+        entry.listing_name,
         entry.importing_channel_label,
         entry.exporting_channel_label,
         entry.import_url,
@@ -127,12 +129,14 @@ function renderPage() {
   nextBtn.disabled = currentPage >= totalPages;
 
   if (pageRows.length === 0) {
-    tableBody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#888;">No entries found.</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#888;">No entries found.</td></tr>';
     return;
   }
 
   tableBody.innerHTML = pageRows.map(entry => {
     const dtg           = escapeHtml(formatDTG(entry.logged_at));
+    const listingId     = entry.listing_id ? escapeHtml(String(entry.listing_id)) : '—';
+    const listingName   = escapeHtml(truncate(entry.listing_name || '', 40) || '—');
     const importing     = escapeHtml(entry.importing_channel_label || '—');
     const exporting     = escapeHtml(entry.exporting_channel_label || '—');
     const statusLower   = String(entry.status || '').toLowerCase();
@@ -152,6 +156,8 @@ function renderPage() {
     return `<tr>
       <td class="ics-info-cell"><a href="#" class="ics-info-link" data-title="${encodedTitle}" data-payload="${payloadFull}" aria-label="Open full payload details in a new tab">(i)</a></td>
       <td>${dtg}</td>
+      <td>${listingId}</td>
+      <td title="${escapeHtml(entry.listing_name || '')}">${listingName}</td>
       <td>${importing}</td>
       <td>${exporting}</td>
       <td>${statusBadge}</td>
