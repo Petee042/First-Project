@@ -15,6 +15,7 @@ const tableBody    = document.getElementById('icsLogTableBody');
 const searchInput  = document.getElementById('icsLogSearch');
 const statusFilter = document.getElementById('icsLogStatusFilter');
 const refreshBtn   = document.getElementById('icsLogRefreshBtn');
+const clearBtn     = document.getElementById('icsLogClearBtn');
 const prevBtn      = document.getElementById('icsLogPrevBtn');
 const nextBtn      = document.getElementById('icsLogNextBtn');
 const pageInfo     = document.getElementById('icsLogPageInfo');
@@ -218,6 +219,40 @@ function openPayloadTab(title, payload) {
 searchInput.addEventListener('input', applyFilters);
 statusFilter.addEventListener('change', applyFilters);
 refreshBtn.addEventListener('click', loadLog);
+if (clearBtn) {
+  clearBtn.addEventListener('click', async () => {
+    const confirmed = window.confirm('Clear the entire ICS transaction log? This cannot be undone.');
+    if (!confirmed) return;
+
+    clearBtn.disabled = true;
+    setMessage('Clearing ICS transaction log...', false);
+    try {
+      const resp = await fetch('/api/admin/ics-log', {
+        method: 'DELETE',
+        credentials: 'same-origin'
+      });
+      if (resp.status === 401) {
+        setMessage('Admin session expired. Please log in again.', true);
+        setTimeout(() => { window.location.href = '/Admin/index.html'; }, 2000);
+        return;
+      }
+
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        setMessage(data.error || 'Failed to clear ICS transaction log.', true);
+        return;
+      }
+
+      const deletedCount = Number(data.deletedCount || 0);
+      setMessage('ICS transaction log cleared (' + deletedCount + ' entr' + (deletedCount === 1 ? 'y' : 'ies') + ' removed).', false);
+      await loadLog();
+    } catch (_err) {
+      setMessage('Network error clearing ICS transaction log.', true);
+    } finally {
+      clearBtn.disabled = false;
+    }
+  });
+}
 
 prevBtn.addEventListener('click', () => {
   if (currentPage > 1) { currentPage--; renderPage(); }

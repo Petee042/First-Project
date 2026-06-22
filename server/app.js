@@ -11576,6 +11576,17 @@ app.post('/api/admin/ics-log/client-import', requireAdminAuth, async (req, res) 
   }
 });
 
+// DELETE /api/admin/ics-log — clear all ICS transaction log entries
+app.delete('/api/admin/ics-log', requireAdminAuth, async (_req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM ics_transaction_log');
+    return res.json({ ok: true, deletedCount: Number(result.rowCount || 0) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to clear ICS transaction log.' });
+  }
+});
+
 // GET /health — simple health check for Render
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
