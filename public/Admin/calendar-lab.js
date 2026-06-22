@@ -476,20 +476,28 @@ function replaceImportedEvents(state, importedEvents) {
 
 async function importFromUrl(state, url) {
   let requestUrl = String(url || '').trim();
+  const requestHeaders = {};
 
   try {
     const parsed = new URL(requestUrl, window.location.origin);
     const isSameOrigin = parsed.origin === window.location.origin;
     const isListingExport = /^\/api\/listings\/\d+\/calendar\.ics$/i.test(parsed.pathname);
-    if (isSameOrigin && isListingExport && !parsed.searchParams.has('source') && !parsed.searchParams.has('feedSource')) {
-      parsed.searchParams.set('source', 'Calendar ' + String(state && state.id || ''));
+    if (isSameOrigin && isListingExport) {
+      const sourceLabel = 'Calendar ' + String(state && state.id || '');
+      // Always force the request source to the importing calendar to avoid mirror-loop duplication.
+      parsed.searchParams.set('source', sourceLabel);
+      parsed.searchParams.delete('feedSource');
+      requestHeaders['X-Calendar-Source'] = sourceLabel;
       requestUrl = parsed.toString();
     }
   } catch {
     // Keep original URL if parsing fails.
   }
 
-  const response = await fetch(requestUrl, { cache: 'no-store' });
+  const response = await fetch(requestUrl, {
+    cache: 'no-store',
+    headers: requestHeaders
+  });
   if (!response.ok) {
     throw new Error('Unable to fetch ICS URL (HTTP ' + response.status + ').');
   }

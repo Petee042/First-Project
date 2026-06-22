@@ -9763,7 +9763,7 @@ function normaliseCalendarSourceName(value) {
 }
 
 function detectCalendarRequestSource(req) {
-  const explicitSource = String(req.query.source || req.query.feedSource || '').trim();
+  const explicitSource = String(req.query.source || req.query.feedSource || req.get('x-calendar-source') || '').trim();
   if (explicitSource) {
     return explicitSource;
   }
