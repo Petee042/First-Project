@@ -76,6 +76,27 @@
           <p class="hint" data-role="status"></p>
         </section>
 
+        <section class="listing-form-section admin-calendar-lab-card" id="noChangeDynamicBlockSection">
+          <h3>No Change Dynamic Block Testing</h3>
+          <p class="hint">Select up to 6 no-change weekdays, then calculate dynamic block dates from reservations in Calendar A.</p>
+
+          <div class="admin-lab-row" style="flex-wrap: wrap; row-gap: 0.5rem;">
+            <label><input type="checkbox" data-no-change-day="0" /> Sunday</label>
+            <label><input type="checkbox" data-no-change-day="1" /> Monday</label>
+            <label><input type="checkbox" data-no-change-day="2" /> Tuesday</label>
+            <label><input type="checkbox" data-no-change-day="3" /> Wednesday</label>
+            <label><input type="checkbox" data-no-change-day="4" /> Thursday</label>
+            <label><input type="checkbox" data-no-change-day="5" /> Friday</label>
+            <label><input type="checkbox" data-no-change-day="6" /> Saturday</label>
+          </div>
+
+          <div class="admin-lab-links-row">
+            <button type="button" class="btn primary inline-btn" id="calculateNoChangeBlocksBtn">Calculate Dynamic Block</button>
+          </div>
+
+          <p class="hint" id="noChangeDynamicBlockStatus"></p>
+        </section>
+
         <section class="listing-form-section admin-calendar-lab-card" data-calendar-id="B">
           <h3>Calendar B</h3>
 

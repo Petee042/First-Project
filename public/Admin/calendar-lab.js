@@ -5,6 +5,8 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const FULL_WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const NO_CHANGE_DYNAMIC_SOURCE = 'No Change Dynamic Block';
 
 const calendarStates = {};
 
@@ -539,6 +541,207 @@ function applyStateUpdate(state) {
   });
 }
 
+function getWeekdayFromDateKey(dateKey) {
+  const date = parseDateKey(dateKey);
+  if (!date) return null;
+  return date.getUTCDay();
+}
+
+function wrapWeekdayIndex(value) {
+  return (value + 7) % 7;
+}
+
+function getNoChangeRunProfile(selectedDaySet, weekday) {
+  const day = Number(weekday);
+  if (!selectedDaySet || !selectedDaySet.has(day)) {
+    return null;
+  }
+
+  let backwards = 0;
+  for (let i = 1; i <= 6; i += 1) {
+    const candidate = wrapWeekdayIndex(day - i);
+    if (!selectedDaySet.has(candidate)) break;
+    backwards += 1;
+  }
+
+  let forwards = 0;
+  for (let i = 1; i <= 6; i += 1) {
+    const candidate = wrapWeekdayIndex(day + i);
+    if (!selectedDaySet.has(candidate)) break;
+    forwards += 1;
+  }
+
+  return {
+    period: backwards + 1 + forwards,
+    index: backwards + 1
+  };
+}
+
+function isNoChangeDynamicBlockEvent(event) {
+  const eventSource = String(event && event.eventSource || '').trim().toLowerCase();
+  return eventSource === NO_CHANGE_DYNAMIC_SOURCE.toLowerCase();
+}
+
+function buildNoChangeBlockEvent(startKey, endKey, reason) {
+  return normalizeEvent({
+    start: startKey,
+    end: endKey,
+    source: 'local',
+    eventType: 'Block',
+    eventSource: NO_CHANGE_DYNAMIC_SOURCE,
+    eventOrigin: 'Local',
+    summary: 'Not available',
+    description: String(reason || 'Blocked by no-change rule').trim()
+  });
+}
+
+function mergeNoChangeBlockRanges(ranges) {
+  const ordered = (Array.isArray(ranges) ? ranges : [])
+    .filter((item) => item && item.start && item.end && item.end > item.start)
+    .sort((a, b) => String(a.start).localeCompare(String(b.start)));
+
+  if (!ordered.length) return [];
+
+  const merged = [ordered[0]];
+  for (let i = 1; i < ordered.length; i += 1) {
+    const current = ordered[i];
+    const last = merged[merged.length - 1];
+    if (current.start <= last.end) {
+      if (current.end > last.end) {
+        last.end = current.end;
+      }
+      if (current.reason && !String(last.reason || '').includes(String(current.reason))) {
+        last.reason = String(last.reason || '') + '; ' + String(current.reason);
+      }
+    } else {
+      merged.push(current);
+    }
+  }
+
+  return merged;
+}
+
+function computeNoChangeDynamicBlocksForCalendarA(events, selectedDaySet) {
+  const sourceEvents = Array.isArray(events) ? events : [];
+  const reservationEvents = sourceEvents.filter((event) => {
+    const type = String(event && event.eventType || '').trim().toLowerCase();
+    return type !== 'block';
+  });
+
+  const ranges = [];
+  reservationEvents.forEach((event) => {
+    const checkin = String(event && event.start || '').trim();
+    const checkout = String(event && event.end || '').trim();
+    if (!parseDateKey(checkin) || !parseDateKey(checkout) || checkout <= checkin) {
+      return;
+    }
+
+    const checkinWeekday = getWeekdayFromDateKey(checkin);
+    if (checkinWeekday !== null && selectedDaySet.has(checkinWeekday)) {
+      const profile = getNoChangeRunProfile(selectedDaySet, checkinWeekday);
+      if (profile && profile.index > 0) {
+        const blockStart = toDateKey(addUtcDays(parseDateKey(checkin), -profile.index));
+        const blockEnd = checkin;
+        if (blockEnd > blockStart) {
+          ranges.push({
+            start: blockStart,
+            end: blockEnd,
+            reason: 'Check-in on no-change day (' + FULL_WEEKDAY_NAMES[checkinWeekday] + '): block ' + profile.index + ' day(s) before check-in.'
+          });
+        }
+      }
+    }
+
+    const checkoutWeekday = getWeekdayFromDateKey(checkout);
+    if (checkoutWeekday !== null && selectedDaySet.has(checkoutWeekday)) {
+      const profile = getNoChangeRunProfile(selectedDaySet, checkoutWeekday);
+      if (profile) {
+        const blockDays = Math.max(0, profile.period - profile.index + 1);
+        if (blockDays > 0) {
+          const blockStart = checkout;
+          const blockEnd = toDateKey(addUtcDays(parseDateKey(checkout), blockDays));
+          if (blockEnd > blockStart) {
+            ranges.push({
+              start: blockStart,
+              end: blockEnd,
+              reason: 'Check-out on no-change day (' + FULL_WEEKDAY_NAMES[checkoutWeekday] + '): block ' + blockDays + ' day(s) from check-out.'
+            });
+          }
+        }
+      }
+    }
+  });
+
+  return {
+    reservationCount: reservationEvents.length,
+    blocks: mergeNoChangeBlockRanges(ranges)
+  };
+}
+
+function initNoChangeDynamicBlockTesting() {
+  const section = document.getElementById('noChangeDynamicBlockSection');
+  const statusEl = document.getElementById('noChangeDynamicBlockStatus');
+  const button = document.getElementById('calculateNoChangeBlocksBtn');
+  if (!section || !statusEl || !button) {
+    return;
+  }
+
+  const checkboxEls = Array.from(section.querySelectorAll('input[type="checkbox"][data-no-change-day]'));
+  const setStatus = (text, isError) => {
+    statusEl.textContent = text || '';
+    statusEl.className = text ? ('hint ' + (isError ? 'message error' : 'message success')) : 'hint';
+  };
+
+  checkboxEls.forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const checkedCount = checkboxEls.filter((item) => item.checked).length;
+      if (checkedCount > 6) {
+        checkbox.checked = false;
+        setStatus('Select up to 6 no-change weekdays.', true);
+      } else {
+        setStatus('', false);
+      }
+    });
+  });
+
+  button.addEventListener('click', () => {
+    const stateA = calendarStates.A;
+    if (!stateA) {
+      setStatus('Calendar A is not loaded.', true);
+      return;
+    }
+
+    const selectedDays = new Set(
+      checkboxEls
+        .filter((el) => el.checked)
+        .map((el) => Number(el.getAttribute('data-no-change-day')))
+        .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6)
+    );
+
+    if (!selectedDays.size) {
+      setStatus('Select at least one no-change weekday.', true);
+      return;
+    }
+
+    const baseEvents = (stateA.events || []).filter((event) => !isNoChangeDynamicBlockEvent(event));
+    const calculated = computeNoChangeDynamicBlocksForCalendarA(baseEvents, selectedDays);
+    const dynamicBlockEvents = calculated.blocks
+      .map((range) => buildNoChangeBlockEvent(range.start, range.end, range.reason))
+      .filter(Boolean);
+
+    stateA.events = [...baseEvents, ...dynamicBlockEvents]
+      .map(normalizeEvent)
+      .filter(Boolean)
+      .sort((a, b) => (a.start + a.end).localeCompare(b.start + b.end));
+
+    applyStateUpdate(stateA);
+    setStatus(
+      'Calculated ' + dynamicBlockEvents.length + ' dynamic block(s) from ' + calculated.reservationCount + ' reservation(s) in Calendar A.',
+      false
+    );
+  });
+}
+
 function replaceImportedEvents(state, importedEvents) {
   const localOnly = state.events.filter((event) => {
     const source = String(event && event.source || '').trim().toLowerCase();
@@ -841,6 +1044,7 @@ async function init() {
     const grid = document.getElementById('calendarLabGrid');
     grid.classList.remove('hidden');
     await Promise.all(Array.from(grid.querySelectorAll('[data-calendar-id]')).map(registerCalendar));
+    initNoChangeDynamicBlockTesting();
     setPageMessage('Ready. Create blue reservations, export ICS, and import into another calendar for red reservations.', false);
   } catch {
     setPageMessage('Failed to initialize Calendar ICS Test Lab.', true);
