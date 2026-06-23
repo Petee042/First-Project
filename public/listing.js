@@ -1220,7 +1220,7 @@ async function loadListing() {
   document.getElementById('listingFeedsSection').classList.remove('hidden');
   document.getElementById('listingAssignmentEditor').classList.remove('hidden');
 
-  const listingRes = await fetch('/api/listings/' + listingId);
+  const listingRes = await fetch('/api/listings/' + listingId, { cache: 'no-store' });
   if (listingRes.status === 401) {
     window.location.href = '/';
     return;
@@ -1636,6 +1636,7 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
       await saveListingManagerAssignments();
     }
 
+    await loadListing();
     document.getElementById('listingTitle').textContent = 'Listing: ' + data.listing.name;
     initialListingFormState = getListingFormState();
     setListingMessage('Listing updated.', false);
