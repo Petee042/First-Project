@@ -206,7 +206,9 @@ function buildIcs(state) {
     'X-WR-CALNAME:Calendar ' + state.id
   ];
 
-  state.events.forEach((event, idx) => {
+  const exportEvents = (state.events || []).filter((event) => event && event.source !== 'imported');
+
+  exportEvents.forEach((event, idx) => {
     const start = event.start.replace(/-/g, '');
     const end = event.end.replace(/-/g, '');
     const eventType = String(event.eventType || 'Reservation');

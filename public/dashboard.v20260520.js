@@ -4735,6 +4735,14 @@ function formatEventLogType(entryType) {
   return type || '—';
 }
 
+function escapeHtml(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function formatEventLogDateRange(entry) {
   const startDate = String(entry && (entry.new_start_date || entry.old_start_date) || '').trim();
   const endDate = String(entry && (entry.new_end_date || entry.old_end_date) || '').trim();
