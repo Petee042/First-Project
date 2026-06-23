@@ -2810,9 +2810,6 @@ function opsCalendarRenderReservationCalendar(events, changes) {
 
       const cell = document.createElement('div');
       cell.className = 'calendar-day';
-      if (dayEntry && dayEntry.conflict) {
-        cell.classList.add('calendar-day-conflict');
-      }
       cell.title = buildDayTooltip(dayEntry);
 
       const num = document.createElement('div');
@@ -2905,6 +2902,10 @@ function opsCalendarRenderReservationCalendar(events, changes) {
           }
         } else {
           bar.classList.add('day-bar-empty');
+        }
+
+        if (listingEntry && listingEntry.conflict && !bar.classList.contains('day-bar-empty')) {
+          bar.classList.add('day-bar-conflict');
         }
 
         slot.appendChild(bar);
@@ -4702,6 +4703,57 @@ function formatEventLogType(entryType) {
   return type || '—';
 }
 
+function formatEventLogDateRange(entry) {
+  const startDate = String(entry && (entry.new_start_date || entry.old_start_date) || '').trim();
+  const endDate = String(entry && (entry.new_end_date || entry.old_end_date) || '').trim();
+  return {
+    startDate: startDate || '—',
+    endDate: endDate || '—'
+  };
+}
+
+function buildEventLogDetailsText(entry) {
+  const dateRange = formatEventLogDateRange(entry);
+  return [
+    'Type: ' + formatEventLogType(entry && entry.entry_type),
+    'Listing: ' + String(entry && (entry.listing_name || ('Listing #' + entry.listing_id)) || '—'),
+    'Channel: ' + String(entry && (entry.channel_label || entry.channel_id) || '—'),
+    'Start Date: ' + dateRange.startDate,
+    'End Date: ' + dateRange.endDate,
+    'Description: ' + String(entry && entry.description || '—')
+  ].join('\n');
+}
+
+function openEventLogDetailsTab(entry) {
+  const tab = window.open('about:blank', '_blank');
+  if (!tab) {
+    setEventLogMessage('Popup blocked by browser. Allow popups to view event details.', true);
+    return;
+  }
+
+  const escapedTitle = escapeHtml('Calendar Event Log Details');
+  const escapedText = escapeHtml(buildEventLogDetailsText(entry));
+  tab.document.open();
+  tab.document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapedTitle}</title>
+  <style>
+    body { margin: 0; padding: 1rem; font-family: Consolas, 'Courier New', monospace; background: #0f172a; color: #e2e8f0; }
+    h1 { margin: 0 0 0.8rem; font-size: 1rem; font-family: Segoe UI, Arial, sans-serif; color: #bfdbfe; }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-word; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 1rem; max-height: calc(100vh - 4rem); overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>${escapedTitle}</h1>
+  <pre>${escapedText}</pre>
+</body>
+</html>`);
+  tab.document.close();
+}
+
 async function loadEventLog() {
   const tbody = document.getElementById('eventLogTableBody');
   if (!tbody) return;
@@ -4750,10 +4802,16 @@ async function loadEventLog() {
       channelCell.textContent = entry.channel_label || entry.channel_id || '—';
 
       const detailsCell = document.createElement('td');
-      detailsCell.textContent = String(entry.details || '').slice(0, 200);
-      if (entry.details && entry.details.length > 200) {
-        detailsCell.title = entry.details;
-      }
+      const infoBtn = document.createElement('button');
+      infoBtn.type = 'button';
+      infoBtn.className = 'event-log-info-btn';
+      infoBtn.textContent = 'i';
+      infoBtn.title = 'Open event details';
+      infoBtn.setAttribute('aria-label', 'Open event details');
+      infoBtn.addEventListener('click', function() {
+        openEventLogDetailsTab(entry);
+      });
+      detailsCell.appendChild(infoBtn);
 
       tr.appendChild(timeCell);
       tr.appendChild(typeCell);

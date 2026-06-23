@@ -752,6 +752,28 @@ textarea:focus {
   background: #ffe3e3;
 }
 
+.event-log-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 1px solid #3a5a8a;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #274c77;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.event-log-info-btn:hover,
+.event-log-info-btn:focus {
+  background: #dce9ff;
+  outline: none;
+}
+
 .source-airbnb {
   color: #ff5a5f;
   font-weight: 600;
@@ -1803,6 +1825,11 @@ textarea:focus {
 .calendar-day-conflict {
   background: #ffe9e9;
   border-color: #ef8f8f;
+}
+
+.day-bar-conflict {
+  border: 2px solid #d94b4b !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
 }
 
 .calendar-day-advance-blocked {
