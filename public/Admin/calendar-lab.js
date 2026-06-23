@@ -530,7 +530,56 @@ function applyDeleteRange(events, deleteStart, deleteEnd) {
   return output.sort((a, b) => (a.start + a.end).localeCompare(b.start + b.end));
 }
 
+function getSelectedNoChangeDaySet() {
+  const section = document.getElementById('noChangeDynamicBlockSection');
+  if (!section) {
+    return new Set();
+  }
+
+  return new Set(
+    Array.from(section.querySelectorAll('input[type="checkbox"][data-no-change-day]:checked'))
+      .map((el) => Number(el.getAttribute('data-no-change-day')))
+      .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6)
+  );
+}
+
+function applyNoChangeDynamicBlocksToCalendarA(stateA) {
+  if (!stateA || stateA.id !== 'A') {
+    return { reservationCount: 0, blockCount: 0, applied: false };
+  }
+
+  const selectedDays = getSelectedNoChangeDaySet();
+  const baseEvents = (stateA.events || []).filter((event) => !isNoChangeDynamicBlockEvent(event));
+
+  if (!selectedDays.size) {
+    stateA.events = baseEvents
+      .map(normalizeEvent)
+      .filter(Boolean)
+      .sort((a, b) => (a.start + a.end).localeCompare(b.start + b.end));
+    return { reservationCount: 0, blockCount: 0, applied: false };
+  }
+
+  const calculated = computeNoChangeDynamicBlocksForCalendarA(baseEvents, selectedDays);
+  const dynamicBlockEvents = calculated.blocks
+    .map((range) => buildNoChangeBlockEvent(range.start, range.end, range.reason))
+    .filter(Boolean);
+
+  stateA.events = [...baseEvents, ...dynamicBlockEvents]
+    .map(normalizeEvent)
+    .filter(Boolean)
+    .sort((a, b) => (a.start + a.end).localeCompare(b.start + b.end));
+
+  return {
+    reservationCount: calculated.reservationCount,
+    blockCount: dynamicBlockEvents.length,
+    applied: true
+  };
+}
+
 function applyStateUpdate(state) {
+  if (state && state.id === 'A') {
+    applyNoChangeDynamicBlocksToCalendarA(state);
+  }
   updateExportLink(state);
   renderCalendar(state);
   persistCalendarState(state);
@@ -711,32 +760,17 @@ function initNoChangeDynamicBlockTesting() {
       return;
     }
 
-    const selectedDays = new Set(
-      checkboxEls
-        .filter((el) => el.checked)
-        .map((el) => Number(el.getAttribute('data-no-change-day')))
-        .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6)
-    );
+    const selectedDays = getSelectedNoChangeDaySet();
 
     if (!selectedDays.size) {
       setStatus('Select at least one no-change weekday.', true);
       return;
     }
 
-    const baseEvents = (stateA.events || []).filter((event) => !isNoChangeDynamicBlockEvent(event));
-    const calculated = computeNoChangeDynamicBlocksForCalendarA(baseEvents, selectedDays);
-    const dynamicBlockEvents = calculated.blocks
-      .map((range) => buildNoChangeBlockEvent(range.start, range.end, range.reason))
-      .filter(Boolean);
-
-    stateA.events = [...baseEvents, ...dynamicBlockEvents]
-      .map(normalizeEvent)
-      .filter(Boolean)
-      .sort((a, b) => (a.start + a.end).localeCompare(b.start + b.end));
-
+    const calculated = applyNoChangeDynamicBlocksToCalendarA(stateA);
     applyStateUpdate(stateA);
     setStatus(
-      'Calculated ' + dynamicBlockEvents.length + ' dynamic block(s) from ' + calculated.reservationCount + ' reservation(s) in Calendar A.',
+      'Calculated ' + calculated.blockCount + ' dynamic block(s) from ' + calculated.reservationCount + ' reservation(s) in Calendar A.',
       false
     );
   });
