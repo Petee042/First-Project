@@ -6690,22 +6690,38 @@ async function notifyManagersOfCalendarConflict(opts) {
     return;
   }
 
-  const listingNameResult = await pool.query('SELECT name FROM listings WHERE id = $1 LIMIT 1', [listingId]);
-  const listingName = String(listingNameResult.rows[0] && listingNameResult.rows[0].name || ('Listing ' + listingId)).trim();
-  const subject = String(opts && opts.subject || `Calendar Conflict - ${listingName}`).trim() || `Calendar Conflict - ${listingName}`;
-  const intro = String(opts && opts.introText || `A calendar conflict was detected for ${listingName}.`).trim();
+  const listingInfoResult = await pool.query(
+    `SELECT l.name AS listing_name, COALESCE(NULLIF(TRIM(p.name), ''), '') AS property_name
+     FROM listings l
+     LEFT JOIN properties p ON p.id = l.property_id
+     WHERE l.id = $1
+     LIMIT 1`,
+    [listingId]
+  );
+  const listingName = String(listingInfoResult.rows[0] && listingInfoResult.rows[0].listing_name || ('Listing ' + listingId)).trim();
+  const propertyName = String(listingInfoResult.rows[0] && listingInfoResult.rows[0].property_name || '').trim();
+  const listingLabel = propertyName ? (listingName + ' (' + propertyName + ')') : listingName;
+
+  const replaceListingReference = (value) => String(value || '')
+    .replace(new RegExp('\\blisting\\s+' + String(listingId) + '\\b', 'ig'), 'listing "' + listingName + '"')
+    .replace(new RegExp('\\bListing:\\s*' + String(listingId) + '\\b', 'ig'), 'Listing: ' + listingName);
+
+  const defaultSubject = propertyName
+    ? ('Calendar Conflict - ' + propertyName + ' - ' + listingName)
+    : ('Calendar Conflict - ' + listingName);
+  const subject = String(defaultSubject).trim();
+
+  const introRaw = String(opts && opts.introText || '').trim();
+  const intro = introRaw
+    ? replaceListingReference(introRaw)
+    : ('A calendar conflict was detected for listing "' + listingName + '"' + (propertyName ? (' in property "' + propertyName + '".') : '.'));
   const extraLines = Array.isArray(opts && opts.extraConflictLines) ? opts.extraConflictLines.filter(Boolean) : [];
-  const tableConflictLines = await getConflictEventDetailLinesForListing(listingId);
+  const normalisedExtraLines = extraLines.map((line) => replaceListingReference(line));
 
   const sections = [intro, ''];
-  if (tableConflictLines.length) {
-    sections.push('Conflicting calendar events:');
-    sections.push(...tableConflictLines);
-    sections.push('');
-  }
-  if (extraLines.length) {
+  if (normalisedExtraLines.length) {
     sections.push('Detected conflict overlaps:');
-    sections.push(...extraLines);
+    sections.push(...normalisedExtraLines);
     sections.push('');
   }
   sections.push('Please log in to review and resolve conflicts.');
