@@ -645,6 +645,28 @@ async function initializeUserStore() {
     ON ics_transaction_log (logged_at DESC)
   `);
 
+  // ── Admin Calendar Lab: shared state across devices + persistent published exports
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS calendar_lab_states (
+      owner_key TEXT NOT NULL,
+      calendar_id TEXT NOT NULL,
+      export_key TEXT NOT NULL UNIQUE,
+      events_json TEXT NOT NULL DEFAULT '[]',
+      import_url TEXT NOT NULL DEFAULT '',
+      view_date TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (owner_key, calendar_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS calendar_lab_exports (
+      export_key TEXT PRIMARY KEY,
+      ics_text TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS booked_in_changes (
       id BIGSERIAL PRIMARY KEY,
@@ -7767,7 +7789,158 @@ app.get('/api/admin/me', (req, res) => {
   return res.status(401).json({ error: 'Admin unauthorised' });
 });
 
-function handleCalendarLabPublish(req, res) {
+function normaliseCalendarLabId(value) {
+  const text = String(value || '').trim();
+  return /^[A-Za-z0-9_-]{1,32}$/.test(text) ? text : '';
+}
+
+function buildCalendarLabOwnerKey(req) {
+  return String(req && req.session && req.session.adminUsername || ADMIN_USERNAME || 'admin').trim().toLowerCase();
+}
+
+function buildCalendarLabExportKey(calendarId) {
+  const id = normaliseCalendarLabId(calendarId);
+  const suffix = randomUUID().replace(/-/g, '').slice(0, 32);
+  return String(id || 'calendar').toLowerCase() + '-' + suffix;
+}
+
+function normaliseCalendarLabStatePayload(body) {
+  const input = body && typeof body === 'object' ? body : {};
+  const sourceEvents = Array.isArray(input.events) ? input.events : [];
+  const events = sourceEvents
+    .map((event) => {
+      if (!event || typeof event !== 'object') return null;
+      const start = String(event.start || '').trim();
+      const end = String(event.end || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end <= start) {
+        return null;
+      }
+      return {
+        start,
+        end,
+        source: String(event.source || '').trim().toLowerCase() === 'imported' ? 'imported' : 'local',
+        eventType: String(event.eventType || 'Reservation').trim() || 'Reservation',
+        eventSource: String(event.eventSource || '').trim(),
+        eventOrigin: String(event.eventOrigin || '').trim(),
+        summary: String(event.summary || '').trim()
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 5000);
+
+  const importUrl = String(input.importUrl || '').trim().slice(0, 2000);
+  const viewDate = String(input.viewDate || '').trim();
+  const exportKey = String(input.exportKey || '').trim();
+  return { events, importUrl, viewDate, exportKey };
+}
+
+async function getOrCreateCalendarLabState(ownerKey, calendarId, desiredExportKey) {
+  const owner = String(ownerKey || '').trim().toLowerCase();
+  const id = normaliseCalendarLabId(calendarId);
+  if (!owner || !id) {
+    return null;
+  }
+
+  const existing = await pool.query(
+    `SELECT owner_key, calendar_id, export_key, events_json, import_url, view_date
+     FROM calendar_lab_states
+     WHERE owner_key = $1 AND calendar_id = $2
+     LIMIT 1`,
+    [owner, id]
+  );
+  if (existing.rows[0]) {
+    return existing.rows[0];
+  }
+
+  const candidate = /^[a-zA-Z0-9_-]{16,120}$/.test(String(desiredExportKey || '').trim())
+    ? String(desiredExportKey || '').trim()
+    : buildCalendarLabExportKey(id);
+
+  const created = await pool.query(
+    `INSERT INTO calendar_lab_states (owner_key, calendar_id, export_key, events_json, import_url, view_date, updated_at)
+     VALUES ($1, $2, $3, '[]', '', '', CURRENT_TIMESTAMP)
+     ON CONFLICT (owner_key, calendar_id)
+     DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+     RETURNING owner_key, calendar_id, export_key, events_json, import_url, view_date`,
+    [owner, id, candidate]
+  );
+
+  return created.rows[0] || null;
+}
+
+// GET /api/admin/calendar-lab/state/:calendarId — shared Calendar Lab state for this admin user
+app.get('/api/admin/calendar-lab/state/:calendarId', requireAdminAuth, async (req, res) => {
+  const calendarId = normaliseCalendarLabId(req.params.calendarId);
+  if (!calendarId) {
+    return res.status(400).json({ error: 'Invalid calendar id.' });
+  }
+
+  try {
+    const ownerKey = buildCalendarLabOwnerKey(req);
+    const desiredExportKey = String(req.query.exportKey || '').trim();
+    const row = await getOrCreateCalendarLabState(ownerKey, calendarId, desiredExportKey);
+    if (!row) {
+      return res.status(500).json({ error: 'Failed to load calendar state.' });
+    }
+
+    let events = [];
+    try {
+      const parsed = JSON.parse(String(row.events_json || '[]'));
+      events = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      events = [];
+    }
+
+    return res.json({
+      calendarId,
+      exportKey: String(row.export_key || '').trim(),
+      state: {
+        events,
+        importUrl: String(row.import_url || ''),
+        viewDate: String(row.view_date || '')
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load calendar state.' });
+  }
+});
+
+// PUT /api/admin/calendar-lab/state/:calendarId — save shared Calendar Lab state for this admin user
+app.put('/api/admin/calendar-lab/state/:calendarId', requireAdminAuth, async (req, res) => {
+  const calendarId = normaliseCalendarLabId(req.params.calendarId);
+  if (!calendarId) {
+    return res.status(400).json({ error: 'Invalid calendar id.' });
+  }
+
+  try {
+    const ownerKey = buildCalendarLabOwnerKey(req);
+    const payload = normaliseCalendarLabStatePayload(req.body);
+    const row = await getOrCreateCalendarLabState(ownerKey, calendarId, payload.exportKey);
+    if (!row) {
+      return res.status(500).json({ error: 'Failed to save calendar state.' });
+    }
+
+    const exportKey = String(row.export_key || '').trim();
+
+    await pool.query(
+      `UPDATE calendar_lab_states
+       SET events_json = $1,
+           import_url = $2,
+           view_date = $3,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE owner_key = $4 AND calendar_id = $5`,
+      [JSON.stringify(payload.events), payload.importUrl, payload.viewDate, ownerKey, calendarId]
+    );
+
+    return res.json({ ok: true, calendarId, exportKey });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to save calendar state.' });
+  }
+});
+
+async function handleCalendarLabPublish(req, res) {
   const key = String(req.body && req.body.key || '').trim();
   const icsText = String(req.body && req.body.icsText || '');
 
@@ -7783,6 +7956,18 @@ function handleCalendarLabPublish(req, res) {
     updatedAt: Date.now()
   });
 
+  try {
+    await pool.query(
+      `INSERT INTO calendar_lab_exports (export_key, ics_text, updated_at)
+       VALUES ($1, $2, CURRENT_TIMESTAMP)
+       ON CONFLICT (export_key)
+       DO UPDATE SET ics_text = EXCLUDED.ics_text, updated_at = CURRENT_TIMESTAMP`,
+      [key, icsText]
+    );
+  } catch (err) {
+    console.error('[CalendarLab] Failed to persist published export:', err && err.message);
+  }
+
   return res.json({ message: 'Published.', key });
 }
 
@@ -7793,21 +7978,43 @@ app.post('/api/admin/calendar-lab/publish', requireAdminAuth, handleCalendarLabP
 app.post('/api/calendar-lab/publish', handleCalendarLabPublish);
 
 // GET /api/calendar-lab/export.ics — public stable ICS export for calendar lab
-app.get('/api/calendar-lab/export.ics', (req, res) => {
+app.get('/api/calendar-lab/export.ics', async (req, res) => {
   const key = String(req.query.key || '').trim();
   if (!/^[a-zA-Z0-9_-]{16,120}$/.test(key)) {
     return res.status(400).send('Invalid key.');
   }
 
-  const entry = calendarLabExportStore.get(key);
-  if (!entry || !entry.icsText) {
+  let icsText = '';
+  const memoryEntry = calendarLabExportStore.get(key);
+  if (memoryEntry && memoryEntry.icsText) {
+    icsText = String(memoryEntry.icsText || '');
+  } else {
+    try {
+      const result = await pool.query(
+        'SELECT ics_text FROM calendar_lab_exports WHERE export_key = $1 LIMIT 1',
+        [key]
+      );
+      const row = result.rows[0] || null;
+      if (row && row.ics_text) {
+        icsText = String(row.ics_text || '');
+        calendarLabExportStore.set(key, {
+          icsText,
+          updatedAt: Date.now()
+        });
+      }
+    } catch (err) {
+      console.error('[CalendarLab] Failed to load export from DB:', err && err.message);
+    }
+  }
+
+  if (!icsText) {
     return res.status(404).send('Export not found.');
   }
 
   res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="calendar-lab.ics"');
   res.setHeader('Cache-Control', 'no-store, max-age=0');
-  return res.send(entry.icsText);
+  return res.send(icsText);
 });
 
 // GET /api/admin/calendar-lab/export.ics — serve ICS payload from URL for admin calendar test lab

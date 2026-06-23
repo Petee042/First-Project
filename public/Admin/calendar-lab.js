@@ -49,6 +49,62 @@ function persistCalendarState(state) {
   }
 }
 
+async function loadSharedCalendarState(calendarId, preferredExportKey) {
+  const id = String(calendarId || '').trim();
+  if (!id) return null;
+
+  const query = preferredExportKey
+    ? ('?exportKey=' + encodeURIComponent(String(preferredExportKey || '').trim()))
+    : '';
+
+  const res = await fetch('/api/admin/calendar-lab/state/' + encodeURIComponent(id) + query, {
+    cache: 'no-store',
+    credentials: 'same-origin'
+  });
+  if (!res.ok) {
+    throw new Error('Failed to load shared calendar state (HTTP ' + res.status + ').');
+  }
+
+  const payload = await res.json();
+  return payload && typeof payload === 'object' ? payload : null;
+}
+
+async function saveSharedCalendarState(state) {
+  if (!state || !state.id) return;
+
+  const payload = {
+    events: (state.events || []).map((event) => ({
+      start: String(event.start || ''),
+      end: String(event.end || ''),
+      source: event.source === 'imported' ? 'imported' : 'local',
+      eventType: String(event.eventType || 'Reservation'),
+      eventSource: String(event.eventSource || ''),
+      eventOrigin: String(event.eventOrigin || ''),
+      summary: String(event.summary || '')
+    })),
+    importUrl: String(state.importUrl || ''),
+    viewDate: state.viewDate instanceof Date ? state.viewDate.toISOString() : '',
+    exportKey: String(state.exportKey || '').trim()
+  };
+
+  const res = await fetch('/api/admin/calendar-lab/state/' + encodeURIComponent(state.id), {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    throw new Error('Failed to save shared calendar state (HTTP ' + res.status + ').');
+  }
+
+  const result = await res.json().catch(() => ({}));
+  const nextKey = String(result && result.exportKey || '').trim();
+  if (nextKey) {
+    state.exportKey = nextKey;
+  }
+}
+
 function setPageMessage(text, isError) {
   const el = document.getElementById('calendarLabMessage');
   if (!el) return;
@@ -476,6 +532,11 @@ function applyStateUpdate(state) {
   updateExportLink(state);
   renderCalendar(state);
   persistCalendarState(state);
+  saveSharedCalendarState(state).catch((err) => {
+    if (state && state.statusEl) {
+      setCalendarStatus(state, err.message || 'Failed to sync shared calendar state.', true);
+    }
+  });
 }
 
 function replaceImportedEvents(state, importedEvents) {
@@ -683,7 +744,7 @@ function attachCalendarHandlers(state) {
   });
 }
 
-function registerCalendar(rootEl) {
+async function registerCalendar(rootEl) {
   const id = String(rootEl.getAttribute('data-calendar-id') || '').trim();
   if (!id) return;
 
@@ -706,12 +767,17 @@ function registerCalendar(rootEl) {
   };
 
   const persisted = loadPersistedCalendarState(id);
+  let hadLocalSeed = false;
   if (persisted) {
     const restoredEvents = Array.isArray(persisted.events)
       ? persisted.events.map(normalizeEvent).filter(Boolean)
       : [];
     state.events = restoredEvents;
+    hadLocalSeed = restoredEvents.length > 0;
     state.importUrl = String(persisted.importUrl || '').trim();
+    if (state.importUrl) {
+      hadLocalSeed = true;
+    }
     if (state.importUrlInput) {
       state.importUrlInput.value = state.importUrl;
     }
@@ -720,6 +786,42 @@ function registerCalendar(rootEl) {
     if (!Number.isNaN(restoredViewDate.getTime())) {
       state.viewDate = monthStartUtc(restoredViewDate);
     }
+  }
+
+  try {
+    const shared = await loadSharedCalendarState(id, state.exportKey);
+    if (shared && shared.state) {
+      const sharedEvents = Array.isArray(shared.state.events)
+        ? shared.state.events.map(normalizeEvent).filter(Boolean)
+        : [];
+      const sharedImportUrl = String(shared.state.importUrl || '').trim();
+      const sharedViewDateRaw = String(shared.state.viewDate || '').trim();
+      const sharedExportKey = String(shared.exportKey || '').trim();
+
+      const hasSharedData = sharedEvents.length > 0 || Boolean(sharedImportUrl) || Boolean(sharedViewDateRaw);
+      if (hasSharedData) {
+        state.events = sharedEvents;
+        state.importUrl = sharedImportUrl;
+        if (state.importUrlInput) {
+          state.importUrlInput.value = sharedImportUrl;
+        }
+        const parsedSharedViewDate = new Date(sharedViewDateRaw);
+        if (!Number.isNaN(parsedSharedViewDate.getTime())) {
+          state.viewDate = monthStartUtc(parsedSharedViewDate);
+        }
+      }
+
+      if (sharedExportKey) {
+        state.exportKey = sharedExportKey;
+      }
+
+      // One-time migration: if shared state is empty but this browser had local data, seed the shared state.
+      if (!hasSharedData && hadLocalSeed) {
+        await saveSharedCalendarState(state);
+      }
+    }
+  } catch (err) {
+    setCalendarStatus(state, err.message || 'Failed to load shared calendar state.', true);
   }
 
   calendarStates[id] = state;
@@ -738,7 +840,7 @@ async function init() {
 
     const grid = document.getElementById('calendarLabGrid');
     grid.classList.remove('hidden');
-    Array.from(grid.querySelectorAll('[data-calendar-id]')).forEach(registerCalendar);
+    await Promise.all(Array.from(grid.querySelectorAll('[data-calendar-id]')).map(registerCalendar));
     setPageMessage('Ready. Create blue reservations, export ICS, and import into another calendar for red reservations.', false);
   } catch {
     setPageMessage('Failed to initialize Calendar ICS Test Lab.', true);
