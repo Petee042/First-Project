@@ -164,6 +164,10 @@ function hasConsecutiveWeekdays(days) {
   return Array.from(daySet).some((day) => daySet.has((day + 1) % 7));
 }
 
+function hasTooManyNoChangeWeekdays(days) {
+  return normaliseWeekdayList(days).length > 6;
+}
+
 function getSelectedNoChangeDays() {
   return Array.from(document.querySelectorAll('.listing-no-change-day-checkbox:checked'))
     .map((input) => String(input.value || '').trim())
@@ -186,27 +190,12 @@ function bindNoChangeDayCheckboxValidation() {
     return;
   }
 
-  function isChecked(dayValue) {
-    const input = inputs.find((item) => Number(item.value) === dayValue);
-    return Boolean(input && input.checked);
-  }
-
   inputs.forEach((input) => {
     input.addEventListener('change', () => {
-      if (!input.checked) {
-        return;
-      }
-
-      const day = Number(input.value);
-      if (!Number.isInteger(day)) {
-        return;
-      }
-
-      const prevDay = (day + 6) % 7;
-      const nextDay = (day + 1) % 7;
-      if (isChecked(prevDay) || isChecked(nextDay)) {
+      const selectedDays = getSelectedNoChangeDays();
+      if (selectedDays.length > 6) {
         input.checked = false;
-        setListingMessage('No Changes On days must not be consecutive.', true);
+        setListingMessage('No Changes On can contain at most 6 weekdays.', true);
       }
     });
   });
@@ -1606,8 +1595,8 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     return;
   }
 
-  if (hasConsecutiveWeekdays(noChangeDays)) {
-    setListingMessage('No Changes On days must not be consecutive.', true);
+  if (hasTooManyNoChangeWeekdays(noChangeDays)) {
+    setListingMessage('No Changes On can contain at most 6 weekdays.', true);
     return;
   }
 

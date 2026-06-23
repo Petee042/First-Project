@@ -2099,11 +2099,10 @@ function parseNoChangeDays(value) {
 }
 
 function validateNoChangeDays(days) {
-  const daySet = new Set((Array.isArray(days) ? days : [])
-    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6));
-  const hasConsecutive = Array.from(daySet).some((day) => daySet.has((day + 1) % 7));
-  if (hasConsecutive) {
-    return 'No change days must not be consecutive.';
+  const validDays = (Array.isArray(days) ? days : [])
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+  if (validDays.length > 6) {
+    return 'No change days must contain at most 6 weekdays.';
   }
   return null;
 }
@@ -10791,6 +10790,68 @@ function getWeekdayFromDateKey(dateKey) {
   return parsed.getUTCDay();
 }
 
+function wrapWeekdayIndex(value) {
+  return (Number(value) + 7) % 7;
+}
+
+function getNoChangeRunProfile(daySet, weekday) {
+  const day = Number(weekday);
+  if (!daySet || !daySet.has(day)) {
+    return null;
+  }
+
+  let backwards = 0;
+  for (let i = 1; i <= 6; i += 1) {
+    const candidate = wrapWeekdayIndex(day - i);
+    if (!daySet.has(candidate)) {
+      break;
+    }
+    backwards += 1;
+  }
+
+  let forwards = 0;
+  for (let i = 1; i <= 6; i += 1) {
+    const candidate = wrapWeekdayIndex(day + i);
+    if (!daySet.has(candidate)) {
+      break;
+    }
+    forwards += 1;
+  }
+
+  return {
+    period: backwards + 1 + forwards,
+    index: backwards + 1
+  };
+}
+
+function mergeNoChangeBlockRanges(ranges) {
+  const ordered = (Array.isArray(ranges) ? ranges : [])
+    .filter((item) => item && item.start && item.end && item.end > item.start)
+    .sort((a, b) => String(a.start).localeCompare(String(b.start)));
+
+  if (!ordered.length) {
+    return [];
+  }
+
+  const merged = [{ ...ordered[0] }];
+  for (let i = 1; i < ordered.length; i += 1) {
+    const current = ordered[i];
+    const last = merged[merged.length - 1];
+    if (current.start <= last.end) {
+      if (current.end > last.end) {
+        last.end = current.end;
+      }
+      if (current.reason && !String(last.reason || '').includes(String(current.reason))) {
+        last.reason = last.reason ? (String(last.reason) + '; ' + String(current.reason)) : String(current.reason);
+      }
+      continue;
+    }
+    merged.push({ ...current });
+  }
+
+  return merged;
+}
+
 function buildNoChangeBoundaryBlockEvents(listing, events) {
   const noChangeDays = getNoChangeDaysFromListing(listing);
   if (!noChangeDays.length) {
@@ -10798,30 +10859,7 @@ function buildNoChangeBoundaryBlockEvents(listing, events) {
   }
 
   const noChangeDaySet = new Set(noChangeDays);
-  const blockMap = new Map();
-
-  const addBlock = (startKey, endKey, reason) => {
-    if (!startKey || !endKey || endKey <= startKey) {
-      return;
-    }
-    const key = startKey + '|' + endKey;
-    if (blockMap.has(key)) {
-      return;
-    }
-    blockMap.set(key, {
-      isReservation: false,
-      isUnavailableBlock: true,
-      eventType: 'Block',
-      eventOrigin: 'Local',
-      source: 'AutomaticPeople',
-      start: startKey,
-      end: endKey,
-      title: 'Not available',
-      description: reason,
-      location: null,
-      raw: null
-    });
-  };
+  const ranges = [];
 
   (events || []).forEach((event) => {
     if (!event || event.isReservation === false) {
@@ -10836,26 +10874,49 @@ function buildNoChangeBoundaryBlockEvents(listing, events) {
 
     const checkinWeekday = getWeekdayFromDateKey(checkinKey);
     if (checkinWeekday !== null && noChangeDaySet.has(checkinWeekday)) {
-      const nightBeforeCheckin = addDaysToDateKey(checkinKey, -1);
-      addBlock(
-        nightBeforeCheckin,
-        checkinKey,
-        'Blocked by no-change rule: existing check-in on a no-change day.'
-      );
+      const profile = getNoChangeRunProfile(noChangeDaySet, checkinWeekday);
+      if (profile && profile.index > 0) {
+        const blockStart = addDaysToDateKey(checkinKey, -profile.index);
+        if (blockStart && checkinKey > blockStart) {
+          ranges.push({
+            start: blockStart,
+            end: checkinKey,
+            reason: 'Blocked by no-change rule: existing check-in on a configured no-change day.'
+          });
+        }
+      }
     }
 
     const checkoutWeekday = getWeekdayFromDateKey(checkoutKey);
     if (checkoutWeekday !== null && noChangeDaySet.has(checkoutWeekday)) {
-      const nightOfCheckoutEnd = addDaysToDateKey(checkoutKey, 1);
-      addBlock(
-        checkoutKey,
-        nightOfCheckoutEnd,
-        'Blocked by no-change rule: existing check-out on a no-change day.'
-      );
+      const profile = getNoChangeRunProfile(noChangeDaySet, checkoutWeekday);
+      if (profile) {
+        const blockDays = Math.max(0, profile.period - profile.index + 1);
+        const blockEnd = addDaysToDateKey(checkoutKey, blockDays);
+        if (blockEnd && blockEnd > checkoutKey) {
+          ranges.push({
+            start: checkoutKey,
+            end: blockEnd,
+            reason: 'Blocked by no-change rule: existing check-out on a no-change day.'
+          });
+        }
+      }
     }
   });
 
-  return Array.from(blockMap.values());
+  return mergeNoChangeBlockRanges(ranges).map((range) => ({
+    isReservation: false,
+    isUnavailableBlock: true,
+    eventType: 'Block',
+    eventOrigin: 'Local',
+    source: 'AutomaticPeople',
+    start: range.start,
+    end: range.end,
+    title: 'Not available',
+    description: range.reason || 'Blocked by no-change rule.',
+    location: null,
+    raw: null
+  }));
 }
 
 function appendAdvanceBlockEvent(listing, events) {
