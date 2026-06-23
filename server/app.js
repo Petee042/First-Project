@@ -10192,10 +10192,11 @@ function buildIcsEventSummary(listing, event) {
   let sourceLabel = source;
 
   const lower = source.toLowerCase();
+  const sourceKey = normaliseCalendarSourceName(source);
   if (lower.includes('airbnb')) {
     sourceLabel = 'Airbnb';
   }
-  if (lower.includes('booking')) {
+  if (sourceKey === 'bookingcom' || sourceKey === 'booking' || lower.includes('booking.com')) {
     sourceLabel = 'Booking.com';
   }
 
