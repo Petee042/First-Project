@@ -490,6 +490,10 @@ function replaceImportedEvents(state, importedEvents) {
     .sort((a, b) => (a.start + a.end).localeCompare(b.start + b.end));
 }
 
+function clearRemoteEvents(state) {
+  replaceImportedEvents(state, []);
+}
+
 async function importFromUrl(state, url) {
   let requestUrl = String(url || '').trim();
   const requestHeaders = {};
@@ -520,10 +524,6 @@ async function importFromUrl(state, url) {
 
   const text = await response.text();
   const imported = parseIcsEvents(text);
-  if (!imported.length) {
-    throw new Error('No valid events found in ICS.');
-  }
-
   replaceImportedEvents(state, imported);
   applyStateUpdate(state);
   return {
@@ -658,6 +658,9 @@ function attachCalendarHandlers(state) {
     try {
       state.importUrl = url;
       state.importUrlInput.value = url;
+      // Always remove previously imported events before sync so only active remote events remain.
+      clearRemoteEvents(state);
+      applyStateUpdate(state);
       const result = await importFromUrl(state, url);
       await logIcsTransactionFromCalendarLab(state, {
         importUrl: result.requestUrl || url,
