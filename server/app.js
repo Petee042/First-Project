@@ -2082,7 +2082,7 @@ function parseNoChangeDays(value) {
   let hasInvalid = false;
 
   source.forEach((entry) => {
-    const raw = String(entry || '').trim();
+    const raw = (entry !== null && entry !== undefined) ? String(entry).trim() : '';
     if (!raw) {
       return;
     }
