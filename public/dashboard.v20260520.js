@@ -2447,8 +2447,40 @@ function isOpsConflictCandidate(event) {
   return Boolean(event && event.isReservation !== false && event.isUnavailableBlock !== true);
 }
 
+function getOpsConflictIdentity(event) {
+  if (!event || typeof event !== 'object') {
+    return '';
+  }
+  const reservationActivityId = Number(event.reservationActivityId || 0);
+  if (Number.isInteger(reservationActivityId) && reservationActivityId > 0) {
+    return 'reservation:' + reservationActivityId;
+  }
+  const calendarEventId = Number(event.calendarEventId || 0);
+  if (Number.isInteger(calendarEventId) && calendarEventId > 0) {
+    return 'calendar:' + calendarEventId;
+  }
+  return [
+    String(event.listingId || ''),
+    String(event.source || ''),
+    String(event.start || ''),
+    String(event.end || ''),
+    String(event.title || '')
+  ].join('|');
+}
+
 function hasConflictInOpsEventSet(events) {
-  const list = Array.isArray(events) ? events : [];
+  const list = [];
+  const seen = new Set();
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const key = getOpsConflictIdentity(event);
+    if (key && seen.has(key)) {
+      return;
+    }
+    if (key) {
+      seen.add(key);
+    }
+    list.push(event);
+  });
   const ranges = list.map((event) => getOpsEventRange(event));
 
   for (let i = 0; i < list.length; i += 1) {
