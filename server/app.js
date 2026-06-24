@@ -598,7 +598,7 @@ async function initializeUserStore() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS listing_event_log (
       id BIGSERIAL PRIMARY KEY,
-      client_account_id BIGINT REFERENCES client_accounts(id) ON DELETE CASCADE,
+      client_account_id BIGINT,
       listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
       entry_type TEXT NOT NULL,
       channel_label TEXT NOT NULL DEFAULT '',
@@ -621,6 +621,19 @@ async function initializeUserStore() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_listing_event_log_listing
     ON listing_event_log (listing_id, created_at DESC)
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_event_log
+    DROP CONSTRAINT IF EXISTS listing_event_log_client_account_id_fkey
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_event_log
+    ADD CONSTRAINT listing_event_log_client_account_id_fkey
+    FOREIGN KEY (client_account_id)
+    REFERENCES client_accounts(id)
+    ON DELETE CASCADE
   `);
 
   // ── ICS transaction log: records every ICS fetch attempt for admin diagnostics
