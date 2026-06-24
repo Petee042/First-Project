@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Calendar ICS Test Lab - AutomaticPeople Admin</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top-bar">
+    <a class="top-brand-link" href="/Admin/index.html" aria-label="AutomaticPeople admin home">
+      <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
+    </a>
+    <div style="display:flex;gap:0.5rem;align-items:center;">
+      <a class="btn secondary" href="/Admin/index.html">Back</a>
+      <button id="adminLabLogoutBtn" class="btn secondary">Log Out</button>
+    </div>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide admin-card">
+      <h2>Calendar ICS Test Lab</h2>
+      <p id="calendarLabMessage" class="message"></p>
+
+      <div id="calendarLabGrid" class="admin-calendar-lab-grid hidden">
+        <section class="listing-form-section admin-calendar-lab-card" data-calendar-id="A">
+          <h3>Calendar A</h3>
+
+          <p class="admin-lab-row-title">Create Reservation</p>
+          <div class="admin-lab-row">
+            <label for="createStartA">Start date</label>
+            <input id="createStartA" type="date" />
+            <label for="createEndA">End date</label>
+            <input id="createEndA" type="date" />
+            <button type="button" class="btn primary" data-action="create">Create</button>
+          </div>
+
+          <p class="admin-lab-row-title">Delete Reservation</p>
+          <div class="admin-lab-row">
+            <label for="deleteStartA">Start date</label>
+            <input id="deleteStartA" type="date" />
+            <label for="deleteEndA">End date</label>
+            <input id="deleteEndA" type="date" />
+            <button type="button" class="btn secondary" data-action="delete">Delete</button>
+          </div>
+
+          <div class="calendar-month-header" style="margin-top:0.8rem;">
+            <button type="button" class="btn secondary inline-btn" data-action="prev-month">Prev</button>
+            <p class="month-label" data-role="month-label"></p>
+            <button type="button" class="btn secondary inline-btn" data-action="next-month">Next</button>
+          </div>
+
+          <div class="admin-lab-calendar-grid" data-role="calendar-grid"></div>
+
+          <div class="ics-export-block admin-lab-ics-block">
+            <p class="ics-export-label">Export ICS URL</p>
+            <div class="ics-export-row">
+              <input type="text" class="ics-export-url" data-role="export-url" readonly />
+              <button type="button" class="btn circular-icon-btn" data-action="copy-export-url" title="Copy export URL" aria-label="Copy export URL">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="9" y="9" width="11" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </button>
+            </div>
+            <p class="ics-export-label" style="margin-top:0.45rem;">Import ICS URL</p>
+            <div class="ics-export-row">
+              <input type="url" class="ics-export-url" data-role="import-url" placeholder="https://...ics" />
+            </div>
+          </div>
+
+          <div class="admin-lab-links-row">
+            <button type="button" class="btn secondary inline-btn" data-action="delete-all-events">Delete all calendar events</button>
+            <button type="button" class="btn secondary inline-btn" data-action="sync-ics">Sync</button>
+          </div>
+
+          <p class="hint" data-role="status"></p>
+        </section>
+
+        <section class="listing-form-section admin-calendar-lab-card" id="noChangeDynamicBlockSection">
+          <h3>No Change Dynamic Block Testing</h3>
+          <p class="hint">Select up to 6 no-change weekdays, then calculate dynamic block dates from reservations in Calendar A.</p>
+
+          <div class="admin-lab-row" style="flex-wrap: wrap; row-gap: 0.5rem;">
+            <label><input type="checkbox" data-no-change-day="0" /> Sunday</label>
+            <label><input type="checkbox" data-no-change-day="1" /> Monday</label>
+            <label><input type="checkbox" data-no-change-day="2" /> Tuesday</label>
+            <label><input type="checkbox" data-no-change-day="3" /> Wednesday</label>
+            <label><input type="checkbox" data-no-change-day="4" /> Thursday</label>
+            <label><input type="checkbox" data-no-change-day="5" /> Friday</label>
+            <label><input type="checkbox" data-no-change-day="6" /> Saturday</label>
+          </div>
+
+          <div class="admin-lab-links-row">
+            <button type="button" class="btn primary inline-btn" id="calculateNoChangeBlocksBtn">Calculate Dynamic Block</button>
+          </div>
+
+          <p class="hint" id="noChangeDynamicBlockStatus"></p>
+        </section>
+
+        <section class="listing-form-section admin-calendar-lab-card" data-calendar-id="B">
+          <h3>Calendar B</h3>
+
+          <p class="admin-lab-row-title">Create Reservation</p>
+          <div class="admin-lab-row">
+            <label for="createStartB">Start date</label>
+            <input id="createStartB" type="date" />
+            <label for="createEndB">End date</label>
+            <input id="createEndB" type="date" />
+            <button type="button" class="btn primary" data-action="create">Create</button>
+          </div>
+
+          <p class="admin-lab-row-title">Delete Reservation</p>
+          <div class="admin-lab-row">
+            <label for="deleteStartB">Start date</label>
+            <input id="deleteStartB" type="date" />
+            <label for="deleteEndB">End date</label>
+            <input id="deleteEndB" type="date" />
+            <button type="button" class="btn secondary" data-action="delete">Delete</button>
+          </div>
+
+          <div class="calendar-month-header" style="margin-top:0.8rem;">
+            <button type="button" class="btn secondary inline-btn" data-action="prev-month">Prev</button>
+            <p class="month-label" data-role="month-label"></p>
+            <button type="button" class="btn secondary inline-btn" data-action="next-month">Next</button>
+          </div>
+
+          <div class="admin-lab-calendar-grid" data-role="calendar-grid"></div>
+
+          <div class="ics-export-block admin-lab-ics-block">
+            <p class="ics-export-label">Export ICS URL</p>
+            <div class="ics-export-row">
+              <input type="text" class="ics-export-url" data-role="export-url" readonly />
+              <button type="button" class="btn circular-icon-btn" data-action="copy-export-url" title="Copy export URL" aria-label="Copy export URL">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="9" y="9" width="11" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </button>
+            </div>
+            <p class="ics-export-label" style="margin-top:0.45rem;">Import ICS URL</p>
+            <div class="ics-export-row">
+              <input type="url" class="ics-export-url" data-role="import-url" placeholder="https://...ics" />
+            </div>
+          </div>
+
+          <div class="admin-lab-links-row">
+            <button type="button" class="btn secondary inline-btn" data-action="delete-all-events">Delete all calendar events</button>
+            <button type="button" class="btn secondary inline-btn" data-action="sync-ics">Sync</button>
+          </div>
+
+          <p class="hint" data-role="status"></p>
+        </section>
+
+        <section class="listing-form-section admin-calendar-lab-card" data-calendar-id="C">
+          <h3>Calendar C</h3>
+
+          <p class="admin-lab-row-title">Create Reservation</p>
+          <div class="admin-lab-row">
+            <label for="createStartC">Start date</label>
+            <input id="createStartC" type="date" />
+            <label for="createEndC">End date</label>
+            <input id="createEndC" type="date" />
+            <button type="button" class="btn primary" data-action="create">Create</button>
+          </div>
+
+          <p class="admin-lab-row-title">Delete Reservation</p>
+          <div class="admin-lab-row">
+            <label for="deleteStartC">Start date</label>
+            <input id="deleteStartC" type="date" />
+            <label for="deleteEndC">End date</label>
+            <input id="deleteEndC" type="date" />
+            <button type="button" class="btn secondary" data-action="delete">Delete</button>
+          </div>
+
+          <div class="calendar-month-header" style="margin-top:0.8rem;">
+            <button type="button" class="btn secondary inline-btn" data-action="prev-month">Prev</button>
+            <p class="month-label" data-role="month-label"></p>
+            <button type="button" class="btn secondary inline-btn" data-action="next-month">Next</button>
+          </div>
+
+          <div class="admin-lab-calendar-grid" data-role="calendar-grid"></div>
+
+          <div class="ics-export-block admin-lab-ics-block">
+            <p class="ics-export-label">Export ICS URL</p>
+            <div class="ics-export-row">
+              <input type="text" class="ics-export-url" data-role="export-url" readonly />
+              <button type="button" class="btn circular-icon-btn" data-action="copy-export-url" title="Copy export URL" aria-label="Copy export URL">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="9" y="9" width="11" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+              </button>
+            </div>
+            <p class="ics-export-label" style="margin-top:0.45rem;">Import ICS URL</p>
+            <div class="ics-export-row">
+              <input type="url" class="ics-export-url" data-role="import-url" placeholder="https://...ics" />
+            </div>
+          </div>
+
+          <div class="admin-lab-links-row">
+            <button type="button" class="btn secondary inline-btn" data-action="delete-all-events">Delete all calendar events</button>
+            <button type="button" class="btn secondary inline-btn" data-action="sync-ics">Sync</button>
+          </div>
+
+          <p class="hint" data-role="status"></p>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script src="/Admin/calendar-lab.js"></script>
+</body>
+</html>

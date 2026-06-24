@@ -6,7 +6,19 @@
   <title>Bank Transfer Reservation</title>
   <link rel="stylesheet" href="../styles.css" />
 </head>
-<body>
+<body class="logged-page">
+  <div class="sticky-page-chrome">
+    <div class="sticky-page-inner">
+      <nav class="dashboard-tab-bar page-top-nav" aria-label="Main navigation">
+        <a class="dashboard-tab-link active" href="/dashboard.html?tab=panel-dashboard">Dashboard</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-config">Config</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-ops">Ops</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-account">Account</a>
+      </nav>
+      <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
+    </div>
+  </div>
+
   <main class="dashboard">
     <div class="card-container wide public-booking-card">
       <div class="feed-actions back-row" style="margin-bottom: 0.7rem;">
@@ -33,6 +45,16 @@
       </section>
 
       <section class="listing-form-section">
+        <h3>Existing Guest</h3>
+        <div class="calendar-source-row">
+          <label for="existingGuestSelect">Select Existing Guest</label>
+          <select id="existingGuestSelect">
+            <option value="">Select existing guest (optional)</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="listing-form-section">
         <h3>Guest Details</h3>
         <div class="public-reservation-guest-grid">
           <label for="guestFirstName">First name</label>
@@ -55,6 +77,7 @@
     </div>
   </main>
 
+  <script src="../sticky-layout.js"></script>
   <script src="bank-transfer-reservation.js"></script>
 </body>
 </html>

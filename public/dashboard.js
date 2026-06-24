@@ -570,7 +570,7 @@ function renderTeamMembers(team) {
     if (canManageTeam() || canViewTeam()) {
       const actionBtn = document.createElement('button');
       actionBtn.type = 'button';
-      actionBtn.className = 'btn secondary';
+      actionBtn.className = 'btn secondary config-edit-btn';
       actionBtn.textContent = '✎';
       actionBtn.title = 'View/Update/Delete';
       actionBtn.setAttribute('aria-label', 'View/Update/Delete');
@@ -1180,7 +1180,7 @@ function renderListings(listings) {
     const actionCell = document.createElement('td');
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
-    openBtn.className = 'btn secondary';
+    openBtn.className = 'btn secondary config-edit-btn';
     openBtn.textContent = '✎';
     openBtn.title = 'View/Edit';
     openBtn.setAttribute('aria-label', 'View/Edit');
@@ -1242,7 +1242,7 @@ function renderProperties(properties) {
       const actionCell = document.createElement('td');
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
-      openBtn.className = 'btn secondary';
+      openBtn.className = 'btn secondary config-edit-btn';
       openBtn.textContent = '✎';
       openBtn.title = 'View/Edit';
       openBtn.setAttribute('aria-label', 'View/Edit');
@@ -1341,7 +1341,7 @@ function renderCleaners(cleaners) {
     const actionCell = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
-    editBtn.className = 'btn secondary';
+    editBtn.className = 'btn secondary config-edit-btn';
     editBtn.textContent = '✎';
     editBtn.title = 'View Details/Edit';
     editBtn.setAttribute('aria-label', 'View Details/Edit');
@@ -1428,7 +1428,7 @@ function renderSharedResources(resources) {
     const actionCell = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
-    editBtn.className = 'btn secondary';
+    editBtn.className = 'btn secondary config-edit-btn';
     editBtn.textContent = '✎';
     editBtn.title = 'View/Edit';
     editBtn.setAttribute('aria-label', 'View/Edit');
@@ -2215,10 +2215,13 @@ function buildBarTooltip(events) {
     return '';
   }
 
+  const hasConflict = hasConflictInOpsEventSet(events);
+
   return events.map((event) => {
     const checkin = formatDateKeyForTooltip(toDateKey(event.start));
     const checkout = formatDateKeyForTooltip(toDateKey(event.end));
     return 'Summary: ' + (event.title || (event.raw && event.raw.SUMMARY) || '(untitled)')
+      + '\nConflict: ' + ((hasConflict || (event && event.isInConflict === true)) ? 'YES' : 'No')
       + '\nCheck-in: ' + checkin
       + '\nCheck-out: ' + checkout;
   }).join('\n\n');
@@ -2231,6 +2234,80 @@ function formatDateKeyForTooltip(key) {
   const date = utcDateFromKey(key);
   const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return date.getUTCDate() + ' ' + monthNames[date.getUTCMonth()] + ' ' + date.getUTCFullYear();
+}
+
+function getOpsEventRange(event) {
+  const startKey = toDateKey(event && event.start);
+  const rawEndKey = toDateKey(event && event.end);
+  if (!startKey) {
+    return null;
+  }
+
+  let endKey = rawEndKey || keyFromUtcDate(addUtcDays(utcDateFromKey(startKey), 1));
+  if (!endKey || endKey <= startKey) {
+    endKey = keyFromUtcDate(addUtcDays(utcDateFromKey(startKey), 1));
+  }
+  return { startKey, endKey };
+}
+
+function isOpsConflictCandidate(event) {
+  return Boolean(event && event.isReservation !== false && event.isUnavailableBlock !== true);
+}
+
+function getOpsConflictIdentity(event) {
+  if (!event || typeof event !== 'object') {
+    return '';
+  }
+  const reservationActivityId = Number(event.reservationActivityId || 0);
+  if (Number.isInteger(reservationActivityId) && reservationActivityId > 0) {
+    return 'reservation:' + reservationActivityId;
+  }
+  const calendarEventId = Number(event.calendarEventId || 0);
+  if (Number.isInteger(calendarEventId) && calendarEventId > 0) {
+    return 'calendar:' + calendarEventId;
+  }
+  return [
+    String(event.listingId || ''),
+    String(event.source || ''),
+    String(event.start || ''),
+    String(event.end || ''),
+    String(event.title || '')
+  ].join('|');
+}
+
+function hasConflictInOpsEventSet(events) {
+  const list = [];
+  const seen = new Set();
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const key = getOpsConflictIdentity(event);
+    if (key && seen.has(key)) {
+      return;
+    }
+    if (key) {
+      seen.add(key);
+    }
+    list.push(event);
+  });
+  const ranges = list.map((event) => getOpsEventRange(event));
+
+  for (let i = 0; i < list.length; i += 1) {
+    const left = list[i];
+    if (!isOpsConflictCandidate(left)) continue;
+    if (left && left.isInConflict === true) return true;
+
+    for (let j = i + 1; j < list.length; j += 1) {
+      const right = list[j];
+      if (!isOpsConflictCandidate(right)) continue;
+      const leftRange = ranges[i];
+      const rightRange = ranges[j];
+      if (!leftRange || !rightRange) continue;
+      if (leftRange.startKey < rightRange.endKey && leftRange.endKey > rightRange.startKey) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function getOpsEventSummary(event) {
@@ -2287,6 +2364,7 @@ function opsCalendarBuildDayIndex(events) {
       day.listings.set(listingKey, {
         name: listingName,
         color,
+        conflict: false,
         stays: new Set(),
         checkins: new Set(),
         checkouts: new Set(),
@@ -2338,6 +2416,18 @@ function opsCalendarBuildDayIndex(events) {
       listingEntry.stayEvents.push(event);
       listingEntry.events.push(event);
     }
+  });
+
+  Object.values(index).forEach((day) => {
+    let dayConflict = false;
+    day.listings.forEach((listingEntry) => {
+      const listingConflict = hasConflictInOpsEventSet(listingEntry.events || []);
+      listingEntry.conflict = listingConflict;
+      if (listingConflict) {
+        dayConflict = true;
+      }
+    });
+    day.conflict = dayConflict || hasConflictInOpsEventSet(day.events || []);
   });
 
   return index;
@@ -3853,7 +3943,7 @@ async function loadAllReservations() {
       const actionCell = document.createElement('td');
       const editLink = document.createElement('a');
       editLink.href = '/shared-resource.html?id=' + encodeURIComponent(row.shared_resource_id);
-      editLink.className = 'btn secondary';
+      editLink.className = 'btn secondary config-edit-btn';
       editLink.textContent = '✎';
       editLink.title = 'View Resource';
       editLink.setAttribute('aria-label', 'View Resource');

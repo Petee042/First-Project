@@ -60,7 +60,17 @@
       </section>
 
       <section id="listingFeedsSection" class="calendar-section">
-        <h3>Calendar Feeds</h3>
+        <div class="config-block-header">
+          <h3>Calendar Feeds</h3>
+          <div class="feed-header-actions">
+            <button type="submit" id="saveFeedBtn" form="feedForm" class="btn circular-icon-btn" title="Save Feed" aria-label="Save Feed">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+            </button>
+            <button type="button" id="cancelFeedEditBtn" class="btn circular-icon-btn hidden" title="Delete Feed" aria-label="Delete Feed">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
         <div class="table-wrap">
           <table class="calendar-table" aria-label="Calendar feeds">
             <thead>
@@ -88,10 +98,6 @@
             <label for="feedUrl">Feed URL</label>
             <input id="feedUrl" type="url" placeholder="https://...ics" required />
           </div>
-          <div class="feed-actions">
-            <button type="submit" id="saveFeedBtn" class="btn primary calendar-btn">Add Feed</button>
-            <button type="button" id="cancelFeedEditBtn" class="btn secondary hidden">Cancel Edit</button>
-          </div>
         </form>
 
         <div class="ics-export-block">
@@ -102,9 +108,48 @@
           <p class="ics-export-label">Listing calendar export (.ics)</p>
           <div class="ics-export-row">
             <input id="icsExportUrl" type="text" class="ics-export-url" readonly />
-            <button type="button" id="copyIcsUrlBtn" class="btn secondary ics-copy-btn">Copy</button>
+            <button type="button" id="copyIcsUrlBtn" class="btn circular-icon-btn" title="Copy ICS URL" aria-label="Copy ICS URL">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+            </button>
           </div>
           <p class="ics-export-help">Use this copied URL for Outlook/Google/Apple subscriptions. Older non-token links may fail to import.</p>
+        </div>
+      </section>
+
+      <section class="listing-form-section" id="listingAvailabilitySection">
+        <h3>Manage Availability</h3>
+        <div class="calendar-source-row availability-block-advance-row">
+          <label for="listingBlockAdvanceDays" style="width:auto;white-space:nowrap;">Block Reservations more than</label>
+          <input id="listingBlockAdvanceDays" type="number" min="1" max="3650" placeholder="e.g. 365" style="width:5.5rem;flex:none;" />
+          <span style="white-space:nowrap;font-size:0.9rem;color:#444;">days in advance</span>
+          <button
+            type="button"
+            class="btn circular-icon-btn availability-info-btn"
+            title="When set, dates beyond this many days from today will be exported as blocked in the ICS calendar and shown with a dark grey outline on the reservation calendar below."
+            aria-label="Block Reservations help"
+          >i</button>
+        </div>
+        <div class="calendar-source-row availability-no-change-label-row">
+          <div class="availability-inline-label">
+            <label style="width:auto;white-space:nowrap;">No Changes On</label>
+            <button
+              type="button"
+              class="btn circular-icon-btn availability-info-btn"
+              title="Select up to 6 weekdays. AutomaticPeople will calculate dynamic no-change blocks from reservation check-in and check-out dates using the configured weekday pattern."
+              aria-label="No Changes On help"
+            >i</button>
+          </div>
+        </div>
+        <div id="listingNoChangeDays" class="no-change-days-list" role="group" aria-label="No Changes On weekdays">
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="0" /> Sunday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="1" /> Monday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="2" /> Tuesday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="3" /> Wednesday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="4" /> Thursday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="5" /> Friday</label>
+          <label><input type="checkbox" name="listingNoChangeDays" class="listing-no-change-day-checkbox" value="6" /> Saturday</label>
         </div>
       </section>
 

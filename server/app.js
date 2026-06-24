@@ -15,6 +15,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+const calendarLabExportStore = new Map();
 const SALT_ROUNDS = 12;
 const SESSION_SECRET = String(process.env.SESSION_SECRET || '').trim();
 const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || '').trim();
@@ -424,6 +425,17 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS client_accounts (
+      id BIGSERIAL PRIMARY KEY,
+      created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      display_name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS listings (
       id BIGSERIAL PRIMARY KEY,
       user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -521,6 +533,148 @@ async function initializeUserStore() {
       error_text TEXT,
       fetched_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (listing_id, feed_id)
+    )
+  `);
+
+  // ── Calendar redesign: listing_channels (proper Channels with import/export URLs, replaces calendar_feeds)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS listing_channels (
+      id BIGSERIAL PRIMARY KEY,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      label TEXT NOT NULL,
+      import_url TEXT NOT NULL DEFAULT '',
+      export_url TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Migrate existing calendar_feeds into listing_channels (idempotent)
+  await pool.query(`
+    INSERT INTO listing_channels (listing_id, label, import_url, created_at, updated_at)
+    SELECT listing_id, label, url, created_at, created_at
+    FROM calendar_feeds
+    WHERE NOT EXISTS (
+      SELECT 1 FROM listing_channels lc
+      WHERE lc.listing_id = calendar_feeds.listing_id AND lc.label = calendar_feeds.label
+    )
+  `);
+
+  // ── Calendar redesign: listing_calendar_events (per-event store replacing JSON-blob cached_events)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS listing_calendar_events (
+      id BIGSERIAL PRIMARY KEY,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL DEFAULT 'remote',
+      channel_id BIGINT REFERENCES listing_channels(id) ON DELETE SET NULL,
+      guest_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      guest_first_name TEXT NOT NULL DEFAULT '',
+      guest_family_name TEXT NOT NULL DEFAULT '',
+      guest_email TEXT NOT NULL DEFAULT '',
+      start_date DATE NOT NULL,
+      end_date DATE NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      is_in_conflict BOOLEAN NOT NULL DEFAULT FALSE,
+      is_modified BOOLEAN NOT NULL DEFAULT FALSE,
+      ics_uid TEXT,
+      ics_summary TEXT NOT NULL DEFAULT '',
+      reservation_activity_id BIGINT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_synced_at TIMESTAMPTZ
+    )
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_calendar_events
+    DROP CONSTRAINT IF EXISTS listing_calendar_events_event_type_check
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_calendar_events
+    ADD CONSTRAINT listing_calendar_events_event_type_check
+    CHECK (event_type IN ('local', 'remote', 'block'))
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_listing_calendar_events_listing
+    ON listing_calendar_events (listing_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_listing_calendar_events_dates
+    ON listing_calendar_events (listing_id, start_date, end_date)
+  `);
+
+  // ── Dashboard event log: persistent record of calendar changes and conflicts
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS listing_event_log (
+      id BIGSERIAL PRIMARY KEY,
+      client_account_id BIGINT,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      entry_type TEXT NOT NULL,
+      channel_label TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL,
+      old_start_date DATE,
+      old_end_date DATE,
+      new_start_date DATE,
+      new_end_date DATE,
+      affected_event_id BIGINT,
+      conflicting_event_id BIGINT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_listing_event_log_client
+    ON listing_event_log (client_account_id, created_at DESC)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_listing_event_log_listing
+    ON listing_event_log (listing_id, created_at DESC)
+  `);
+
+  // ── ICS transaction log: records every ICS fetch attempt for admin diagnostics
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ics_transaction_log (
+      id BIGSERIAL PRIMARY KEY,
+      logged_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      listing_id BIGINT,
+      channel_id BIGINT,
+      importing_channel_label TEXT NOT NULL DEFAULT '',
+      exporting_channel_label TEXT NOT NULL DEFAULT '',
+      import_url TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'success',
+      event_count INTEGER NOT NULL DEFAULT 0,
+      raw_payload TEXT NOT NULL DEFAULT '',
+      error_text TEXT
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_ics_transaction_log_logged_at
+    ON ics_transaction_log (logged_at DESC)
+  `);
+
+  // ── Admin Calendar Lab: shared state across devices + persistent published exports
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS calendar_lab_states (
+      owner_key TEXT NOT NULL,
+      calendar_id TEXT NOT NULL,
+      export_key TEXT NOT NULL UNIQUE,
+      events_json TEXT NOT NULL DEFAULT '[]',
+      import_url TEXT NOT NULL DEFAULT '',
+      view_date TEXT NOT NULL DEFAULT '',
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (owner_key, calendar_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS calendar_lab_exports (
+      export_key TEXT PRIMARY KEY,
+      ics_text TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
@@ -769,14 +923,99 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS client_accounts (
+    ALTER TABLE listing_event_log
+    DROP CONSTRAINT IF EXISTS listing_event_log_client_account_id_fkey
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_event_log
+    ADD CONSTRAINT listing_event_log_client_account_id_fkey
+    FOREIGN KEY (client_account_id)
+    REFERENCES client_accounts(id)
+    ON DELETE CASCADE
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reservation_activity (
       id BIGSERIAL PRIMARY KEY,
-      created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-      display_name TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active',
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      client_account_id BIGINT NOT NULL REFERENCES client_accounts(id) ON DELETE CASCADE,
+      listing_id BIGINT NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+      reservation_identifier TEXT,
+      reservation_checkin_date DATE NOT NULL,
+      reservation_checkout_date DATE NOT NULL,
+      first_name TEXT NOT NULL DEFAULT '',
+      family_name TEXT NOT NULL DEFAULT '',
+      email_address TEXT NOT NULL DEFAULT '',
+      guest_count INTEGER NOT NULL DEFAULT 1,
+      reservation_amount NUMERIC(10,2),
+      hold_until_at TIMESTAMPTZ,
+      payment_method TEXT NOT NULL DEFAULT 'No Charge',
+      payment_due_at TIMESTAMPTZ,
+      status TEXT NOT NULL DEFAULT 'confirmed',
+      notes TEXT NOT NULL DEFAULT '',
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE reservation_activity
+    ADD COLUMN IF NOT EXISTS reservation_identifier TEXT
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_reservation_activity_listing_dates
+    ON reservation_activity (listing_id, reservation_checkin_date, reservation_checkout_date)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_reservation_activity_client_created
+    ON reservation_activity (client_account_id, created_at DESC)
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_reservation_activity_identifier_unique
+    ON reservation_activity (reservation_identifier)
+    WHERE reservation_identifier IS NOT NULL
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_calendar_events
+    DROP CONSTRAINT IF EXISTS listing_calendar_events_reservation_activity_id_fkey
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_calendar_events
+    ADD CONSTRAINT listing_calendar_events_reservation_activity_id_fkey
+    FOREIGN KEY (reservation_activity_id)
+    REFERENCES reservation_activity(id)
+    ON DELETE SET NULL
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reservation_identifier_registry (
+      id BIGSERIAL PRIMARY KEY,
+      reservation_identifier TEXT NOT NULL UNIQUE,
+      reservation_type TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    INSERT INTO reservation_identifier_registry (reservation_identifier, reservation_type)
+    SELECT DISTINCT reservation_identifier, 'shared_resource_reservation'
+    FROM shared_resource_reservations
+    WHERE reservation_identifier ~ '^[0-9]{8}$'
+    ON CONFLICT (reservation_identifier) DO NOTHING
+  `);
+
+  await pool.query(`
+    INSERT INTO reservation_identifier_registry (reservation_identifier, reservation_type)
+    SELECT DISTINCT reservation_identifier, 'private_reservation'
+    FROM reservation_activity
+    WHERE reservation_identifier ~ '^[0-9]{8}$'
+    ON CONFLICT (reservation_identifier) DO NOTHING
   `);
 
   await pool.query(`
@@ -887,6 +1126,16 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS block_advance_days INTEGER
+  `);
+
+  await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS no_change_days TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
     ALTER TABLE shared_resources
     ADD COLUMN IF NOT EXISTS client_account_id BIGINT REFERENCES client_accounts(id) ON DELETE SET NULL
   `);
@@ -919,6 +1168,27 @@ async function initializeUserStore() {
   await pool.query(`
     ALTER TABLE cleaners
     ADD COLUMN IF NOT EXISTS cleaner_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL
+  `);
+
+  // Bank details on client_accounts
+  await pool.query(`
+    ALTER TABLE client_accounts
+    ADD COLUMN IF NOT EXISTS bank_account_name TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE client_accounts
+    ADD COLUMN IF NOT EXISTS bank_sort_code TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE client_accounts
+    ADD COLUMN IF NOT EXISTS bank_account_number TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE client_accounts
+    ADD COLUMN IF NOT EXISTS bank_is_business BOOLEAN NOT NULL DEFAULT FALSE
   `);
 
   await pool.query(`
@@ -1271,13 +1541,13 @@ async function initializeUserStore() {
       COALESCE(MAX(NULLIF(TRIM(COALESCE(rr.first_name, '')), '')), '') AS guest_first_name,
       COALESCE(MAX(NULLIF(TRIM(COALESCE(rr.family_name, '')), '')), '') AS guest_family_name,
       'reservation',
-      COALESCE(rr.reservation_identifier, rr.id::text),
+      COALESCE(MAX(NULLIF(TRIM(COALESCE(rr.reservation_identifier, '')), '')), MAX(rr.id)::text),
       MIN(rr.created_at),
       MAX(COALESCE(rr.updated_at, rr.created_at))
     FROM shared_resource_reservations rr
     WHERE rr.client_account_id IS NOT NULL
       AND NULLIF(TRIM(rr.email_address), '') IS NOT NULL
-    GROUP BY rr.client_account_id, LOWER(TRIM(rr.email_address)), TRIM(COALESCE(rr.telephone, '')), COALESCE(rr.reservation_identifier, rr.id::text)
+    GROUP BY rr.client_account_id, LOWER(TRIM(rr.email_address)), TRIM(COALESCE(rr.telephone, ''))
     ON CONFLICT (client_account_id, guest_email, guest_phone)
     DO UPDATE
     SET guest_first_name = COALESCE(NULLIF(EXCLUDED.guest_first_name, ''), guest_relationships.guest_first_name),
@@ -1429,9 +1699,35 @@ const SHARED_RESOURCE_RESERVATION_STATUSES = new Set([
   'Confirmed'
 ]);
 
+const DIRECT_RESERVATION_PAYMENT_METHODS = new Set([
+  'No Charge',
+  'Bank Transfer',
+  'Online Payment'
+]);
+
+const DIRECT_RESERVATION_ACTIVE_STATUSES = new Set([
+  'confirmed',
+  'awaiting_bank_transfer',
+  'awaiting_online_payment'
+]);
+
 function normaliseSharedResourceReservationStatus(value) {
   const status = String(value || '').trim();
   return SHARED_RESOURCE_RESERVATION_STATUSES.has(status) ? status : null;
+}
+
+function normaliseDirectReservationPaymentMethod(value) {
+  const method = String(value || '').trim();
+  return DIRECT_RESERVATION_PAYMENT_METHODS.has(method) ? method : null;
+}
+
+function normaliseDirectReservationStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  if (!status) {
+    return null;
+  }
+  const allowed = new Set(['confirmed', 'awaiting_bank_transfer', 'awaiting_online_payment', 'cancelled', 'expired']);
+  return allowed.has(status) ? status : null;
 }
 
 function normaliseSharedResourceReservationText(value, maxLen) {
@@ -1524,7 +1820,53 @@ function formatDateTimeForMessage(value) {
   if (Number.isNaN(date.getTime())) {
     return String(value || '');
   }
-  return date.toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  return date.toLocaleString('en-GB', {
+    weekday: 'long',
+    day: '2-digit',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC'
+  }).replace(',', '');
+}
+
+function htmlToPlainText(value) {
+  return sanitizeHtml(String(value || ''), {
+    allowedTags: [],
+    allowedAttributes: {}
+  }).replace(/\s+/g, ' ').trim();
+}
+
+function getSharedReservationPaymentMethodLabel(paymentOption) {
+  const key = String(paymentOption || '').trim();
+  if (key === 'cash_on_site') return 'Cash On Site';
+  if (key === 'bank_transfer') return 'Bank Transfer';
+  if (key === 'online_payment') return 'Online Payment';
+  return 'Free Of Charge';
+}
+
+async function generateGlobalReservationIdentifier(reservationType) {
+  const type = String(reservationType || 'reservation').trim().slice(0, 50) || 'reservation';
+
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const value = String(Math.floor(10000000 + Math.random() * 90000000));
+    const result = await pool.query(
+      `
+        INSERT INTO reservation_identifier_registry (reservation_identifier, reservation_type)
+        VALUES ($1, $2)
+        ON CONFLICT (reservation_identifier) DO NOTHING
+        RETURNING reservation_identifier
+      `,
+      [value, type]
+    );
+    if (result.rows[0] && result.rows[0].reservation_identifier) {
+      return String(result.rows[0].reservation_identifier);
+    }
+  }
+
+  throw new Error('Failed to generate unique reservation identifier.');
 }
 
 function normaliseSharedResourcePaymentOptions(input) {
@@ -1754,6 +2096,71 @@ function normaliseTelephone(value) {
 function normaliseDateBasis(value) {
   const basis = String(value || '').trim().toLowerCase();
   return basis === 'checkin' ? 'checkin' : 'checkout';
+}
+
+function parseNoChangeDays(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '').trim()
+      ? String(value || '').split(',')
+      : [];
+  const parsed = [];
+  let hasInvalid = false;
+
+  source.forEach((entry) => {
+    const raw = (entry !== null && entry !== undefined) ? String(entry).trim() : '';
+    if (!raw) {
+      return;
+    }
+    const day = Number(raw);
+    if (!Number.isInteger(day) || day < 0 || day > 6) {
+      hasInvalid = true;
+      return;
+    }
+    parsed.push(day);
+  });
+
+  const days = Array.from(new Set(parsed)).sort((a, b) => a - b);
+  return { days, hasInvalid };
+}
+
+function validateNoChangeDays(days) {
+  const validDays = (Array.isArray(days) ? days : [])
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+  if (validDays.length > 6) {
+    return 'No change days must contain at most 6 weekdays.';
+  }
+  return null;
+}
+
+function normaliseNoChangeDaysForStore(value) {
+  const parsed = parseNoChangeDays(value);
+  if (parsed.hasInvalid) {
+    return { error: 'No change days must contain weekdays 0 (Sunday) to 6 (Saturday).' };
+  }
+  const validationError = validateNoChangeDays(parsed.days);
+  if (validationError) {
+    return { error: validationError };
+  }
+  return { text: parsed.days.join(','), days: parsed.days };
+}
+
+function getNoChangeDaysFromListing(listing) {
+  if (!listing) {
+    return [];
+  }
+  const parsed = parseNoChangeDays(listing.no_change_days);
+  return parsed.days;
+}
+
+function mapListingNoChangeDays(listing) {
+  if (!listing) {
+    return listing;
+  }
+  return {
+    ...listing,
+    no_change_days: getNoChangeDaysFromListing(listing)
+  };
 }
 
 function normaliseDateKey(value) {
@@ -2038,7 +2445,16 @@ async function sendAppEmail(input) {
 
   const transportResult = getScheduleEmailTransporter();
   if (transportResult.error) {
-    return { ok: false, error: 'Email delivery is not configured on the server.' };
+    const postmarkTokenConfigured = Boolean(POSTMARK_SERVER_TOKEN);
+    const postmarkFromConfigured = Boolean(POSTMARK_FROM);
+    const smtpConfigured = Boolean(getScheduleEmailTransportConfig());
+    return {
+      ok: false,
+      error: 'Email delivery is not configured on the server. postmarkTokenConfigured=' + String(postmarkTokenConfigured)
+        + ', postmarkFromConfigured=' + String(postmarkFromConfigured)
+        + ', smtpConfigured=' + String(smtpConfigured)
+        + '. Set POSTMARK_SERVER_TOKEN (and valid POSTMARK_FROM) or SMTP_HOST/SMTP_USER/SMTP_PASS in Render and redeploy.'
+    };
   }
 
   try {
@@ -3191,6 +3607,227 @@ async function getGuestsForClientAccount(clientAccountId) {
   return result.rows;
 }
 
+async function ensureGuestSiteUserForClientAccount(input) {
+  const clientAccountId = Number(input && input.clientAccountId);
+  const ownerUserId = Number(input && input.ownerUserId);
+  const firstName = String(input && input.firstName || '').trim().slice(0, 120);
+  const familyName = String(input && input.familyName || '').trim().slice(0, 120);
+  const email = normaliseOptionalEmail(input && input.email);
+  const sourceType = String(input && input.sourceType || 'private_reservation').trim().slice(0, 60) || 'private_reservation';
+  const sourceId = String(input && input.sourceId || '').trim().slice(0, 120) || null;
+
+  if (!Number.isInteger(clientAccountId) || clientAccountId <= 0) {
+    throw new Error('Client account context is required.');
+  }
+  if (!email) {
+    throw new Error('A valid guest email address is required.');
+  }
+
+  let user = await findUserByEmail(email);
+  if (!user) {
+    const username = await generateUniqueUsernameFromEmail(email);
+    const temporaryPasswordHash = await bcrypt.hash(randomUUID() + 'Aa1!', SALT_ROUNDS);
+    const created = await pool.query(
+      `
+        INSERT INTO users (username, email, password_hash, first_name, family_name, country_of_residence, is_validated)
+        VALUES ($1, $2, $3, $4, $5, '', FALSE)
+        RETURNING id, username, email, first_name, family_name, country_of_residence, is_validated, created_at
+      `,
+      [username, email, temporaryPasswordHash, firstName, familyName]
+    );
+    user = created.rows[0] || null;
+  }
+
+  if (!user || !Number.isInteger(Number(user.id)) || Number(user.id) <= 0) {
+    throw new Error('Failed to create or resolve guest site user.');
+  }
+
+  await pool.query(
+    `
+      UPDATE users
+      SET first_name = CASE
+            WHEN NULLIF(TRIM(COALESCE(first_name, '')), '') IS NULL AND $1 <> '' THEN $1
+            ELSE first_name
+          END,
+          family_name = CASE
+            WHEN NULLIF(TRIM(COALESCE(family_name, '')), '') IS NULL AND $2 <> '' THEN $2
+            ELSE family_name
+          END
+      WHERE id = $3
+    `,
+    [firstName, familyName, Number(user.id)]
+  );
+
+  await pool.query(
+    `
+      INSERT INTO client_memberships (client_account_id, user_id, role, status, invited_by_user_id)
+      VALUES ($1, $2, 'Guest', 'active', $3)
+      ON CONFLICT (client_account_id, user_id, role)
+      DO UPDATE
+      SET status = 'active',
+          invited_by_user_id = COALESCE(client_memberships.invited_by_user_id, EXCLUDED.invited_by_user_id),
+          updated_at = CURRENT_TIMESTAMP
+    `,
+    [clientAccountId, Number(user.id), Number.isInteger(ownerUserId) && ownerUserId > 0 ? ownerUserId : null]
+  );
+
+  await pool.query(
+    `
+      INSERT INTO guest_relationships (
+        client_account_id,
+        guest_user_id,
+        guest_email,
+        guest_phone,
+        guest_first_name,
+        guest_family_name,
+        source_type,
+        source_id,
+        first_seen_at,
+        last_seen_at
+      )
+      VALUES ($1, $2, $3, '', $4, $5, $6, $7, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      ON CONFLICT (client_account_id, guest_email, guest_phone)
+      DO UPDATE
+      SET guest_user_id = COALESCE(EXCLUDED.guest_user_id, guest_relationships.guest_user_id),
+          guest_first_name = COALESCE(NULLIF(EXCLUDED.guest_first_name, ''), guest_relationships.guest_first_name),
+          guest_family_name = COALESCE(NULLIF(EXCLUDED.guest_family_name, ''), guest_relationships.guest_family_name),
+          source_type = COALESCE(NULLIF(EXCLUDED.source_type, ''), guest_relationships.source_type),
+          source_id = COALESCE(NULLIF(EXCLUDED.source_id, ''), guest_relationships.source_id),
+          last_seen_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+    `,
+    [
+      clientAccountId,
+      Number(user.id),
+      email,
+      firstName,
+      familyName,
+      sourceType,
+      sourceId
+    ]
+  );
+
+  return user;
+}
+
+async function getGuestSiteUsersForClientAccount(clientAccountId) {
+  const id = Number(clientAccountId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `
+      WITH related_guest_users AS (
+        SELECT cm.user_id
+        FROM client_memberships cm
+        WHERE cm.client_account_id = $1
+          AND cm.role = 'Guest'
+          AND cm.status = 'active'
+        UNION
+        SELECT gr.guest_user_id AS user_id
+        FROM guest_relationships gr
+        WHERE gr.client_account_id = $1
+          AND gr.guest_user_id IS NOT NULL
+      )
+      SELECT u.id,
+             u.email,
+             COALESCE(NULLIF(TRIM(u.first_name), ''), '') AS first_name,
+             COALESCE(NULLIF(TRIM(u.family_name), ''), '') AS family_name
+      FROM related_guest_users rgu
+      JOIN users u ON u.id = rgu.user_id
+      ORDER BY LOWER(COALESCE(NULLIF(TRIM(u.first_name || ' ' || u.family_name), ''), u.email)), u.id ASC
+    `,
+    [id]
+  );
+
+  return result.rows;
+}
+
+async function getReservationGuestOptionsForClientAccount(clientAccountId) {
+  const id = Number(clientAccountId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `
+      WITH source_rows AS (
+        SELECT
+          NULL::bigint AS user_id,
+          NULLIF(LOWER(TRIM(COALESCE(ra.email_address, ''))), '') AS email,
+          ''::text AS telephone,
+          NULLIF(TRIM(COALESCE(ra.first_name, '')), '') AS first_name,
+          NULLIF(TRIM(COALESCE(ra.family_name, '')), '') AS family_name,
+          COALESCE(ra.created_at, CURRENT_TIMESTAMP) AS seen_at
+        FROM reservation_activity ra
+        WHERE ra.client_account_id = $1
+
+        UNION ALL
+
+        SELECT
+          NULL::bigint AS user_id,
+          NULLIF(LOWER(TRIM(COALESCE(srr.email_address, ''))), '') AS email,
+          NULLIF(TRIM(COALESCE(srr.telephone, '')), '') AS telephone,
+          NULLIF(TRIM(COALESCE(srr.first_name, '')), '') AS first_name,
+          NULLIF(TRIM(COALESCE(srr.family_name, '')), '') AS family_name,
+          COALESCE(srr.created_at, CURRENT_TIMESTAMP) AS seen_at
+        FROM shared_resource_reservations srr
+        JOIN shared_resources sr ON sr.id = srr.shared_resource_id
+        WHERE sr.client_account_id = $1
+
+        UNION ALL
+
+        SELECT
+          gr.guest_user_id AS user_id,
+          NULLIF(LOWER(TRIM(COALESCE(gr.guest_email, ''))), '') AS email,
+          NULLIF(TRIM(COALESCE(gr.guest_phone, '')), '') AS telephone,
+          NULLIF(TRIM(COALESCE(gr.guest_first_name, '')), '') AS first_name,
+          NULLIF(TRIM(COALESCE(gr.guest_family_name, '')), '') AS family_name,
+          COALESCE(gr.last_seen_at, CURRENT_TIMESTAMP) AS seen_at
+        FROM guest_relationships gr
+        WHERE gr.client_account_id = $1
+      ),
+      ranked_rows AS (
+        SELECT
+          user_id,
+          email,
+          telephone,
+          first_name,
+          family_name,
+          seen_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY COALESCE(CAST(user_id AS text), COALESCE(email, '') || '|' || COALESCE(telephone, ''))
+            ORDER BY seen_at DESC
+          ) AS rn
+        FROM source_rows
+        WHERE user_id IS NOT NULL OR email IS NOT NULL
+      )
+      SELECT
+        rr.user_id AS id,
+        COALESCE(NULLIF(LOWER(TRIM(COALESCE(u.email, ''))), ''), rr.email, '') AS email,
+        COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '')), ''), rr.first_name, '') AS first_name,
+        COALESCE(NULLIF(TRIM(COALESCE(u.family_name, '')), ''), rr.family_name, '') AS family_name,
+        COALESCE(rr.telephone, '') AS telephone,
+        rr.seen_at
+      FROM ranked_rows rr
+      LEFT JOIN users u ON u.id = rr.user_id
+      WHERE rr.rn = 1
+      ORDER BY LOWER(
+        COALESCE(
+          NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.family_name, '')), ''),
+          NULLIF(TRIM(COALESCE(rr.first_name, '') || ' ' || COALESCE(rr.family_name, '')), ''),
+          COALESCE(u.email, rr.email, '')
+        )
+      ) ASC,
+      rr.seen_at DESC
+    `,
+    [id]
+  );
+
+  return result.rows;
+}
+
 async function setUserStripeConnectState(userId, nextState) {
   const state = {
     stripe_account_id: nextState && nextState.stripe_account_id ? String(nextState.stripe_account_id).trim() : null,
@@ -3504,9 +4141,251 @@ async function getListingIdsForSharedResource(resource) {
   return listings.map((listing) => Number(listing.id));
 }
 
+function getSharedResourceReservationListingId(resource) {
+  const listingId = Number(resource && resource.listing_id);
+  return Number.isInteger(listingId) && listingId > 0 ? listingId : null;
+}
+
+function mapReservationActivityRowToEvent(row) {
+  const firstName = String(row && row.first_name || '').trim();
+  const familyName = String(row && row.family_name || '').trim();
+  const guestName = [firstName, familyName].filter(Boolean).join(' ').trim() || 'Direct Guest';
+  const paymentMethod = String(row && row.payment_method || '').trim() || 'Direct Booking';
+  const reservationAmount = row && row.reservation_amount !== null && row.reservation_amount !== undefined
+    ? Number(row.reservation_amount)
+    : null;
+  const amountText = Number.isFinite(reservationAmount) ? ('Amount: ' + reservationAmount.toFixed(2)) : '';
+  const guestCount = Number(row && row.guest_count || 0);
+  const guestText = guestCount > 0 ? ('Guests: ' + String(guestCount)) : '';
+  const holdText = row && row.hold_until_at ? ('Hold until: ' + formatDateTimeForMessage(row.hold_until_at)) : '';
+  const notes = [
+    'Private Reservation',
+    'Guest: ' + guestName,
+    guestText,
+    amountText,
+    'Payment: ' + paymentMethod,
+    holdText
+  ].filter(Boolean).join(' | ');
+
+  return {
+    isReservation: true,
+    isUnavailableBlock: false,
+    eventType: 'Reservation',
+    eventOrigin: 'Local',
+    source: 'Direct Booking',
+    start: String(row && row.reservation_checkin_date || ''),
+    end: String(row && row.reservation_checkout_date || ''),
+    title: 'Direct Booking - ' + guestName,
+    description: notes,
+    location: '',
+    raw: null,
+    reservationActivityId: Number(row && row.id || 0)
+  };
+}
+
+function getPrivateReservationPaymentStatusLabel(row) {
+  const paymentMethod = String(row && row.payment_method || '').trim();
+  const status = String(row && row.status || '').trim().toLowerCase();
+
+  if (paymentMethod === 'No Charge') {
+    return 'no charge';
+  }
+  if (paymentMethod === 'Bank Transfer') {
+    return status === 'awaiting_bank_transfer' ? 'outstanding' : 'paid';
+  }
+  if (paymentMethod === 'Online Payment') {
+    return 'paid';
+  }
+  return 'paid';
+}
+
+function canConfirmPrivateReservationPayment(row) {
+  const paymentMethod = String(row && row.payment_method || '').trim();
+  const status = String(row && row.status || '').trim().toLowerCase();
+  return paymentMethod === 'Bank Transfer' && status === 'awaiting_bank_transfer';
+}
+
+function mapPrivateReservationRow(row) {
+  const firstName = String(row && row.first_name || '').trim();
+  const familyName = String(row && row.family_name || '').trim();
+  const guestName = [firstName, familyName].filter(Boolean).join(' ').trim() || 'Direct Guest';
+  const reservationAmount = row && row.reservation_amount !== null && row.reservation_amount !== undefined
+    ? Number(row.reservation_amount)
+    : null;
+  const stayNights = Number(row && row.stay_nights || 0);
+  const holdUntilAt = row && row.hold_until_at ? String(row.hold_until_at) : '';
+  const holdUntilMs = holdUntilAt ? new Date(holdUntilAt).getTime() : Number.NaN;
+  const isOverduePayment = String(row && row.status || '').trim().toLowerCase() === 'awaiting_bank_transfer'
+    && Number.isFinite(holdUntilMs)
+    && holdUntilMs <= Date.now();
+
+  return {
+    id: Number(row && row.id || 0),
+    reservationIdentifier: String(row && row.reservation_identifier || '').trim(),
+    listingId: Number(row && row.listing_id || 0),
+    listingName: String(row && row.listing_name || '').trim() || '',
+    guestName,
+    arrivalDate: String(row && row.reservation_checkin_date || '').trim(),
+    departureDate: String(row && row.reservation_checkout_date || '').trim(),
+    stayNights: Number.isInteger(stayNights) && stayNights > 0 ? stayNights : 0,
+    amount: Number.isFinite(reservationAmount) ? reservationAmount : null,
+    emailAddress: String(row && row.email_address || '').trim(),
+    holdUntilAt,
+    paymentMethod: String(row && row.payment_method || '').trim(),
+    status: String(row && row.status || '').trim(),
+    paymentStatus: getPrivateReservationPaymentStatusLabel(row),
+    isOverduePayment,
+    canConfirmPayment: canConfirmPrivateReservationPayment(row),
+    canCancel: Number.isInteger(Number(row && row.id || 0)) && Number(row && row.id || 0) > 0,
+    createdAt: row && row.created_at ? String(row.created_at) : ''
+  };
+}
+
+async function getPrivateReservationsForScope(req) {
+  const listings = await getListingsForUser(req.accessContext.effectiveOwnerUserId);
+  const allowedListingIds = listings
+    .filter((listing) => isListingAllowedByScope(req, listing))
+    .map((listing) => Number(listing.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+
+  if (!allowedListingIds.length) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `
+      SELECT ra.id,
+              ra.reservation_identifier,
+             ra.listing_id,
+             l.name AS listing_name,
+             ra.reservation_checkin_date::text AS reservation_checkin_date,
+             ra.reservation_checkout_date::text AS reservation_checkout_date,
+             ra.first_name,
+             ra.family_name,
+             ra.email_address,
+             ra.reservation_amount,
+             ra.hold_until_at,
+             ra.payment_method,
+             ra.status,
+             ra.created_at,
+             (ra.reservation_checkout_date - ra.reservation_checkin_date) AS stay_nights
+      FROM reservation_activity ra
+      JOIN listings l ON l.id = ra.listing_id
+      WHERE ra.client_account_id = $1
+        AND ra.listing_id = ANY($2::int[])
+        AND ra.status <> ALL($3::text[])
+      ORDER BY ra.reservation_checkin_date DESC, ra.id DESC
+    `,
+    [req.accessContext.activeClientAccountId, allowedListingIds, ['cancelled', 'expired']]
+  );
+
+  return result.rows.map((row) => mapPrivateReservationRow(row));
+}
+
+async function getDirectReservationEventsForListing(listingId) {
+  const id = Number(listingId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id,
+             reservation_checkin_date::text AS reservation_checkin_date,
+             reservation_checkout_date::text AS reservation_checkout_date,
+             first_name,
+             family_name,
+             guest_count,
+             reservation_amount,
+             payment_method,
+             hold_until_at,
+             status
+      FROM reservation_activity
+      WHERE listing_id = $1
+        AND status = ANY($2::text[])
+      ORDER BY reservation_checkin_date ASC, id ASC
+    `,
+    [id, Array.from(DIRECT_RESERVATION_ACTIVE_STATUSES)]
+  );
+
+  return result.rows.map((row) => mapReservationActivityRowToEvent(row));
+}
+
+async function createReservationActivityForListing(input) {
+  const result = await pool.query(
+    `
+      INSERT INTO reservation_activity (
+        user_id,
+        client_account_id,
+        listing_id,
+        reservation_identifier,
+        reservation_checkin_date,
+        reservation_checkout_date,
+        first_name,
+        family_name,
+        email_address,
+        guest_count,
+        reservation_amount,
+        hold_until_at,
+        payment_method,
+        payment_due_at,
+        status,
+        notes,
+        updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4, $5,
+        $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15,
+        $16,
+        CURRENT_TIMESTAMP
+      )
+      RETURNING id,
+                user_id,
+                client_account_id,
+                listing_id,
+                reservation_identifier,
+                reservation_checkin_date::text AS reservation_checkin_date,
+                reservation_checkout_date::text AS reservation_checkout_date,
+                first_name,
+                family_name,
+                email_address,
+                guest_count,
+                reservation_amount,
+                hold_until_at,
+                payment_method,
+                payment_due_at,
+                status,
+                notes,
+                created_at,
+                updated_at
+    `,
+    [
+      input.userId,
+      input.clientAccountId,
+      input.listingId,
+      input.reservationIdentifier,
+      input.checkinDate,
+      input.checkoutDate,
+      input.firstName,
+      input.familyName,
+      input.emailAddress,
+      input.guestCount,
+      input.reservationAmount,
+      input.holdUntilAt,
+      input.paymentMethod,
+      input.paymentDueAt,
+      input.status,
+      input.notes || ''
+    ]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function getReservationEventsForListing(listingId) {
   const cached = await getCachedEventsForListing(listingId);
-  return (cached || [])
+  const feedEvents = (cached || [])
     .filter((entry) => !entry.error_text)
     .flatMap((entry) => {
       try {
@@ -3515,8 +4394,252 @@ async function getReservationEventsForListing(listingId) {
       } catch {
         return [];
       }
-    })
+    });
+  const directEvents = await getDirectReservationEventsForListing(listingId);
+  return [...feedEvents, ...directEvents]
     .filter((event) => event && event.isReservation !== false);
+}
+
+function getNormalisedConflictRangeForEvent(event) {
+  const startKey = getDateKeyFromEventDateTime(event && event.start);
+  const rawEndKey = getDateKeyFromEventDateTime(event && event.end);
+  if (!startKey) {
+    return null;
+  }
+
+  let endKey = rawEndKey || addDaysToDateKey(startKey, 1);
+  if (!endKey || endKey <= startKey) {
+    endKey = addDaysToDateKey(startKey, 1);
+  }
+  return { startKey, endKey };
+}
+
+function isConflictCandidateReservation(event) {
+  return Boolean(event && event.isReservation !== false && event.isUnavailableBlock !== true);
+}
+
+function isDynamicLocalPolicyBlock(event) {
+  if (!isBlockEvent(event)) {
+    return false;
+  }
+  const source = String(event && event.source || '').trim().toLowerCase();
+  const origin = String(event && event.eventOrigin || '').trim().toLowerCase();
+  return source === 'automaticpeople' || origin === 'local';
+}
+
+function doConflictRangesOverlap(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+  return left.startKey < right.endKey && left.endKey > right.startKey;
+}
+
+function annotateReservationEventConflicts(events) {
+  const list = Array.isArray(events) ? events : [];
+  const ranges = list.map((event) => getNormalisedConflictRangeForEvent(event));
+  const conflictIndexes = new Set();
+
+  for (let i = 0; i < list.length; i += 1) {
+    if (!isConflictCandidateReservation(list[i])) continue;
+    for (let j = i + 1; j < list.length; j += 1) {
+      if (!isConflictCandidateReservation(list[j])) continue;
+      if (doConflictRangesOverlap(ranges[i], ranges[j])) {
+        conflictIndexes.add(i);
+        conflictIndexes.add(j);
+      }
+    }
+  }
+
+  for (let i = 0; i < list.length; i += 1) {
+    if (!isConflictCandidateReservation(list[i])) continue;
+    for (let j = 0; j < list.length; j += 1) {
+      if (!isDynamicLocalPolicyBlock(list[j])) continue;
+      if (doConflictRangesOverlap(ranges[i], ranges[j])) {
+        conflictIndexes.add(i);
+      }
+    }
+  }
+
+  return list.map((event, index) => {
+    if (!event || typeof event !== 'object') {
+      return event;
+    }
+    const alreadyFlagged = event.isInConflict === true;
+    if (!alreadyFlagged && !conflictIndexes.has(index)) {
+      return event;
+    }
+    return { ...event, isInConflict: true };
+  });
+}
+
+function buildReservationConflictPairs(events) {
+  const list = Array.isArray(events) ? events : [];
+  const pairs = [];
+  const ranges = list.map((event) => getNormalisedConflictRangeForEvent(event));
+
+  for (let i = 0; i < list.length; i += 1) {
+    if (!isConflictCandidateReservation(list[i])) continue;
+    for (let j = i + 1; j < list.length; j += 1) {
+      if (!isConflictCandidateReservation(list[j])) continue;
+      if (!doConflictRangesOverlap(ranges[i], ranges[j])) continue;
+
+      const overlapStart = ranges[i].startKey > ranges[j].startKey ? ranges[i].startKey : ranges[j].startKey;
+      const overlapEnd = ranges[i].endKey < ranges[j].endKey ? ranges[i].endKey : ranges[j].endKey;
+      if (!overlapStart || !overlapEnd || overlapEnd <= overlapStart) continue;
+
+      pairs.push({
+        left: list[i],
+        right: list[j],
+        overlapStart,
+        overlapEnd
+      });
+    }
+  }
+
+  return pairs;
+}
+
+function buildReservationDynamicBlockConflictPairs(events) {
+  const list = Array.isArray(events) ? events : [];
+  const pairs = [];
+  const ranges = list.map((event) => getNormalisedConflictRangeForEvent(event));
+
+  for (let i = 0; i < list.length; i += 1) {
+    if (!isConflictCandidateReservation(list[i])) continue;
+    for (let j = 0; j < list.length; j += 1) {
+      if (!isDynamicLocalPolicyBlock(list[j])) continue;
+      if (!doConflictRangesOverlap(ranges[i], ranges[j])) continue;
+
+      const overlapStart = ranges[i].startKey > ranges[j].startKey ? ranges[i].startKey : ranges[j].startKey;
+      const overlapEnd = ranges[i].endKey < ranges[j].endKey ? ranges[i].endKey : ranges[j].endKey;
+      if (!overlapStart || !overlapEnd || overlapEnd <= overlapStart) continue;
+
+      pairs.push({
+        reservation: list[i],
+        block: list[j],
+        overlapStart,
+        overlapEnd
+      });
+    }
+  }
+
+  return pairs;
+}
+
+function getConflictEventIdentifier(event) {
+  const reservationActivityId = Number(event && event.reservationActivityId || 0);
+  if (Number.isInteger(reservationActivityId) && reservationActivityId > 0) {
+    return reservationActivityId;
+  }
+  const calendarEventId = Number(event && event.calendarEventId || 0);
+  if (Number.isInteger(calendarEventId) && calendarEventId > 0) {
+    return calendarEventId;
+  }
+  return null;
+}
+
+async function writeDetectedReservationConflictsToEventLog(listing, events, explicitClientAccountId) {
+  const listingId = Number(listing && listing.id || 0);
+  const clientAccountId = Number(explicitClientAccountId || (listing && listing.client_account_id) || 0);
+  if (!Number.isInteger(listingId) || listingId <= 0 || !Number.isInteger(clientAccountId) || clientAccountId <= 0) {
+    return;
+  }
+
+  const conflictPairs = buildReservationConflictPairs(events);
+  const dynamicBlockPairs = buildReservationDynamicBlockConflictPairs(events);
+  const emailConflictLines = [];
+  for (const pair of conflictPairs) {
+    const overlapStart = pair.overlapStart;
+    const overlapEnd = pair.overlapEnd;
+    const leftTitle = String(pair.left && pair.left.title || pair.left && pair.left.source || 'Reservation A').trim();
+    const rightTitle = String(pair.right && pair.right.title || pair.right && pair.right.source || 'Reservation B').trim();
+
+    const duplicateCheck = await pool.query(
+      `SELECT id
+       FROM listing_event_log
+       WHERE client_account_id = $1
+         AND listing_id = $2
+         AND entry_type = 'conflict'
+         AND channel_label = 'Conflict Detector'
+         AND new_start_date = $3::date
+         AND new_end_date = $4::date
+         AND created_at >= (NOW() - INTERVAL '6 hours')
+       LIMIT 1`,
+      [clientAccountId, listingId, overlapStart, overlapEnd]
+    );
+    if (duplicateCheck.rows[0]) {
+      continue;
+    }
+
+    await writeEventLog({
+      clientAccountId,
+      listingId,
+      entryType: 'conflict',
+      channelLabel: 'Conflict Detector',
+      description: `CONFLICT on listing ${listingId}: "${leftTitle}" overlaps "${rightTitle}" (${overlapStart} to ${overlapEnd}).`,
+      newStartDate: overlapStart,
+      newEndDate: overlapEnd,
+      affectedEventId: getConflictEventIdentifier(pair.left),
+      conflictingEventId: getConflictEventIdentifier(pair.right)
+    });
+
+    const leftChannel = String(pair.left && pair.left.source || 'Unknown').trim();
+    const rightChannel = String(pair.right && pair.right.source || 'Unknown').trim();
+    emailConflictLines.push(
+      `Start: ${overlapStart}, End: ${overlapEnd}, Listing: ${listingId}, Channel: ${leftChannel} vs ${rightChannel}, Summary: ${leftTitle} vs ${rightTitle}`
+    );
+  }
+
+  for (const pair of dynamicBlockPairs) {
+    const overlapStart = pair.overlapStart;
+    const overlapEnd = pair.overlapEnd;
+    const reservationTitle = String(pair.reservation && pair.reservation.title || pair.reservation && pair.reservation.source || 'Reservation').trim();
+    const blockReason = String(pair.block && (pair.block.description || pair.block.title) || 'Dynamic policy block').trim();
+
+    const duplicateCheck = await pool.query(
+      `SELECT id
+       FROM listing_event_log
+       WHERE client_account_id = $1
+         AND listing_id = $2
+         AND entry_type = 'conflict'
+         AND channel_label = 'Conflict Detector'
+         AND new_start_date = $3::date
+         AND new_end_date = $4::date
+         AND created_at >= (NOW() - INTERVAL '6 hours')
+       LIMIT 1`,
+      [clientAccountId, listingId, overlapStart, overlapEnd]
+    );
+    if (duplicateCheck.rows[0]) {
+      continue;
+    }
+
+    await writeEventLog({
+      clientAccountId,
+      listingId,
+      entryType: 'conflict',
+      channelLabel: 'Conflict Detector',
+      description: `CONFLICT on listing ${listingId}: "${reservationTitle}" overlaps dynamic block (${blockReason}) (${overlapStart} to ${overlapEnd}).`,
+      newStartDate: overlapStart,
+      newEndDate: overlapEnd,
+      affectedEventId: getConflictEventIdentifier(pair.reservation),
+      conflictingEventId: null
+    });
+
+    const reservationChannel = String(pair.reservation && pair.reservation.source || 'Unknown').trim();
+    emailConflictLines.push(
+      `Start: ${overlapStart}, End: ${overlapEnd}, Listing: ${listingId}, Channel: ${reservationChannel} vs Dynamic Block, Summary: ${reservationTitle} vs ${blockReason}`
+    );
+  }
+
+  if (emailConflictLines.length) {
+    await notifyManagersOfCalendarConflict({
+      clientAccountId,
+      listingId,
+      subject: `Calendar Conflict - Listing ${listingId}`,
+      introText: `A reservation conflict was detected on listing ${listingId}.`,
+      extraConflictLines: emailConflictLines
+    });
+  }
 }
 
 async function findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate) {
@@ -3964,6 +5087,23 @@ async function updateSharedResourceReservationForUser(reservationId, resourceId,
   return { reservation: result.rows[0] };
 }
 
+async function deleteSharedResourceReservationForUser(reservationId, resourceId, userId) {
+  const result = await pool.query(
+    `
+      DELETE FROM shared_resource_reservations
+      WHERE id = $1 AND shared_resource_id = $2 AND user_id = $3
+      RETURNING id
+    `,
+    [reservationId, resourceId, userId]
+  );
+
+  if (!result.rows[0]) {
+    return { error: 'Reservation not found.' };
+  }
+
+  return { deleted: true, id: Number(result.rows[0].id) };
+}
+
 async function createSharedResourceForUser(userId, clientAccountId, input) {
   const shortDescription = normaliseSharedResourceShortDescription(input.shortDescription);
   const fullDescriptionHtml = sanitiseRichTextHtml(input.fullDescriptionHtml);
@@ -4402,7 +5542,7 @@ async function getListingsForUser(userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.no_change_days, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.user_id = $1
@@ -4410,7 +5550,7 @@ async function getListingsForUser(userId) {
     `,
     [userId]
   );
-  return result.rows;
+  return result.rows.map(mapListingNoChangeDays);
 }
 
 async function getListingByIdForUser(listingId, userId) {
@@ -4420,7 +5560,7 @@ async function getListingByIdForUser(listingId, userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.client_account_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.no_change_days, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1 AND l.user_id = $2
@@ -4441,10 +5581,10 @@ async function getListingByIdForUser(listingId, userId) {
     );
     if (backfilled.rows[0]) {
       backfilled.rows[0].property_name = defaultProperty.name;
-      return backfilled.rows[0];
+      return mapListingNoChangeDays(backfilled.rows[0]);
     }
   }
-  return listing;
+  return mapListingNoChangeDays(listing);
 }
 
 async function getListingById(listingId) {
@@ -4452,7 +5592,7 @@ async function getListingById(listingId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.no_change_days, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1
@@ -4461,7 +5601,7 @@ async function getListingById(listingId) {
     [listingId]
   );
 
-  return result.rows[0] || null;
+  return mapListingNoChangeDays(result.rows[0] || null);
 }
 
 function buildIcsAccessToken(listing) {
@@ -4536,7 +5676,7 @@ function isValidIcsAccessToken(listing, token) {
   return timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
-async function createListingForUser(userId, name, propertyId, dateBasis, usualCleanerId) {
+async function createListingForUser(userId, name, propertyId, dateBasis, usualCleanerId, noChangeDays) {
   
 
   try {
@@ -4545,23 +5685,36 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
       return { error: 'Property not found.' };
     }
 
+    const noChangeDaysNormalised = normaliseNoChangeDaysForStore(noChangeDays);
+    if (noChangeDaysNormalised.error) {
+      return { error: noChangeDaysNormalised.error };
+    }
+
     const result = await pool.query(
       `
-        INSERT INTO listings (user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id)
+        INSERT INTO listings (user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, no_change_days)
         VALUES (
           $1,
           (SELECT client_account_id FROM properties WHERE id = $3),
           $2,
           $3,
           $4,
-          $5
+          $5,
+          $6
         )
-        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, created_at
+        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, no_change_days, created_at
       `,
-      [userId, name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId)]
+      [
+        userId,
+        name,
+        property.id,
+        normaliseDateBasis(dateBasis),
+        normaliseCleanerId(usualCleanerId),
+        noChangeDaysNormalised.text
+      ]
     );
     result.rows[0].property_name = property.name;
-    return { listing: result.rows[0] };
+    return { listing: mapListingNoChangeDays(result.rows[0]) };
   } catch (err) {
     if (err && err.code === '23505') {
       return { error: 'A listing with this name already exists.' };
@@ -4570,13 +5723,18 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
   }
 }
 
-async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId, emptyExport) {
+async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId, emptyExport, blockAdvanceDays, noChangeDays) {
   
 
   try {
     const property = await resolvePropertyForListing(userId, propertyId);
     if (!property) {
       return { error: 'Property not found.' };
+    }
+
+    const noChangeDaysNormalised = normaliseNoChangeDaysForStore(noChangeDays);
+    if (noChangeDaysNormalised.error) {
+      return { error: noChangeDaysNormalised.error };
     }
 
     const result = await pool.query(
@@ -4587,18 +5745,30 @@ async function updateListingForUser(listingId, userId, name, propertyId, dateBas
             client_account_id = (SELECT client_account_id FROM properties WHERE id = $2),
             date_basis = $3,
             usual_cleaner_id = $4,
-            empty_export = $7
+            empty_export = $7,
+            block_advance_days = $8,
+            no_change_days = $9
         WHERE id = $5 AND user_id = $6
-        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, empty_export, created_at
+        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, empty_export, block_advance_days, no_change_days, created_at
       `,
-      [name, property.id, normaliseDateBasis(dateBasis), normaliseCleanerId(usualCleanerId), listingId, userId, emptyExport === true]
+      [
+        name,
+        property.id,
+        normaliseDateBasis(dateBasis),
+        normaliseCleanerId(usualCleanerId),
+        listingId,
+        userId,
+        emptyExport === true,
+        (blockAdvanceDays !== null && blockAdvanceDays !== undefined && Number.isInteger(Number(blockAdvanceDays)) && Number(blockAdvanceDays) > 0) ? Number(blockAdvanceDays) : null,
+        noChangeDaysNormalised.text
+      ]
     );
 
     if (!result.rows[0]) {
       return { error: 'Listing not found.' };
     }
     result.rows[0].property_name = property.name;
-    return { listing: result.rows[0] };
+    return { listing: mapListingNoChangeDays(result.rows[0]) };
   } catch (err) {
     if (err && err.code === '23505') {
       return { error: 'A listing with this name already exists.' };
@@ -5026,6 +6196,27 @@ async function updateFeedForListing(feedId, listingId, userId, label, url) {
   return { feed: result.rows[0] };
 }
 
+async function deleteFeedForListing(feedId, listingId, userId) {
+  const listingResult = await pool.query(
+    'SELECT id FROM listings WHERE id = $1 AND user_id = $2 LIMIT 1',
+    [listingId, userId]
+  );
+  if (!listingResult.rows[0]) {
+    return { error: 'Listing not found.' };
+  }
+
+  const result = await pool.query(
+    'DELETE FROM calendar_feeds WHERE id = $1 AND listing_id = $2 RETURNING id',
+    [feedId, listingId]
+  );
+
+  if (!result.rows[0]) {
+    return { error: 'Feed not found.' };
+  }
+
+  return { deletedFeedId: Number(result.rows[0].id) };
+}
+
 async function getFeedSourcesForUser(userId) {
   
 
@@ -5135,6 +6326,50 @@ function parseIcsDate(rawValue) {
   return value;
 }
 
+function decodeIcsTextValue(value) {
+  return String(value || '')
+    .replace(/\\n/gi, '\n')
+    .replace(/\\,/g, ',')
+    .replace(/\\;/g, ';')
+    .replace(/\\\\/g, '\\');
+}
+
+function parseIcsMetadataFromDescription(descriptionText) {
+  const metadata = {
+    type: '',
+    source: '',
+    origin: '',
+    scope: ''
+  };
+
+  const lines = String(descriptionText || '').split(/\n|\\n/);
+  lines.forEach((line) => {
+    const text = String(line || '').trim();
+    if (!text) return;
+
+    const separatorIdx = text.indexOf(':');
+    if (separatorIdx <= 0) return;
+    const key = text.slice(0, separatorIdx).trim().toUpperCase();
+    const value = text.slice(separatorIdx + 1).trim();
+    if (!value) return;
+
+    if (key === 'AP-TYPE') metadata.type = value;
+    if (key === 'AP-SOURCE') metadata.source = value;
+    if (key === 'AP-ORIGIN') metadata.origin = value;
+    if (key === 'AP-SCOPE') metadata.scope = value;
+  });
+
+  return metadata;
+}
+
+function stripIcsMetadataFromDescription(descriptionText) {
+  return String(descriptionText || '')
+    .split(/\n|\\n/)
+    .map((line) => String(line || '').trim())
+    .filter((line) => line && !/^AP-(TYPE|SOURCE|ORIGIN|SCOPE)\s*:/i.test(line))
+    .join('\n');
+}
+
 function parseIcsEvents(icsText) {
   const lines = unfoldIcsLines(icsText);
   const events = [];
@@ -5178,11 +6413,11 @@ function parseIcsEvents(icsText) {
     } else if (line.startsWith('DTEND')) {
       current.end = line;
     } else if (line.startsWith('SUMMARY:')) {
-      current.title = line.slice('SUMMARY:'.length).trim();
+      current.title = decodeIcsTextValue(line.slice('SUMMARY:'.length).trim());
     } else if (line.startsWith('DESCRIPTION:')) {
-      current.description = line.slice('DESCRIPTION:'.length).trim();
+      current.description = decodeIcsTextValue(line.slice('DESCRIPTION:'.length).trim());
     } else if (line.startsWith('LOCATION:')) {
-      current.location = line.slice('LOCATION:'.length).trim();
+      current.location = decodeIcsTextValue(line.slice('LOCATION:'.length).trim());
     }
   }
 
@@ -5260,23 +6495,82 @@ async function refreshEventsForListing(listingId) {
   const feeds = await getFeedsForListingInternal(listingId);
   await Promise.all(
     feeds.map(async (feed) => {
-      const fetched = await fetchEventsFromCalendarUrl(feed.url);
+      const importingChannelLabel = String(feed.label || '').trim() || 'Calendar Feed';
+      const importUrl = String(feed.url || '').trim();
+      const exportingChannelLabel = await findExportingChannelLabel(importUrl);
+
+      let fetched;
+      try {
+        fetched = await fetchEventsFromCalendarUrl(importUrl);
+      } catch (err) {
+        const errorText = (err && err.message) ? String(err.message) : 'Failed to fetch ICS feed.';
+        await storeFeedCache(listingId, feed.id, feed.label, [], errorText);
+        await logIcsTransaction({
+          listingId,
+          channelId: null,
+          importingChannelLabel,
+          exportingChannelLabel,
+          importUrl,
+          status: 'error',
+          eventCount: 0,
+          rawPayload: '',
+          errorText
+        });
+        return;
+      }
+
       if (fetched.error) {
         await storeFeedCache(listingId, feed.id, feed.label, [], fetched.error);
-      } else {
-        const events = fetched.events.map((event) => ({
-          isReservation: isAirbnbSource(feed.label) ? isAirbnbReservedSummary(event.title) : true,
-          isUnavailableBlock: isAirbnbSource(feed.label) ? isAirbnbNotAvailableSummary(event.title) : false,
-          source: feed.label,
+        await logIcsTransaction({
+          listingId,
+          channelId: null,
+          importingChannelLabel,
+          exportingChannelLabel,
+          importUrl,
+          status: 'error',
+          eventCount: 0,
+          rawPayload: '',
+          errorText: fetched.error
+        });
+        return;
+      }
+
+      const events = dedupeBlockEvents(fetched.events.map((event) => {
+        const metadata = parseIcsMetadataFromDescription(event.description);
+        const metadataType = String(metadata.type || '').trim().toLowerCase();
+        const hasTypeMetadata = metadataType === 'reservation' || metadataType === 'block';
+        const fallbackIsReservation = isAirbnbSource(feed.label) ? isAirbnbReservedSummary(event.title) : true;
+        const fallbackIsUnavailable = isAirbnbSource(feed.label) ? isAirbnbNotAvailableSummary(event.title) : false;
+        const isUnavailableBlock = hasTypeMetadata ? (metadataType === 'block') : fallbackIsUnavailable;
+        const isReservation = hasTypeMetadata ? (metadataType !== 'block') : fallbackIsReservation;
+
+        return {
+          isReservation,
+          isUnavailableBlock,
+          eventType: isReservation ? 'Reservation' : 'Block',
+          // This event is fetched from an external feed for this listing, so origin is always remote here.
+          eventOrigin: 'Remote',
+          source: String(metadata.source || '').trim() || feed.label,
           start: event.start,
           end: event.end,
           title: event.title,
-          description: event.description,
+          description: stripIcsMetadataFromDescription(event.description),
           location: event.location,
           raw: event.raw
-        }));
-        await storeFeedCache(listingId, feed.id, feed.label, events, null);
-      }
+        };
+      }));
+      await storeFeedCache(listingId, feed.id, feed.label, events, null);
+      await logIcsTransaction({
+        listingId,
+        channelId: null,
+        importingChannelLabel,
+        exportingChannelLabel,
+        importUrl,
+        status: 'success',
+        eventCount: fetched.events.length,
+        rawPayload: fetched.rawText || '',
+        errorText: null
+      });
     })
   );
 }
@@ -5290,6 +6584,579 @@ async function refreshAllListingsEvents() {
     console.log('Event cache refresh complete for', listings.length, 'listings at', new Date().toISOString());
   } catch (err) {
     console.error('Event cache refresh failed:', err && err.message);
+  }
+}
+
+// ── New Calendar Event Store & Sync Engine ───────────────────────────────────
+
+async function getChannelsForListing(listingId) {
+  const result = await pool.query(
+    `SELECT id, listing_id, label, import_url AS url, export_url, created_at, updated_at
+     FROM listing_channels WHERE listing_id = $1 ORDER BY id ASC`,
+    [listingId]
+  );
+  return result.rows;
+}
+
+function mapCalendarEventRowToApiEvent(row) {
+  const isLocal = row.event_type === 'local';
+  const isBlock = row.event_type === 'block';
+  const guestName = [
+    String(row.guest_first_name || '').trim(),
+    String(row.guest_family_name || '').trim()
+  ].filter(Boolean).join(' ');
+
+  return {
+    isReservation: !isBlock,
+    isUnavailableBlock: isBlock,
+    eventType: isBlock ? 'Block' : 'Reservation',
+    eventOrigin: isLocal ? 'Local' : 'Remote',
+    source: String(row.channel_label || (isLocal ? 'Direct Booking' : 'Unknown')).trim(),
+    start: row.start_date instanceof Date
+      ? row.start_date.toISOString().slice(0, 10)
+      : String(row.start_date || '').slice(0, 10),
+    end: row.end_date instanceof Date
+      ? row.end_date.toISOString().slice(0, 10)
+      : String(row.end_date || '').slice(0, 10),
+    title: guestName || String(row.ics_summary || (isBlock ? 'Not available' : 'Reservation')).trim(),
+    description: row.notes || '',
+    location: null,
+    raw: null,
+    // Extended fields for enhanced tooltip and conflict display
+    calendarEventId: Number(row.id),
+    channelLabel: row.channel_label || null,
+    notes: String(row.notes || ''),
+    isInConflict: row.is_in_conflict === true,
+    isModified: row.is_modified === true,
+    lastSyncedAt: row.last_synced_at ? String(row.last_synced_at) : null,
+    reservationActivityId: row.reservation_activity_id ? Number(row.reservation_activity_id) : null
+  };
+}
+
+async function getStoredCalendarEventsForListing(listingId) {
+  const result = await pool.query(
+    `SELECT lce.*, lc.label AS channel_label
+     FROM listing_calendar_events lce
+     LEFT JOIN listing_channels lc ON lc.id = lce.channel_id
+     WHERE lce.listing_id = $1
+     ORDER BY lce.start_date ASC, lce.id ASC`,
+    [listingId]
+  );
+  return result.rows.map(mapCalendarEventRowToApiEvent);
+}
+
+async function writeEventLog(entry) {
+  try {
+    await pool.query(
+      `INSERT INTO listing_event_log (
+         client_account_id, listing_id, entry_type, channel_label,
+         description, old_start_date, old_end_date, new_start_date, new_end_date,
+         affected_event_id, conflicting_event_id
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        entry.clientAccountId || null,
+        entry.listingId,
+        entry.entryType,
+        entry.channelLabel || '',
+        entry.description,
+        entry.oldStartDate || null,
+        entry.oldEndDate || null,
+        entry.newStartDate || null,
+        entry.newEndDate || null,
+        entry.affectedEventId || null,
+        entry.conflictingEventId || null
+      ]
+    );
+  } catch (logErr) {
+    console.error('[EventLog] Failed to write event log:', logErr && logErr.message);
+  }
+}
+
+async function getManagerEmailsForClientAccount(clientAccountId) {
+  const accountId = Number(clientAccountId);
+  if (!Number.isInteger(accountId) || accountId <= 0) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `SELECT DISTINCT LOWER(TRIM(u.email)) AS email
+     FROM client_memberships cm
+     JOIN users u ON u.id = cm.user_id
+     WHERE cm.client_account_id = $1
+       AND cm.role = 'Manager'
+       AND cm.status IN ('active', 'invited')
+       AND NULLIF(TRIM(u.email), '') IS NOT NULL`,
+    [accountId]
+  );
+
+  return result.rows
+    .map((row) => normaliseOptionalEmail(row.email))
+    .filter(Boolean);
+}
+
+async function getConflictEventDetailLinesForListing(listingId) {
+  const id = Number(listingId);
+  if (!Number.isInteger(id) || id <= 0) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `SELECT lce.start_date::text AS start_date,
+            lce.end_date::text AS end_date,
+            COALESCE(NULLIF(TRIM(lc.label), ''), CASE WHEN lce.event_type = 'local' THEN 'Local Reservation' ELSE 'Unknown' END) AS channel_label,
+            COALESCE(NULLIF(TRIM(lce.ics_summary), ''), 'Reservation') AS summary
+     FROM listing_calendar_events lce
+     LEFT JOIN listing_channels lc ON lc.id = lce.channel_id
+     WHERE lce.listing_id = $1
+       AND lce.is_in_conflict = TRUE
+       AND lce.event_type IN ('local', 'remote')
+     ORDER BY lce.start_date ASC, lce.end_date ASC, lce.id ASC
+     LIMIT 200`,
+    [id]
+  );
+
+  return result.rows.map((row, idx) => {
+    const startDate = String(row.start_date || '').slice(0, 10) || 'Unknown';
+    const endDate = String(row.end_date || '').slice(0, 10) || 'Unknown';
+    const channel = String(row.channel_label || 'Unknown').trim();
+    const summary = String(row.summary || 'Reservation').trim();
+    return `${idx + 1}. Start: ${startDate}, End: ${endDate}, Listing: ${id}, Channel: ${channel}, Summary: ${summary}`;
+  });
+}
+
+async function notifyManagersOfCalendarConflict(opts) {
+  const clientAccountId = Number(opts && opts.clientAccountId || 0);
+  const listingId = Number(opts && opts.listingId || 0);
+  if (!Number.isInteger(clientAccountId) || clientAccountId <= 0 || !Number.isInteger(listingId) || listingId <= 0) {
+    return;
+  }
+
+  const recipients = await getManagerEmailsForClientAccount(clientAccountId);
+  if (!recipients.length) {
+    return;
+  }
+
+  const listingInfoResult = await pool.query(
+    `SELECT l.name AS listing_name, COALESCE(NULLIF(TRIM(p.name), ''), '') AS property_name
+     FROM listings l
+     LEFT JOIN properties p ON p.id = l.property_id
+     WHERE l.id = $1
+     LIMIT 1`,
+    [listingId]
+  );
+  const listingName = String(listingInfoResult.rows[0] && listingInfoResult.rows[0].listing_name || ('Listing ' + listingId)).trim();
+  const propertyName = String(listingInfoResult.rows[0] && listingInfoResult.rows[0].property_name || '').trim();
+  const listingLabel = propertyName ? (listingName + ' (' + propertyName + ')') : listingName;
+
+  const replaceListingReference = (value) => String(value || '')
+    .replace(new RegExp('\\blisting\\s+' + String(listingId) + '\\b', 'ig'), 'listing "' + listingName + '"')
+    .replace(new RegExp('\\bListing:\\s*' + String(listingId) + '\\b', 'ig'), 'Listing: ' + listingName);
+
+  const defaultSubject = propertyName
+    ? ('Calendar Conflict - ' + propertyName + ' - ' + listingName)
+    : ('Calendar Conflict - ' + listingName);
+  const subject = String(defaultSubject).trim();
+
+  const introRaw = String(opts && opts.introText || '').trim();
+  const intro = introRaw
+    ? replaceListingReference(introRaw)
+    : ('A calendar conflict was detected for listing "' + listingName + '"' + (propertyName ? (' in property "' + propertyName + '".') : '.'));
+  const extraLines = Array.isArray(opts && opts.extraConflictLines) ? opts.extraConflictLines.filter(Boolean) : [];
+  const normalisedExtraLines = extraLines.map((line) => replaceListingReference(line));
+
+  const sections = [intro, ''];
+  if (normalisedExtraLines.length) {
+    sections.push('Detected conflict overlaps:');
+    sections.push(...normalisedExtraLines);
+    sections.push('');
+  }
+  sections.push('Please log in to review and resolve conflicts.');
+  const textBody = sections.join('\n');
+
+  await Promise.all(recipients.map(async (email) => {
+    try {
+      await sendAppEmail({ to: email, subject, textBody });
+    } catch (err) {
+      console.error('[CalendarSync] Conflict email failed:', err && err.message);
+    }
+  }));
+}
+
+
+async function logIcsTransaction(opts) {
+  const { listingId, channelId, importingChannelLabel, exportingChannelLabel, importUrl, status, eventCount, rawPayload, errorText } = opts || {};
+  try {
+    await pool.query(
+      `INSERT INTO ics_transaction_log
+         (listing_id, channel_id, importing_channel_label, exporting_channel_label,
+          import_url, status, event_count, raw_payload, error_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        listingId || null,
+        channelId || null,
+        String(importingChannelLabel || ''),
+        String(exportingChannelLabel || ''),
+        String(importUrl || ''),
+        String(status || 'success'),
+        Number(eventCount || 0),
+        String(rawPayload || '').slice(0, 65536),
+        errorText || null
+      ]
+    );
+  } catch (logErr) {
+    console.error('[IcsTransactionLog] Failed to log transaction:', logErr && logErr.message);
+  }
+}
+
+async function findExportingChannelLabel(importUrl) {
+  if (!importUrl) return '';
+  try {
+    const result = await pool.query(
+      `SELECT label FROM listing_channels
+       WHERE NULLIF(TRIM(export_url), '') IS NOT NULL AND export_url = $1
+       LIMIT 1`,
+      [importUrl]
+    );
+    if (result.rows[0]) return String(result.rows[0].label || '');
+    const parsed = new URL(importUrl);
+    return parsed.hostname;
+  } catch (_e) {
+    return String(importUrl).slice(0, 120);
+  }
+}
+
+// Import rules pipeline — structured for future channel-specific rules.
+// Each rule: { id: string, apply(rawEvent, channel, listing) => event | null }
+const CALENDAR_IMPORT_RULES = [];
+
+function applyImportRulesForEvent(rawEvent, channel, listing) {
+  let event = { ...rawEvent };
+  for (const rule of CALENDAR_IMPORT_RULES) {
+    const result = rule.apply(event, channel, listing);
+    if (!result) return null; // rule discarded the event
+    event = result;
+  }
+  return event;
+}
+
+// Dynamic block rules — applied in sequence when building calendar for display/export.
+// Each rule: { id: string, name: string, apply(listing, events) => blockEvents[] }
+// Sequence is significant: advance booking block runs first, then no-change-day blocks.
+const DYNAMIC_BLOCK_RULES = [
+  {
+    id: 'advance_booking',
+    name: 'Advance Booking Block',
+    apply: (listing, _events) => {
+      const block = buildAdvanceBlockEventForListing(listing);
+      return block ? [block] : [];
+    }
+  },
+  {
+    id: 'no_change_day',
+    name: 'No Change Day Boundaries',
+    apply: (listing, events) => buildNoChangeBoundaryBlockEvents(listing, events)
+  }
+];
+
+function applyDynamicBlockRules(listing, storedEvents) {
+  let result = Array.isArray(storedEvents) ? [...storedEvents] : [];
+  for (const rule of DYNAMIC_BLOCK_RULES) {
+    const blocks = rule.apply(listing, result);
+    if (blocks.length) {
+      result = dedupeBlockEvents([...result, ...blocks]);
+    }
+  }
+  return result;
+}
+
+async function syncChannelEvents(listing, channel, clientAccountId) {
+  const listingId = Number(listing.id);
+  const channelId = Number(channel.id);
+  const importUrl = String(channel.import_url || channel.url || '').trim();
+  if (!importUrl) return;
+
+  async function getDynamicBlockConflicts(importStart, importEnd) {
+    const storedEvents = await getStoredCalendarEventsForListing(listingId);
+    const eventsWithPolicyBlocks = appendAvailabilityPolicyBlockEvents(listing, storedEvents);
+    const seen = new Set();
+
+    return eventsWithPolicyBlocks
+      .filter((event) => {
+        if (!isBlockEvent(event)) {
+          return false;
+        }
+        const startKey = getDateKeyFromEventDateTime(event.start);
+        const endKey = getDateKeyFromEventDateTime(event.end);
+        if (!startKey || !endKey || endKey <= startKey) {
+          return false;
+        }
+
+        const source = String(event.source || '').trim().toLowerCase();
+        const origin = String(event.eventOrigin || '').trim().toLowerCase();
+        // Dynamic policy blocks are generated locally by availability rules.
+        if (source !== 'automaticpeople' && origin !== 'local') {
+          return false;
+        }
+
+        return startKey < importEnd && endKey > importStart;
+      })
+      .map((event) => {
+        const startKey = getDateKeyFromEventDateTime(event.start);
+        const endKey = getDateKeyFromEventDateTime(event.end);
+        const reason = String(event.description || event.title || 'Dynamic availability block').trim();
+        const key = startKey + '|' + endKey + '|' + reason;
+        if (seen.has(key)) {
+          return null;
+        }
+        seen.add(key);
+        return {
+          start: startKey,
+          end: endKey,
+          reason
+        };
+      })
+      .filter(Boolean);
+  }
+
+  const fetched = await fetchEventsFromCalendarUrl(importUrl);
+  if (fetched.error) {
+    console.error(`[CalendarSync] Listing ${listingId} channel "${channel.label}": ${fetched.error}`);
+    const exportingLabelErr = await findExportingChannelLabel(importUrl);
+    await logIcsTransaction({ listingId, channelId, importingChannelLabel: channel.label, exportingChannelLabel: exportingLabelErr, importUrl, status: 'error', eventCount: 0, rawPayload: '', errorText: fetched.error });
+    return;
+  }
+
+  const exportingLabel = await findExportingChannelLabel(importUrl);
+  await logIcsTransaction({ listingId, channelId, importingChannelLabel: channel.label, exportingChannelLabel: exportingLabel, importUrl, status: 'success', eventCount: fetched.events.length, rawPayload: fetched.rawText || '', errorText: null });
+
+  const now = new Date().toISOString();
+
+  for (const rawEvent of fetched.events) {
+    const processedEvent = applyImportRulesForEvent(rawEvent, channel, listing);
+    if (!processedEvent) continue;
+
+    const importStart = getDateKeyFromEventDateTime(processedEvent.start);
+    const importEnd = getDateKeyFromEventDateTime(processedEvent.end);
+    if (!importStart || !importEnd || importEnd <= importStart) continue;
+
+    const dynamicBlockConflicts = await getDynamicBlockConflicts(importStart, importEnd);
+    const hasDynamicBlockConflict = dynamicBlockConflicts.length > 0;
+
+    // Find existing events from same channel overlapping this date range
+    const sameChannelResult = await pool.query(
+      `SELECT id, start_date::text AS start_date, end_date::text AS end_date, is_in_conflict, notes
+       FROM listing_calendar_events
+       WHERE listing_id = $1 AND channel_id = $2 AND event_type = 'remote'
+         AND start_date < $4::date AND end_date > $3::date
+       ORDER BY id ASC`,
+      [listingId, channelId, importStart, importEnd]
+    );
+    const overlapping = sameChannelResult.rows;
+
+    // Exact date match — update last_synced_at only
+    const exactMatch = overlapping.find(
+      (e) => String(e.start_date).slice(0, 10) === importStart &&
+              String(e.end_date).slice(0, 10) === importEnd
+    );
+
+    if (exactMatch) {
+      if (hasDynamicBlockConflict && !exactMatch.is_in_conflict) {
+        await pool.query(
+          'UPDATE listing_calendar_events SET last_synced_at = $1, is_in_conflict = TRUE WHERE id = $2',
+          [now, exactMatch.id]
+        );
+
+        const conflictingNames = dynamicBlockConflicts
+          .map((block) => 'Dynamic Block (' + block.start + '–' + block.end + ': ' + block.reason + ')')
+          .join('; ');
+
+        const conflictDesc = `CONFLICT on listing ${listingId}: ${channel.label} reservation ${importStart}–${importEnd} overlaps with: ${conflictingNames || 'dynamic block'}.`;
+
+        if (clientAccountId) {
+          await writeEventLog({
+            clientAccountId,
+            listingId,
+            entryType: 'conflict',
+            channelLabel: channel.label,
+            description: conflictDesc,
+            newStartDate: importStart,
+            newEndDate: importEnd,
+            affectedEventId: Number(exactMatch.id),
+            conflictingEventId: null
+          });
+        }
+
+        await notifyManagersOfCalendarConflict({
+          clientAccountId,
+          listingId,
+          subject: `Calendar Conflict - Listing ${listingId}`,
+          introText: conflictDesc
+        });
+      } else {
+        // If already in conflict, no further action (avoid duplicate alerts)
+        await pool.query(
+          'UPDATE listing_calendar_events SET last_synced_at = $1 WHERE id = $2',
+          [now, exactMatch.id]
+        );
+      }
+      continue;
+    }
+
+    // Single partial overlap from same channel = dates have changed on existing reservation
+    if (overlapping.length === 1 && !overlapping[0].is_in_conflict) {
+      const existing = overlapping[0];
+      const oldStart = String(existing.start_date).slice(0, 10);
+      const oldEnd = String(existing.end_date).slice(0, 10);
+
+      await pool.query(
+        `UPDATE listing_calendar_events
+         SET start_date = $1::date, end_date = $2::date, is_modified = TRUE,
+             last_synced_at = $3, ics_summary = COALESCE(NULLIF($4, ''), ics_summary)
+         WHERE id = $5`,
+        [importStart, importEnd, now, processedEvent.title || '', existing.id]
+      );
+
+      // Remove stale changeover record — dates have changed, revert to unallocated
+      await pool.query(
+        `DELETE FROM booked_in_changes
+         WHERE listing_id = $1 AND reservation_checkin_date = $2::date
+           AND reservation_checkout_date = $3::date`,
+        [listingId, oldStart, oldEnd]
+      );
+
+      if (clientAccountId) {
+        await writeEventLog({
+          clientAccountId,
+          listingId,
+          entryType: 'reservation_change',
+          channelLabel: channel.label,
+          description: `Reservation on ${channel.label} changed: was ${oldStart}–${oldEnd}, now ${importStart}–${importEnd}.`,
+          oldStartDate: oldStart,
+          oldEndDate: oldEnd,
+          newStartDate: importStart,
+          newEndDate: importEnd,
+          affectedEventId: Number(existing.id)
+        });
+      }
+      continue;
+    }
+
+    // Check for conflicts with other channels or local reservations (in listing_calendar_events)
+    const conflictResult = await pool.query(
+      `SELECT lce.id, lce.event_type, lce.start_date::text AS start_date, lce.end_date::text AS end_date,
+              lc.label AS channel_label
+       FROM listing_calendar_events lce
+       LEFT JOIN listing_channels lc ON lc.id = lce.channel_id
+       WHERE lce.listing_id = $1
+         AND lce.event_type IN ('local', 'remote')
+         AND (lce.channel_id IS NULL OR lce.channel_id <> $2)
+         AND lce.start_date < $4::date AND lce.end_date > $3::date`,
+      [listingId, channelId, importStart, importEnd]
+    );
+
+    // Also check direct local reservations (reservation_activity)
+    const localConflictResult = await pool.query(
+      `SELECT id FROM reservation_activity
+       WHERE listing_id = $1 AND status = ANY($4::text[])
+         AND reservation_checkin_date < $3::date AND reservation_checkout_date > $2::date`,
+      [listingId, importStart, importEnd, Array.from(DIRECT_RESERVATION_ACTIVE_STATUSES)]
+    );
+
+    const isConflict = conflictResult.rows.length > 0 || overlapping.length > 1 || localConflictResult.rows.length > 0 || hasDynamicBlockConflict;
+
+    // Insert new remote calendar event
+    const newEventResult = await pool.query(
+      `INSERT INTO listing_calendar_events
+         (listing_id, event_type, channel_id, start_date, end_date, ics_summary,
+          last_synced_at, is_in_conflict, created_at)
+       VALUES ($1, 'remote', $2, $3::date, $4::date, $5, $6, $7, CURRENT_TIMESTAMP)
+       RETURNING id`,
+      [listingId, channelId, importStart, importEnd,
+       String(processedEvent.title || '').trim(), now, isConflict]
+    );
+    const newEventId = Number(newEventResult.rows[0].id);
+
+    if (isConflict) {
+      const conflictEventIds = [
+        ...conflictResult.rows.map((r) => Number(r.id)),
+        ...overlapping.filter((r) => !r.is_in_conflict).map((r) => Number(r.id))
+      ].filter((id) => Number.isInteger(id) && id > 0);
+
+      if (conflictEventIds.length) {
+        await pool.query(
+          'UPDATE listing_calendar_events SET is_in_conflict = TRUE WHERE id = ANY($1::bigint[])',
+          [conflictEventIds]
+        );
+      }
+
+      const conflictingNames = [
+        ...conflictResult.rows.map((r) => r.channel_label || (r.event_type === 'local' ? 'Local' : 'Unknown')),
+        ...localConflictResult.rows.map(() => 'Local Reservation'),
+        ...dynamicBlockConflicts.map((block) => 'Dynamic Block (' + block.start + '–' + block.end + ': ' + block.reason + ')')
+      ].join('; ');
+
+      const conflictDesc = `CONFLICT on listing ${listingId}: ${channel.label} reservation ${importStart}–${importEnd} overlaps with: ${conflictingNames || 'existing event'}.`;
+
+      if (clientAccountId) {
+        await writeEventLog({
+          clientAccountId,
+          listingId,
+          entryType: 'conflict',
+          channelLabel: channel.label,
+          description: conflictDesc,
+          newStartDate: importStart,
+          newEndDate: importEnd,
+          affectedEventId: newEventId,
+          conflictingEventId: conflictEventIds[0] || null
+        });
+      }
+
+      await notifyManagersOfCalendarConflict({
+        clientAccountId,
+        listingId,
+        subject: `Calendar Conflict - Listing ${listingId}`,
+        introText: conflictDesc
+      });
+    }
+  }
+}
+
+async function refreshListingCalendar(listing, clientAccountId) {
+  const channels = await getChannelsForListing(Number(listing.id));
+  for (const channel of channels) {
+    try {
+      await syncChannelEvents(listing, channel, clientAccountId);
+    } catch (err) {
+      console.error(`[CalendarSync] Channel ${channel.id} listing ${listing.id}:`, err && err.message);
+    }
+  }
+}
+
+async function getAllListingsWithChannels() {
+  const result = await pool.query(
+    'SELECT DISTINCT listing_id AS id FROM listing_channels ORDER BY listing_id ASC'
+  );
+  return result.rows;
+}
+
+async function refreshAllListingsCalendars() {
+  try {
+    const refs = await getAllListingsWithChannels();
+    for (const ref of refs) {
+      const listing = await getListingById(ref.id);
+      if (!listing) continue;
+      const caResult = await pool.query(
+        'SELECT client_account_id FROM listings WHERE id = $1 LIMIT 1', [ref.id]
+      );
+      const clientAccountId = caResult.rows[0] ? Number(caResult.rows[0].client_account_id) || null : null;
+      await refreshListingCalendar(listing, clientAccountId).catch((err) => {
+        console.error('[CalendarSync] Cron error listing', ref.id, err && err.message);
+      });
+    }
+    console.log(`[CalendarSync] Completed ${refs.length} listings at ${new Date().toISOString()}`);
+  } catch (err) {
+    console.error('[CalendarSync] Refresh all failed:', err && err.message);
   }
 }
 
@@ -5340,6 +7207,18 @@ async function fetchEventsFromCalendarUrl(calendarUrl) {
         if (!upstream.ok) {
           lastStatus = upstream.status;
           const bodyText = await upstream.text().catch(() => '');
+          const preview = previewBodyText(bodyText);
+
+          const isCalendarLabExportUrl = (() => {
+            const lower = String(candidateUrl || '').toLowerCase();
+            return lower.includes('/api/calendar-lab/export.ics');
+          })();
+
+          // Calendar Lab exports are ephemeral in-memory snapshots.
+          // If a key has no published snapshot (e.g. after restart), treat as empty feed.
+          if (isCalendarLabExportUrl && upstream.status === 404 && String(preview).toLowerCase().includes('export not found')) {
+            return { events: [] };
+          }
 
           if (isBookingInvalidTokenError(candidateUrl, upstream.status, bodyText)) {
             return {
@@ -5347,7 +7226,7 @@ async function fetchEventsFromCalendarUrl(calendarUrl) {
             };
           }
 
-          lastPreview = previewBodyText(bodyText);
+          lastPreview = preview;
           continue;
         }
 
@@ -5362,7 +7241,7 @@ async function fetchEventsFromCalendarUrl(calendarUrl) {
           .filter((event) => event.start || event.end || event.title || event.description || event.location)
           .slice(0, 500);
 
-        return { events };
+        return { events, rawText: icsText };
       }
     }
 
@@ -5935,6 +7814,260 @@ app.get('/api/admin/me', (req, res) => {
   return res.status(401).json({ error: 'Admin unauthorised' });
 });
 
+function normaliseCalendarLabId(value) {
+  const text = String(value || '').trim();
+  return /^[A-Za-z0-9_-]{1,32}$/.test(text) ? text : '';
+}
+
+function buildCalendarLabOwnerKey(req) {
+  return String(req && req.session && req.session.adminUsername || ADMIN_USERNAME || 'admin').trim().toLowerCase();
+}
+
+function buildCalendarLabExportKey(calendarId) {
+  const id = normaliseCalendarLabId(calendarId);
+  const suffix = randomUUID().replace(/-/g, '').slice(0, 32);
+  return String(id || 'calendar').toLowerCase() + '-' + suffix;
+}
+
+function normaliseCalendarLabStatePayload(body) {
+  const input = body && typeof body === 'object' ? body : {};
+  const sourceEvents = Array.isArray(input.events) ? input.events : [];
+  const events = sourceEvents
+    .map((event) => {
+      if (!event || typeof event !== 'object') return null;
+      const start = String(event.start || '').trim();
+      const end = String(event.end || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end <= start) {
+        return null;
+      }
+      return {
+        start,
+        end,
+        source: String(event.source || '').trim().toLowerCase() === 'imported' ? 'imported' : 'local',
+        eventType: String(event.eventType || 'Reservation').trim() || 'Reservation',
+        eventSource: String(event.eventSource || '').trim(),
+        eventOrigin: String(event.eventOrigin || '').trim(),
+        summary: String(event.summary || '').trim()
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 5000);
+
+  const importUrl = String(input.importUrl || '').trim().slice(0, 2000);
+  const viewDate = String(input.viewDate || '').trim();
+  const exportKey = String(input.exportKey || '').trim();
+  return { events, importUrl, viewDate, exportKey };
+}
+
+async function getOrCreateCalendarLabState(ownerKey, calendarId, desiredExportKey) {
+  const owner = String(ownerKey || '').trim().toLowerCase();
+  const id = normaliseCalendarLabId(calendarId);
+  if (!owner || !id) {
+    return null;
+  }
+
+  const existing = await pool.query(
+    `SELECT owner_key, calendar_id, export_key, events_json, import_url, view_date
+     FROM calendar_lab_states
+     WHERE owner_key = $1 AND calendar_id = $2
+     LIMIT 1`,
+    [owner, id]
+  );
+  if (existing.rows[0]) {
+    return existing.rows[0];
+  }
+
+  const candidate = /^[a-zA-Z0-9_-]{16,120}$/.test(String(desiredExportKey || '').trim())
+    ? String(desiredExportKey || '').trim()
+    : buildCalendarLabExportKey(id);
+
+  const created = await pool.query(
+    `INSERT INTO calendar_lab_states (owner_key, calendar_id, export_key, events_json, import_url, view_date, updated_at)
+     VALUES ($1, $2, $3, '[]', '', '', CURRENT_TIMESTAMP)
+     ON CONFLICT (owner_key, calendar_id)
+     DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+     RETURNING owner_key, calendar_id, export_key, events_json, import_url, view_date`,
+    [owner, id, candidate]
+  );
+
+  return created.rows[0] || null;
+}
+
+// GET /api/admin/calendar-lab/state/:calendarId — shared Calendar Lab state for this admin user
+app.get('/api/admin/calendar-lab/state/:calendarId', requireAdminAuth, async (req, res) => {
+  const calendarId = normaliseCalendarLabId(req.params.calendarId);
+  if (!calendarId) {
+    return res.status(400).json({ error: 'Invalid calendar id.' });
+  }
+
+  try {
+    const ownerKey = buildCalendarLabOwnerKey(req);
+    const desiredExportKey = String(req.query.exportKey || '').trim();
+    const row = await getOrCreateCalendarLabState(ownerKey, calendarId, desiredExportKey);
+    if (!row) {
+      return res.status(500).json({ error: 'Failed to load calendar state.' });
+    }
+
+    let events = [];
+    try {
+      const parsed = JSON.parse(String(row.events_json || '[]'));
+      events = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      events = [];
+    }
+
+    return res.json({
+      calendarId,
+      exportKey: String(row.export_key || '').trim(),
+      state: {
+        events,
+        importUrl: String(row.import_url || ''),
+        viewDate: String(row.view_date || '')
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load calendar state.' });
+  }
+});
+
+// PUT /api/admin/calendar-lab/state/:calendarId — save shared Calendar Lab state for this admin user
+app.put('/api/admin/calendar-lab/state/:calendarId', requireAdminAuth, async (req, res) => {
+  const calendarId = normaliseCalendarLabId(req.params.calendarId);
+  if (!calendarId) {
+    return res.status(400).json({ error: 'Invalid calendar id.' });
+  }
+
+  try {
+    const ownerKey = buildCalendarLabOwnerKey(req);
+    const payload = normaliseCalendarLabStatePayload(req.body);
+    const row = await getOrCreateCalendarLabState(ownerKey, calendarId, payload.exportKey);
+    if (!row) {
+      return res.status(500).json({ error: 'Failed to save calendar state.' });
+    }
+
+    const exportKey = String(row.export_key || '').trim();
+
+    await pool.query(
+      `UPDATE calendar_lab_states
+       SET events_json = $1,
+           import_url = $2,
+           view_date = $3,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE owner_key = $4 AND calendar_id = $5`,
+      [JSON.stringify(payload.events), payload.importUrl, payload.viewDate, ownerKey, calendarId]
+    );
+
+    return res.json({ ok: true, calendarId, exportKey });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to save calendar state.' });
+  }
+});
+
+async function handleCalendarLabPublish(req, res) {
+  const key = String(req.body && req.body.key || '').trim();
+  const icsText = String(req.body && req.body.icsText || '');
+
+  if (!/^[a-zA-Z0-9_-]{16,120}$/.test(key)) {
+    return res.status(400).json({ error: 'Invalid export key.' });
+  }
+  if (!icsText || !icsText.includes('BEGIN:VCALENDAR')) {
+    return res.status(400).json({ error: 'Invalid ICS payload.' });
+  }
+
+  calendarLabExportStore.set(key, {
+    icsText,
+    updatedAt: Date.now()
+  });
+
+  try {
+    await pool.query(
+      `INSERT INTO calendar_lab_exports (export_key, ics_text, updated_at)
+       VALUES ($1, $2, CURRENT_TIMESTAMP)
+       ON CONFLICT (export_key)
+       DO UPDATE SET ics_text = EXCLUDED.ics_text, updated_at = CURRENT_TIMESTAMP`,
+      [key, icsText]
+    );
+  } catch (err) {
+    console.error('[CalendarLab] Failed to persist published export:', err && err.message);
+  }
+
+  return res.json({ message: 'Published.', key });
+}
+
+// POST /api/admin/calendar-lab/publish — publish latest ICS snapshot for stable export URL
+app.post('/api/admin/calendar-lab/publish', requireAdminAuth, handleCalendarLabPublish);
+
+// POST /api/calendar-lab/publish — key-based publish endpoint used by admin test lab UI
+app.post('/api/calendar-lab/publish', handleCalendarLabPublish);
+
+// GET /api/calendar-lab/export.ics — public stable ICS export for calendar lab
+app.get('/api/calendar-lab/export.ics', async (req, res) => {
+  const key = String(req.query.key || '').trim();
+  if (!/^[a-zA-Z0-9_-]{16,120}$/.test(key)) {
+    return res.status(400).send('Invalid key.');
+  }
+
+  let icsText = '';
+  const memoryEntry = calendarLabExportStore.get(key);
+  if (memoryEntry && memoryEntry.icsText) {
+    icsText = String(memoryEntry.icsText || '');
+  } else {
+    try {
+      const result = await pool.query(
+        'SELECT ics_text FROM calendar_lab_exports WHERE export_key = $1 LIMIT 1',
+        [key]
+      );
+      const row = result.rows[0] || null;
+      if (row && row.ics_text) {
+        icsText = String(row.ics_text || '');
+        calendarLabExportStore.set(key, {
+          icsText,
+          updatedAt: Date.now()
+        });
+      }
+    } catch (err) {
+      console.error('[CalendarLab] Failed to load export from DB:', err && err.message);
+    }
+  }
+
+  if (!icsText) {
+    return res.status(404).send('Export not found.');
+  }
+
+  res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="calendar-lab.ics"');
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  return res.send(icsText);
+});
+
+// GET /api/admin/calendar-lab/export.ics — serve ICS payload from URL for admin calendar test lab
+app.get('/api/admin/calendar-lab/export.ics', (req, res) => {
+  const rawPayload = String(req.query.payload || '').trim();
+  if (!rawPayload) {
+    return res.status(400).send('Missing payload.');
+  }
+
+  try {
+    const normalised = rawPayload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalised + '='.repeat((4 - (normalised.length % 4)) % 4);
+    const utf8Text = Buffer.from(padded, 'base64').toString('utf8');
+
+    if (!utf8Text || !utf8Text.includes('BEGIN:VCALENDAR')) {
+      return res.status(400).send('Invalid payload.');
+    }
+
+    res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="calendar-lab.ics"');
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    return res.send(utf8Text);
+  } catch (err) {
+    console.error(err);
+    return res.status(400).send('Invalid payload.');
+  }
+});
+
 // GET /api/admin/users
 app.get('/api/admin/users', requireAdminAuth, async (req, res) => {
   try {
@@ -6017,6 +8150,64 @@ app.delete('/api/admin/users/:userId', requireAdminAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to delete user.' });
+  }
+});
+
+// POST /api/admin/system/reset-schema
+app.post('/api/admin/system/reset-schema', requireAdminAuth, async (req, res) => {
+  const confirmText = String(req.body && req.body.confirmText || '').trim();
+  if (confirmText !== 'DELETE ALL DATA') {
+    return res.status(400).json({ error: 'Confirmation text mismatch.' });
+  }
+
+  const dbClient = await pool.connect();
+  try {
+    let resetMode = 'schema';
+
+    await dbClient.query('BEGIN');
+    try {
+      await dbClient.query('DROP SCHEMA IF EXISTS public CASCADE');
+      await dbClient.query('CREATE SCHEMA public AUTHORIZATION CURRENT_USER');
+      await dbClient.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
+      await dbClient.query('GRANT USAGE ON SCHEMA public TO public');
+      await dbClient.query('COMMIT');
+    } catch (schemaErr) {
+      await dbClient.query('ROLLBACK');
+      resetMode = 'truncate';
+
+      await dbClient.query('BEGIN');
+      const tablesResult = await dbClient.query(
+        `
+          SELECT tablename
+          FROM pg_tables
+          WHERE schemaname = 'public'
+        `
+      );
+      const tableNames = tablesResult.rows
+        .map((row) => String(row.tablename || '').trim())
+        .filter(Boolean);
+      if (tableNames.length) {
+        const truncateList = tableNames.map((name) => '"' + name.replace(/"/g, '""') + '"').join(', ');
+        await dbClient.query('TRUNCATE TABLE ' + truncateList + ' RESTART IDENTITY CASCADE');
+      }
+      await dbClient.query('COMMIT');
+    }
+
+    await initializeUserStore();
+
+    return res.json({
+      message: 'Schema reset complete.',
+      mode: resetMode,
+      warning: 'All previous data has been permanently deleted.'
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: 'Failed to reset database schema.',
+      details: err && err.message ? String(err.message) : 'Unknown database error.'
+    });
+  } finally {
+    dbClient.release();
   }
 });
 
@@ -6459,6 +8650,52 @@ app.get('/api/me', requireAuth, async (req, res) => {
   }
 });
 
+// GET /api/account/bank-details — fetch bank details for active client account
+app.get('/api/account/bank-details', requireScopedRole('Client'), async (req, res) => {
+  try {
+    const clientAccountId = req.accessContext.activeClientAccountId;
+    const result = await pool.query(
+      'SELECT bank_account_name, bank_sort_code, bank_account_number, bank_is_business FROM client_accounts WHERE id = $1 LIMIT 1',
+      [clientAccountId]
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: 'Client account not found.' });
+    }
+    const row = result.rows[0];
+    return res.json({
+      accountName: row.bank_account_name || '',
+      sortCode: row.bank_sort_code || '',
+      accountNumber: row.bank_account_number || '',
+      isBusiness: row.bank_is_business === true
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load bank details.' });
+  }
+});
+
+// PUT /api/account/bank-details — save bank details for active client account
+app.put('/api/account/bank-details', requireScopedRole('Client'), async (req, res) => {
+  const accountName = sanitizeHtml(String(req.body.accountName || '').trim(), { allowedTags: [], allowedAttributes: {} }).slice(0, 200);
+  const sortCode = sanitizeHtml(String(req.body.sortCode || '').trim(), { allowedTags: [], allowedAttributes: {} }).slice(0, 20);
+  const accountNumber = sanitizeHtml(String(req.body.accountNumber || '').trim(), { allowedTags: [], allowedAttributes: {} }).slice(0, 20);
+  const isBusiness = req.body.isBusiness === true || req.body.isBusiness === 'true';
+
+  try {
+    const clientAccountId = req.accessContext.activeClientAccountId;
+    await pool.query(
+      `UPDATE client_accounts
+       SET bank_account_name = $1, bank_sort_code = $2, bank_account_number = $3, bank_is_business = $4, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $5`,
+      [accountName, sortCode, accountNumber, isBusiness, clientAccountId]
+    );
+    return res.json({ accountName, sortCode, accountNumber, isBusiness });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to save bank details.' });
+  }
+});
+
 // GET /api/account/validate — mark account as validated via signed email link token
 app.get('/api/account/validate', async (req, res) => {
   const token = String(req.query && req.query.token || '').trim();
@@ -6718,6 +8955,16 @@ app.post('/api/stripe/webhook', async (req, res) => {
               ...commonUpdate,
               paidAt: new Date().toISOString(),
               status: 'Confirmed'
+            });
+
+            await ensureGuestSiteUserForClientAccount({
+              clientAccountId: reservation.client_account_id,
+              ownerUserId: reservation.user_id,
+              firstName: reservation.first_name,
+              familyName: reservation.family_name,
+              email: reservation.email_address,
+              sourceType: 'shared_resource_reservation',
+              sourceId: String(reservation.id)
             });
           } else if (event.type === 'payment_intent.payment_failed') {
             await updateSharedResourceReservationPaymentById(reservation.id, {
@@ -7112,8 +9359,19 @@ app.post('/api/public/shared-resources/:resourceId/check-availability', async (r
 
   const checkinDate = normaliseDateKey(req.body.checkinDate);
   const checkoutDate = normaliseDateKey(req.body.checkoutDate);
-  const requestedStart = parseLocalDateTime(req.body.requestedStartDate, req.body.requestedStartTime);
-  const requestedEnd = parseLocalDateTime(req.body.requestedEndDate, req.body.requestedEndTime);
+  let requestedStart = parseLocalDateTime(req.body.requestedStartDate, req.body.requestedStartTime);
+  let requestedEnd = parseLocalDateTime(req.body.requestedEndDate, req.body.requestedEndTime);
+
+  if (!requestedStart || !requestedEnd) {
+    const startIso = String(req.body.requestedStartAt || '').trim();
+    const endIso = String(req.body.requestedEndAt || '').trim();
+    const startDate = new Date(startIso);
+    const endDate = new Date(endIso);
+    if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime())) {
+      requestedStart = startDate;
+      requestedEnd = endDate;
+    }
+  }
 
   if (!checkinDate || !checkoutDate || !requestedStart || !requestedEnd) {
     return res.status(400).json({ error: 'Checkin/checkout dates and requested start/end date-times are required.' });
@@ -7136,12 +9394,6 @@ app.post('/api/public/shared-resources/:resourceId/check-availability', async (r
     const checkinTime = new Date(checkinDate + 'T00:00:00');
     if (checkinTime.getTime() > latestAllowed.getTime()) {
       return res.status(400).json({ error: 'Requested checkin exceeds max days advance booking.' });
-    }
-
-    const listingIds = await getListingIdsForSharedResource(resource);
-    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
-    if (!matchingListingId) {
-      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
     }
 
     const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
@@ -7265,11 +9517,7 @@ app.post('/api/public/shared-resources/:resourceId/online-payment/prepare', asyn
       return res.status(400).json({ error: 'Requested checkin exceeds max days advance booking.' });
     }
 
-    const listingIds = await getListingIdsForSharedResource(resource);
-    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
-    if (!matchingListingId) {
-      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
-    }
+    const reservationListingId = getSharedResourceReservationListingId(resource);
 
     const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
     const maxUnits = normaliseSharedResourceMaxUnits(resource.max_units) || 1;
@@ -7289,12 +9537,12 @@ app.post('/api/public/shared-resources/:resourceId/online-payment/prepare', asyn
       return res.status(409).json({ error: 'Not fully available for your requested dates.' });
     }
 
-    const reservationIdentifier = 'SR-' + resourceId + '-' + Date.now();
+    const reservationIdentifier = await generateGlobalReservationIdentifier('shared_resource_reservation');
     const reservation = await createSharedResourceReservation({
       userId: resource.user_id,
       sharedResourceId: resourceId,
       reservationIdentifier,
-      listingId: matchingListingId,
+      listingId: reservationListingId,
       reservationCheckinDate: checkinDate,
       reservationCheckoutDate: checkoutDate,
       requestedStartAt: requestedStartAt.toISOString(),
@@ -7408,6 +9656,9 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
   }
 
   try {
+    let emailDeliveryWarning = false;
+    let emailDeliveryReason = '';
+
     const resource = await getSharedResourceByIdPublic(resourceId);
     if (!resource) {
       return res.status(404).json({ error: 'Shared resource not found.' });
@@ -7454,11 +9705,7 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
       return res.status(400).json({ error: 'Requested checkin exceeds max days advance booking.' });
     }
 
-    const listingIds = await getListingIdsForSharedResource(resource);
-    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
-    if (!matchingListingId) {
-      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
-    }
+    const reservationListingId = getSharedResourceReservationListingId(resource);
 
     const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
     const maxUnits = normaliseSharedResourceMaxUnits(resource.max_units) || 1;
@@ -7481,8 +9728,8 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
     const reservation = await createSharedResourceReservation({
       userId: resource.user_id,
       sharedResourceId: resourceId,
-      reservationIdentifier: 'SR-' + resourceId + '-' + Date.now(),
-      listingId: matchingListingId,
+      reservationIdentifier: await generateGlobalReservationIdentifier('shared_resource_reservation'),
+      listingId: reservationListingId,
       reservationCheckinDate: checkinDate,
       reservationCheckoutDate: checkoutDate,
       requestedStartAt: requestedStartAt.toISOString(),
@@ -7497,7 +9744,47 @@ app.post('/api/public/shared-resources/:resourceId/reservations', async (req, re
       status: selectedOption.status
     });
 
-    return res.status(201).json({ reservation });
+    if (paymentOption === 'cash_on_site' || paymentOption === 'bank_transfer') {
+      const subject = String(resource.short_description || '').trim() || 'Facility Reservation';
+      const fullDescriptionText = htmlToPlainText(resource.full_description_html);
+      const guestName = [firstName, familyName].filter(Boolean).join(' ').trim();
+      const arrivalDateTime = formatDateTimeForMessage(requestedStartAt.toISOString());
+      const departureDateTime = formatDateTimeForMessage(requestedEndAt.toISOString());
+      const paymentMethodLabel = getSharedReservationPaymentMethodLabel(paymentOption);
+      const amountText = reservationAmount === null ? '0.00' : reservationAmount.toFixed(2);
+
+      const lines = [
+        fullDescriptionText || 'Reservation details',
+        '',
+        'Guest Name: ' + guestName,
+        'Arrival Date & Time: ' + arrivalDateTime,
+        'Departure Date & Time: ' + departureDateTime,
+        'Number of units: ' + String(requestedSpaces),
+        'Cost: ' + amountText,
+        'Payment Method: ' + paymentMethodLabel
+      ];
+
+      if (String(resource.resource_type || '').trim().toLowerCase() === 'parking' && vehicleRegistration) {
+        lines.push('Registration Number: ' + vehicleRegistration);
+      }
+
+      const emailResult = await sendAppEmail({
+        to: emailAddress,
+        subject,
+        textBody: lines.join('\n')
+      });
+
+      if (!emailResult.ok) {
+        emailDeliveryWarning = true;
+        emailDeliveryReason = String(emailResult.error || '').trim();
+      }
+    }
+
+    return res.status(201).json({
+      reservation,
+      emailDeliveryWarning,
+      emailDeliveryReason
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to create reservation.' });
@@ -7668,11 +9955,7 @@ app.put('/api/shared-resources/:resourceId/reservations/:reservationId', require
       return res.status(404).json({ error: 'Shared resource not found.' });
     }
 
-    const listingIds = await getListingIdsForSharedResource(resource);
-    const matchingListingId = await findMatchingCalendarListingId(listingIds, checkinDate, checkoutDate);
-    if (!matchingListingId) {
-      return res.status(400).json({ error: 'We can’t identify a matching listing, please check your reservation dates.' });
-    }
+    const reservationListingId = getSharedResourceReservationListingId(resource);
 
     const existingReservations = await getSharedResourceReservationsByResourceId(resourceId);
     const maxUnits = normaliseSharedResourceMaxUnits(resource.max_units) || 1;
@@ -7701,7 +9984,7 @@ app.put('/api/shared-resources/:resourceId/reservations/:reservationId', require
         reservationCheckoutDate: checkoutDate,
         requestedStartAt: requestedStartAt.toISOString(),
         requestedEndAt: requestedEndAt.toISOString(),
-        listingId: matchingListingId,
+        listingId: reservationListingId,
         spacesRequired: requestedSpaces,
         firstName,
         familyName,
@@ -7723,6 +10006,43 @@ app.put('/api/shared-resources/:resourceId/reservations/:reservationId', require
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to update reservation.' });
+  }
+});
+
+// DELETE /api/shared-resources/:resourceId/reservations/:reservationId — delete reservation
+app.delete('/api/shared-resources/:resourceId/reservations/:reservationId', requireScopedRole('Manager'), async (req, res) => {
+  const resourceId = Number(req.params.resourceId);
+  const reservationId = Number(req.params.reservationId);
+  if (!Number.isInteger(resourceId) || resourceId <= 0 || !Number.isInteger(reservationId) || reservationId <= 0) {
+    return res.status(400).json({ error: 'Invalid resource or reservation id.' });
+  }
+
+  try {
+    const resource = await getSharedResourceByIdForUser(resourceId, req.accessContext.effectiveOwnerUserId);
+    if (!resource) {
+      return res.status(404).json({ error: 'Shared resource not found.' });
+    }
+    if (!isSharedResourceAllowedByScope(req, resource)) {
+      return res.status(404).json({ error: 'Shared resource not found.' });
+    }
+
+    const result = await deleteSharedResourceReservationForUser(
+      reservationId,
+      resourceId,
+      req.accessContext.effectiveOwnerUserId
+    );
+
+    if (result.error === 'Reservation not found.') {
+      return res.status(404).json({ error: result.error });
+    }
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+
+    return res.json({ deleted: true, id: reservationId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete reservation.' });
   }
 });
 
@@ -7895,8 +10215,13 @@ app.post('/api/listings', requireScopedRole('Manager'), async (req, res) => {
   const propertyId = Number(req.body.propertyId);
   const dateBasis = normaliseDateBasis(req.body.dateBasis);
   const usualCleanerId = req.body.usualCleanerId;
+  const noChangeDays = req.body.noChangeDays;
+  const noChangeValidation = normaliseNoChangeDaysForStore(noChangeDays);
   if (!name) {
     return res.status(400).json({ error: 'Listing name is required.' });
+  }
+  if (noChangeValidation.error) {
+    return res.status(400).json({ error: noChangeValidation.error });
   }
 
   try {
@@ -7912,7 +10237,8 @@ app.post('/api/listings', requireScopedRole('Manager'), async (req, res) => {
       name,
       Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null,
       dateBasis,
-      usualCleanerId
+      usualCleanerId,
+      noChangeValidation.days
     );
     if (error) {
       return res.status(error === 'Property not found.' ? 404 : 409).json({ error });
@@ -7959,12 +10285,21 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
   const dateBasis = normaliseDateBasis(req.body.dateBasis);
   const usualCleanerId = req.body.usualCleanerId;
   const emptyExport = req.body.emptyExport === true || req.body.emptyExport === 'true';
+  const blockAdvanceDaysRaw = req.body.blockAdvanceDays;
+  const blockAdvanceDays = (blockAdvanceDaysRaw !== null && blockAdvanceDaysRaw !== undefined && blockAdvanceDaysRaw !== '')
+    ? (Number.isInteger(Number(blockAdvanceDaysRaw)) && Number(blockAdvanceDaysRaw) > 0 ? Number(blockAdvanceDaysRaw) : null)
+    : null;
+  const noChangeDays = req.body.noChangeDays;
+  const noChangeValidation = normaliseNoChangeDaysForStore(noChangeDays);
 
   if (!Number.isInteger(listingId) || listingId <= 0) {
     return res.status(400).json({ error: 'Invalid listing id.' });
   }
   if (!name) {
     return res.status(400).json({ error: 'Listing name is required.' });
+  }
+  if (noChangeValidation.error) {
+    return res.status(400).json({ error: noChangeValidation.error });
   }
 
   try {
@@ -7987,7 +10322,9 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
       Number.isInteger(propertyId) && propertyId > 0 ? propertyId : null,
       dateBasis,
       usualCleanerId,
-      emptyExport
+      emptyExport,
+      blockAdvanceDays,
+      noChangeValidation.days
     );
     if (error === 'Listing not found.') {
       return res.status(404).json({ error });
@@ -8277,6 +10614,36 @@ app.put('/api/listings/:listingId/feeds/:feedId', requireScopedRole('Manager'), 
   }
 });
 
+// DELETE /api/listings/:listingId/feeds/:feedId — delete a feed
+app.delete('/api/listings/:listingId/feeds/:feedId', requireScopedRole('Manager'), async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  const feedId = Number(req.params.feedId);
+
+  if (!Number.isInteger(listingId) || listingId <= 0 || !Number.isInteger(feedId) || feedId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing/feed id.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const { deletedFeedId, error } = await deleteFeedForListing(feedId, listingId, req.accessContext.effectiveOwnerUserId);
+    if (error === 'Listing not found.') {
+      return res.status(404).json({ error });
+    }
+    if (error === 'Feed not found.') {
+      return res.status(404).json({ error });
+    }
+
+    return res.json({ message: 'Feed deleted.', deletedFeedId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete feed.' });
+  }
+});
+
 function buildIcsDateString(dateValue) {
   const raw = String(dateValue || '').trim();
   if (!raw) return null;
@@ -8386,6 +10753,7 @@ function buildIcsDateRange(event) {
 }
 
 function buildIcsEventSummary(listing, event) {
+  const isBlockEvent = Boolean(event && (event.isReservation === false || event.isUnavailableBlock === true || String(event.eventType || '').trim().toLowerCase() === 'block'));
   const listingName = String(
     (event && event.listingName)
       || (listing && listing.name)
@@ -8400,19 +10768,368 @@ function buildIcsEventSummary(listing, event) {
   let sourceLabel = source;
 
   const lower = source.toLowerCase();
+  const sourceKey = normaliseCalendarSourceName(source);
   if (lower.includes('airbnb')) {
     sourceLabel = 'Airbnb';
   }
-  if (lower.includes('booking')) {
+  if (sourceKey === 'bookingcom' || sourceKey === 'booking' || lower.includes('booking.com')) {
     sourceLabel = 'Booking.com';
   }
 
   const parts = [sourceLabel, propertyName, listingName].filter(Boolean);
   if (parts.length) {
-    return parts.join(' - ');
+    return isBlockEvent ? ('Block - ' + parts.join(' - ')) : parts.join(' - ');
   }
 
+  return isBlockEvent ? 'Block' : 'Reservation';
+}
+
+function buildIcsEventTypeLabel(event) {
+  if (event && (event.isReservation === false || event.isUnavailableBlock === true)) {
+    return 'Block';
+  }
+  const explicit = String(event && event.eventType || '').trim().toLowerCase();
+  if (explicit === 'block') {
+    return 'Block';
+  }
   return 'Reservation';
+}
+
+function inferEventOriginForIcs(event) {
+  const explicit = String(event && event.eventOrigin || '').trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const source = String(event && event.source || '').trim().toLowerCase();
+  if (source === 'direct booking' || source === 'automaticpeople') {
+    return 'Local';
+  }
+  if (Number(event && event.reservationActivityId || 0) > 0) {
+    return 'Local';
+  }
+  return 'Remote';
+}
+
+function buildIcsMetadataDescription(listing, event) {
+  const type = buildIcsEventTypeLabel(event);
+  const source = String(event && event.source || listing && listing.name || 'Unknown source').trim() || 'Unknown source';
+  const origin = inferEventOriginForIcs(event);
+  return [
+    'AP-TYPE: ' + type,
+    'AP-SOURCE: ' + source,
+    'AP-ORIGIN: ' + origin,
+    'AP-SCOPE: Listing'
+  ].join('\n');
+}
+
+function buildAdvanceBlockEventForListing(listing) {
+  const blockAdvanceDays = listing && listing.block_advance_days !== null && listing.block_advance_days !== undefined
+    ? Number(listing.block_advance_days) : null;
+  if (!Number.isInteger(blockAdvanceDays) || blockAdvanceDays <= 0) {
+    return null;
+  }
+
+  const now = new Date();
+  const blockStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  blockStart.setUTCDate(blockStart.getUTCDate() + blockAdvanceDays + 1);
+
+  const blockEnd = new Date(blockStart.getTime());
+  blockEnd.setUTCFullYear(blockEnd.getUTCFullYear() + 5);
+
+  const toIsoDate = (value) => {
+    const pad = (n) => String(n).padStart(2, '0');
+    return String(value.getUTCFullYear()) + '-' + pad(value.getUTCMonth() + 1) + '-' + pad(value.getUTCDate());
+  };
+
+  return {
+    isReservation: false,
+    isUnavailableBlock: true,
+    eventType: 'Block',
+    eventOrigin: 'Local',
+    source: 'AutomaticPeople',
+    start: toIsoDate(blockStart),
+    end: toIsoDate(blockEnd),
+    title: 'Not available',
+    description: 'Blocked: beyond advance booking limit',
+    location: null,
+    raw: null
+  };
+}
+
+function addDaysToDateKey(dateKey, days) {
+  const parsed = new Date(String(dateKey || '') + 'T00:00:00Z');
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  parsed.setUTCDate(parsed.getUTCDate() + Number(days || 0));
+  return parsed.toISOString().slice(0, 10);
+}
+
+function getWeekdayFromDateKey(dateKey) {
+  const parsed = new Date(String(dateKey || '') + 'T00:00:00Z');
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed.getUTCDay();
+}
+
+function wrapWeekdayIndex(value) {
+  return (Number(value) + 7) % 7;
+}
+
+function getNoChangeRunProfile(daySet, weekday) {
+  const day = Number(weekday);
+  if (!daySet || !daySet.has(day)) {
+    return null;
+  }
+
+  let backwards = 0;
+  for (let i = 1; i <= 6; i += 1) {
+    const candidate = wrapWeekdayIndex(day - i);
+    if (!daySet.has(candidate)) {
+      break;
+    }
+    backwards += 1;
+  }
+
+  let forwards = 0;
+  for (let i = 1; i <= 6; i += 1) {
+    const candidate = wrapWeekdayIndex(day + i);
+    if (!daySet.has(candidate)) {
+      break;
+    }
+    forwards += 1;
+  }
+
+  return {
+    period: backwards + 1 + forwards,
+    index: backwards + 1
+  };
+}
+
+function mergeNoChangeBlockRanges(ranges) {
+  const ordered = (Array.isArray(ranges) ? ranges : [])
+    .filter((item) => item && item.start && item.end && item.end > item.start)
+    .sort((a, b) => String(a.start).localeCompare(String(b.start)));
+
+  if (!ordered.length) {
+    return [];
+  }
+
+  const merged = [{ ...ordered[0] }];
+  for (let i = 1; i < ordered.length; i += 1) {
+    const current = ordered[i];
+    const last = merged[merged.length - 1];
+    if (current.start <= last.end) {
+      if (current.end > last.end) {
+        last.end = current.end;
+      }
+      if (current.reason && !String(last.reason || '').includes(String(current.reason))) {
+        last.reason = last.reason ? (String(last.reason) + '; ' + String(current.reason)) : String(current.reason);
+      }
+      continue;
+    }
+    merged.push({ ...current });
+  }
+
+  return merged;
+}
+
+function buildNoChangeBoundaryBlockEvents(listing, events) {
+  const noChangeDays = getNoChangeDaysFromListing(listing);
+  if (!noChangeDays.length) {
+    return [];
+  }
+
+  const noChangeDaySet = new Set(noChangeDays);
+  const ranges = [];
+
+  (events || []).forEach((event) => {
+    if (!event || event.isReservation === false) {
+      return;
+    }
+
+    const checkinKey = getDateKeyFromEventDateTime(event.start);
+    const checkoutKey = getDateKeyFromEventDateTime(event.end);
+    if (!checkinKey || !checkoutKey || checkoutKey <= checkinKey) {
+      return;
+    }
+
+    const checkinWeekday = getWeekdayFromDateKey(checkinKey);
+    if (checkinWeekday !== null && noChangeDaySet.has(checkinWeekday)) {
+      const profile = getNoChangeRunProfile(noChangeDaySet, checkinWeekday);
+      if (profile && profile.index > 0) {
+        const blockStart = addDaysToDateKey(checkinKey, -profile.index);
+        if (blockStart && checkinKey > blockStart) {
+          ranges.push({
+            start: blockStart,
+            end: checkinKey,
+            reason: 'Blocked by no-change rule: existing check-in on a configured no-change day.'
+          });
+        }
+      }
+    }
+
+    const checkoutWeekday = getWeekdayFromDateKey(checkoutKey);
+    if (checkoutWeekday !== null && noChangeDaySet.has(checkoutWeekday)) {
+      const profile = getNoChangeRunProfile(noChangeDaySet, checkoutWeekday);
+      if (profile) {
+        const blockDays = Math.max(0, profile.period - profile.index + 1);
+        const blockEnd = addDaysToDateKey(checkoutKey, blockDays);
+        if (blockEnd && blockEnd > checkoutKey) {
+          ranges.push({
+            start: checkoutKey,
+            end: blockEnd,
+            reason: 'Blocked by no-change rule: existing check-out on a no-change day.'
+          });
+        }
+      }
+    }
+  });
+
+  return mergeNoChangeBlockRanges(ranges).map((range) => ({
+    isReservation: false,
+    isUnavailableBlock: true,
+    eventType: 'Block',
+    eventOrigin: 'Local',
+    source: 'AutomaticPeople',
+    start: range.start,
+    end: range.end,
+    title: 'Not available',
+    description: range.reason || 'Blocked by no-change rule.',
+    location: null,
+    raw: null
+  }));
+}
+
+function appendAdvanceBlockEvent(listing, events) {
+  const baseEvents = Array.isArray(events) ? events : [];
+  const advanceBlockEvent = buildAdvanceBlockEventForListing(listing);
+  if (!advanceBlockEvent) {
+    return baseEvents;
+  }
+
+  return [...baseEvents, advanceBlockEvent].sort((a, b) => {
+    const aTime = a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
+    const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
+    return aTime - bTime;
+  });
+}
+
+function isBlockEvent(event) {
+  if (!event) return false;
+  if (event.isReservation === false || event.isUnavailableBlock === true) {
+    return true;
+  }
+  const explicitType = String(event.eventType || '').trim().toLowerCase();
+  return explicitType === 'block';
+}
+
+function getBlockIdentityKey(event) {
+  const start = getDateKeyFromEventDateTime(event && event.start);
+  const end = getDateKeyFromEventDateTime(event && event.end);
+  if (!start || !end || end <= start) {
+    return null;
+  }
+  return start + '|' + end;
+}
+
+function getBlockPriorityScore(event) {
+  let score = 0;
+  const source = String(event && event.source || '').trim().toLowerCase();
+  const origin = String(event && event.eventOrigin || '').trim().toLowerCase();
+  if (source === 'automaticpeople') {
+    score += 4;
+  }
+  if (origin === 'local') {
+    score += 2;
+  }
+  if (event && event.description) {
+    score += 1;
+  }
+  return score;
+}
+
+function dedupeBlockEvents(events) {
+  const blockByKey = new Map();
+  const passthrough = [];
+
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    if (!isBlockEvent(event)) {
+      passthrough.push(event);
+      return;
+    }
+
+    const key = getBlockIdentityKey(event);
+    if (!key) {
+      passthrough.push(event);
+      return;
+    }
+
+    const existing = blockByKey.get(key);
+    if (!existing || getBlockPriorityScore(event) > getBlockPriorityScore(existing)) {
+      blockByKey.set(key, event);
+    }
+  });
+
+  return [...passthrough, ...Array.from(blockByKey.values())].sort((a, b) => {
+    const aTime = a && a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
+    const bTime = b && b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
+    return aTime - bTime;
+  });
+}
+
+function appendAvailabilityPolicyBlockEvents(listing, events) {
+  const withNoChangeBlocks = (() => {
+    const blocks = buildNoChangeBoundaryBlockEvents(listing, events);
+    if (!blocks.length) {
+      return dedupeBlockEvents(Array.isArray(events) ? events : []);
+    }
+    return dedupeBlockEvents([...(Array.isArray(events) ? events : []), ...blocks]);
+  })();
+
+  return dedupeBlockEvents(appendAdvanceBlockEvent(listing, withNoChangeBlocks));
+}
+
+function normaliseCalendarSourceName(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+function detectCalendarRequestSource(req) {
+  const explicitSource = String(req.query.source || req.query.feedSource || req.get('x-calendar-source') || '').trim();
+  if (explicitSource) {
+    return explicitSource;
+  }
+
+  const userAgent = String(req.get('user-agent') || '').toLowerCase();
+  const referer = String(req.get('referer') || '').toLowerCase();
+  const host = String(req.hostname || '').toLowerCase();
+
+  const hints = [userAgent, referer, host].join(' ');
+  if (hints.includes('airbnb')) return 'Airbnb';
+  if (hints.includes('booking')) return 'Booking.com';
+  if (hints.includes('vrbo')) return 'VRBO';
+
+  return '';
+}
+
+function excludeEventsFromRequestSource(events, requestSource) {
+  const sourceKey = normaliseCalendarSourceName(requestSource);
+  if (!sourceKey) {
+    return Array.isArray(events) ? events : [];
+  }
+
+  return (Array.isArray(events) ? events : []).filter((event) => {
+    if (!event) return false;
+
+    const eventSourceKey = normaliseCalendarSourceName(event.source);
+    if (!eventSourceKey) {
+      return true;
+    }
+
+    return eventSourceKey !== sourceKey;
+  });
 }
 
 function buildIcsCalendar(listing, events) {
@@ -8444,8 +11161,11 @@ function buildIcsCalendar(listing, events) {
       lines.push('DTEND:' + dtend);
     }
     lines.push('SUMMARY:' + escapeIcsText(buildIcsEventSummary(listing, event)));
-    if (event.description) {
-      lines.push('DESCRIPTION:' + escapeIcsText(event.description));
+    const plainDescription = stripIcsMetadataFromDescription(event.description);
+    const metadataDescription = buildIcsMetadataDescription(listing, event);
+    const eventDescription = [plainDescription, metadataDescription].filter(Boolean).join('\n');
+    if (eventDescription) {
+      lines.push('DESCRIPTION:' + escapeIcsText(eventDescription));
     }
     if (event.location) {
       lines.push('LOCATION:' + escapeIcsText(event.location));
@@ -8488,7 +11208,12 @@ async function getIcsEventsForListing(listingId) {
     }
   }
 
-  return events;
+  const directEvents = await getDirectReservationEventsForListing(listingId);
+  return [...events, ...directEvents].sort((a, b) => {
+    const aTime = a.start ? new Date(a.start).getTime() : 0;
+    const bTime = b.start ? new Date(b.start).getTime() : 0;
+    return aTime - bTime;
+  });
 }
 
 // GET /api/listings/:listingId/calendar.ics — export merged calendar as ICS
@@ -8526,7 +11251,10 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
       return res.status(404).send('Listing not found.');
     }
 
-    const events = listing.empty_export ? [] : await getIcsEventsForListing(listingId);
+    const requestSource = detectCalendarRequestSource(req);
+    const baseEvents = listing.empty_export ? [] : await getIcsEventsForListing(listingId);
+    const sourceFilteredEvents = excludeEventsFromRequestSource(baseEvents, requestSource);
+    const events = appendAvailabilityPolicyBlockEvents(listing, sourceFilteredEvents);
 
     const icsContent = buildIcsCalendar(listing, events);
     const safeName = String(listing.name || 'listing').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
@@ -8534,6 +11262,9 @@ app.get('/api/listings/:listingId/calendar.ics', async (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename="' + safeName + '.ics"');
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.setHeader('X-Calendar-Event-Count', String(events.length));
+    if (requestSource) {
+      res.setHeader('X-Calendar-Excluded-Source', String(requestSource));
+    }
     return res.send(icsContent);
   } catch (err) {
     console.error(err);
@@ -8572,7 +11303,8 @@ app.get('/api/calendar.ics', async (req, res) => {
     const combinedEvents = [];
     for (const listing of listings) {
       const listingEvents = await getIcsEventsForListing(listing.id);
-      listingEvents.forEach((event) => {
+      const listingEventsWithPolicyBlocks = appendAvailabilityPolicyBlockEvents(listing, listingEvents);
+      listingEventsWithPolicyBlocks.forEach((event) => {
         combinedEvents.push({
           ...event,
           listingName: listing.name,
@@ -8641,11 +11373,54 @@ app.get('/api/listings/:listingId/events', requireScopedRole('Staff'), async (re
         return aTime - bTime;
       });
 
+    const directEvents = await getDirectReservationEventsForListing(listingId);
+    const mergedEvents = [...events, ...directEvents].sort((a, b) => {
+      const aTime = a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
+      const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
+      return aTime - bTime;
+    });
+    const eventsWithPolicyBlocks = appendAvailabilityPolicyBlockEvents(listing, mergedEvents);
+    const mergedEventsWithConflicts = annotateReservationEventConflicts(eventsWithPolicyBlocks);
+    await writeDetectedReservationConflictsToEventLog(listing, mergedEventsWithConflicts, req.accessContext.activeClientAccountId);
+
     const fetchedAt = cached.length
       ? cached.map((c) => c.fetched_at).sort().pop()
       : null;
 
     const bookedChanges = await getBookedInChangesForUserByListings(req.accessContext.effectiveOwnerUserId, [listingId]);
+    const activeReservationKeySet = new Set(
+      (mergedEventsWithConflicts || [])
+        .map((event) => {
+          if (event && event.isReservation === false) {
+            return null;
+          }
+          const checkinDate = normaliseDateKey(event && event.start);
+          const checkoutDate = normaliseDateKey(event && event.end);
+          if (!checkinDate || !checkoutDate || checkoutDate <= checkinDate) {
+            return null;
+          }
+          return checkinDate + '|' + checkoutDate;
+        })
+        .filter(Boolean)
+    );
+    const orphanedBookedChanges = (bookedChanges || []).filter((row) => {
+      const key = String(row.reservation_checkin_date || '') + '|' + String(row.reservation_checkout_date || '');
+      return key && !activeReservationKeySet.has(key);
+    });
+    if (orphanedBookedChanges.length) {
+      await deleteBookedInChangesForUser(
+        req.accessContext.effectiveOwnerUserId,
+        orphanedBookedChanges.map((row) => ({
+          listingId,
+          reservationCheckinDate: row.reservation_checkin_date,
+          reservationCheckoutDate: row.reservation_checkout_date
+        }))
+      );
+    }
+    const activeBookedChanges = (bookedChanges || []).filter((row) => {
+      const key = String(row.reservation_checkin_date || '') + '|' + String(row.reservation_checkout_date || '');
+      return key && activeReservationKeySet.has(key);
+    });
     const cleaners = await getCleanersForUser(req.accessContext.effectiveOwnerUserId);
     const cleanerNameById = new Map(
       (cleaners || []).map((cleaner) => {
@@ -8653,7 +11428,7 @@ app.get('/api/listings/:listingId/events', requireScopedRole('Staff'), async (re
         return [Number(cleaner.id), fullName || 'Unallocated'];
       })
     );
-    const cleaningChanges = (bookedChanges || []).map((row) => ({
+    const cleaningChanges = activeBookedChanges.map((row) => ({
       reservation_checkin_date: row.reservation_checkin_date,
       reservation_checkout_date: row.reservation_checkout_date,
       changeover_date: row.changeover_date,
@@ -8661,7 +11436,7 @@ app.get('/api/listings/:listingId/events', requireScopedRole('Staff'), async (re
       cleaner_name: row.cleaner_id ? (cleanerNameById.get(Number(row.cleaner_id)) || 'Unallocated') : 'Unallocated'
     }));
 
-    return res.json({ listing, events, feedErrors, fetchedAt, cleaningChanges });
+    return res.json({ listing, events: mergedEventsWithConflicts, feedErrors, fetchedAt, cleaningChanges });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load listing events.' });
@@ -8707,11 +11482,54 @@ app.post('/api/listings/:listingId/events/refresh', requireScopedRole('Manager')
         return aTime - bTime;
       });
 
+    const directEvents = await getDirectReservationEventsForListing(listingId);
+    const mergedEvents = [...events, ...directEvents].sort((a, b) => {
+      const aTime = a.start ? new Date(a.start).getTime() : Number.NEGATIVE_INFINITY;
+      const bTime = b.start ? new Date(b.start).getTime() : Number.NEGATIVE_INFINITY;
+      return aTime - bTime;
+    });
+    const eventsWithPolicyBlocks = appendAvailabilityPolicyBlockEvents(listing, mergedEvents);
+    const mergedEventsWithConflicts = annotateReservationEventConflicts(eventsWithPolicyBlocks);
+    await writeDetectedReservationConflictsToEventLog(listing, mergedEventsWithConflicts, req.accessContext.activeClientAccountId);
+
     const fetchedAt = cached.length
       ? cached.map((c) => c.fetched_at).sort().pop()
       : null;
 
     const bookedChanges = await getBookedInChangesForUserByListings(req.accessContext.effectiveOwnerUserId, [listingId]);
+    const activeReservationKeySet = new Set(
+      (mergedEventsWithConflicts || [])
+        .map((event) => {
+          if (event && event.isReservation === false) {
+            return null;
+          }
+          const checkinDate = normaliseDateKey(event && event.start);
+          const checkoutDate = normaliseDateKey(event && event.end);
+          if (!checkinDate || !checkoutDate || checkoutDate <= checkinDate) {
+            return null;
+          }
+          return checkinDate + '|' + checkoutDate;
+        })
+        .filter(Boolean)
+    );
+    const orphanedBookedChanges = (bookedChanges || []).filter((row) => {
+      const key = String(row.reservation_checkin_date || '') + '|' + String(row.reservation_checkout_date || '');
+      return key && !activeReservationKeySet.has(key);
+    });
+    if (orphanedBookedChanges.length) {
+      await deleteBookedInChangesForUser(
+        req.accessContext.effectiveOwnerUserId,
+        orphanedBookedChanges.map((row) => ({
+          listingId,
+          reservationCheckinDate: row.reservation_checkin_date,
+          reservationCheckoutDate: row.reservation_checkout_date
+        }))
+      );
+    }
+    const activeBookedChanges = (bookedChanges || []).filter((row) => {
+      const key = String(row.reservation_checkin_date || '') + '|' + String(row.reservation_checkout_date || '');
+      return key && activeReservationKeySet.has(key);
+    });
     const cleaners = await getCleanersForUser(req.accessContext.effectiveOwnerUserId);
     const cleanerNameById = new Map(
       (cleaners || []).map((cleaner) => {
@@ -8719,7 +11537,7 @@ app.post('/api/listings/:listingId/events/refresh', requireScopedRole('Manager')
         return [Number(cleaner.id), fullName || 'Unallocated'];
       })
     );
-    const cleaningChanges = (bookedChanges || []).map((row) => ({
+    const cleaningChanges = activeBookedChanges.map((row) => ({
       reservation_checkin_date: row.reservation_checkin_date,
       reservation_checkout_date: row.reservation_checkout_date,
       changeover_date: row.changeover_date,
@@ -8727,10 +11545,770 @@ app.post('/api/listings/:listingId/events/refresh', requireScopedRole('Manager')
       cleaner_name: row.cleaner_id ? (cleanerNameById.get(Number(row.cleaner_id)) || 'Unallocated') : 'Unallocated'
     }));
 
-    return res.json({ listing, events, feedErrors, fetchedAt, cleaningChanges });
+    return res.json({ listing, events: mergedEventsWithConflicts, feedErrors, fetchedAt, cleaningChanges });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to refresh listing events.' });
+  }
+});
+
+// GET /api/listings/:listingId/event-log — dashboard event log for a listing
+app.get('/api/listings/:listingId/event-log', requireScopedRole('Manager'), async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const result = await pool.query(
+      `SELECT id, listing_id, entry_type, channel_label, description,
+              old_start_date::text AS old_start_date, old_end_date::text AS old_end_date,
+              new_start_date::text AS new_start_date, new_end_date::text AS new_end_date,
+              affected_event_id, conflicting_event_id, created_at
+       FROM listing_event_log
+       WHERE listing_id = $1
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [listingId]
+    );
+
+    return res.json({ entries: result.rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load event log.' });
+  }
+});
+
+// GET /api/event-log — dashboard event log for all listings in active client account
+app.get('/api/event-log', requireScopedRole('Manager'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT lel.id, lel.listing_id, l.name AS listing_name,
+              lel.entry_type, lel.channel_label, lel.description,
+              lel.old_start_date::text AS old_start_date, lel.old_end_date::text AS old_end_date,
+              lel.new_start_date::text AS new_start_date, lel.new_end_date::text AS new_end_date,
+              lel.affected_event_id, lel.conflicting_event_id, lel.created_at
+       FROM listing_event_log lel
+       JOIN listings l ON l.id = lel.listing_id
+       WHERE lel.client_account_id = $1
+       ORDER BY lel.created_at DESC
+       LIMIT 200`,
+      [req.accessContext.activeClientAccountId]
+    );
+
+    return res.json({ entries: result.rows });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load event log.' });
+  }
+});
+
+// GET /api/event-log/:entryId/details — detailed data for one dashboard event-log entry
+app.get('/api/event-log/:entryId/details', requireScopedRole('Manager'), async (req, res) => {
+  const entryId = Number(req.params.entryId);
+  if (!Number.isInteger(entryId) || entryId <= 0) {
+    return res.status(400).json({ error: 'Invalid event log entry id.' });
+  }
+
+  try {
+    const entryResult = await pool.query(
+      `SELECT lel.id, lel.listing_id, l.name AS listing_name,
+              lel.entry_type, lel.channel_label, lel.description,
+              lel.old_start_date::text AS old_start_date, lel.old_end_date::text AS old_end_date,
+              lel.new_start_date::text AS new_start_date, lel.new_end_date::text AS new_end_date,
+              lel.affected_event_id, lel.conflicting_event_id, lel.created_at
+       FROM listing_event_log lel
+       JOIN listings l ON l.id = lel.listing_id
+       WHERE lel.id = $1
+         AND lel.client_account_id = $2
+       LIMIT 1`,
+      [entryId, req.accessContext.activeClientAccountId]
+    );
+
+    const entry = entryResult.rows[0] || null;
+    if (!entry) {
+      return res.status(404).json({ error: 'Event log entry not found.' });
+    }
+
+    let conflictEvents = [];
+    if (String(entry.entry_type || '').trim() === 'conflict') {
+      const overlapStart = String(entry.new_start_date || entry.old_start_date || '').slice(0, 10) || null;
+      const overlapEnd = String(entry.new_end_date || entry.old_end_date || '').slice(0, 10) || null;
+      const seedEventIds = [entry.affected_event_id, entry.conflicting_event_id]
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0);
+
+      const conflictResult = await pool.query(
+        `SELECT lce.id,
+                lce.start_date::text AS start_date,
+                lce.end_date::text AS end_date,
+                lce.event_type,
+                lce.is_in_conflict,
+                COALESCE(NULLIF(TRIM(lce.ics_summary), ''), CASE WHEN lce.event_type = 'local' THEN 'Local Reservation' ELSE 'Reservation' END) AS summary,
+                COALESCE(NULLIF(TRIM(lc.label), ''), CASE WHEN lce.event_type = 'local' THEN 'Local Reservation' ELSE 'Unknown Channel' END) AS channel_label
+         FROM listing_calendar_events lce
+         LEFT JOIN listing_channels lc ON lc.id = lce.channel_id
+         WHERE lce.listing_id = $1
+           AND lce.event_type IN ('local', 'remote')
+           AND (
+             lce.id = ANY($2::bigint[])
+             OR (
+               $3::date IS NOT NULL AND $4::date IS NOT NULL
+               AND lce.start_date < $4::date
+               AND lce.end_date > $3::date
+             )
+           )
+         ORDER BY lce.start_date ASC, lce.end_date ASC, lce.id ASC`,
+        [entry.listing_id, seedEventIds, overlapStart, overlapEnd]
+      );
+
+      const seenEventIds = new Set();
+      conflictEvents = conflictResult.rows
+        .filter((row) => {
+          const id = Number(row.id);
+          if (!Number.isInteger(id) || id <= 0 || seenEventIds.has(id)) {
+            return false;
+          }
+          seenEventIds.add(id);
+          return true;
+        })
+        .map((row) => ({
+          id: Number(row.id),
+          listing_name: entry.listing_name || '',
+          start_date: String(row.start_date || '').slice(0, 10),
+          end_date: String(row.end_date || '').slice(0, 10),
+          event_type: String(row.event_type || '').trim(),
+          channel_label: String(row.channel_label || '').trim(),
+          summary: String(row.summary || '').trim(),
+          is_in_conflict: row.is_in_conflict === true
+        }));
+    }
+
+    return res.json({ entry, conflictEvents });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load event log details.' });
+  }
+});
+
+// DELETE /api/event-log — clear dashboard event log entries for active client account
+app.delete('/api/event-log', requireScopedRole('Manager'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      'DELETE FROM listing_event_log WHERE client_account_id = $1',
+      [req.accessContext.activeClientAccountId]
+    );
+    return res.json({ ok: true, deletedCount: Number(result.rowCount || 0) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to clear event log.' });
+  }
+});
+
+// POST /api/listings/:listingId/debug-reservations — create a debug direct reservation event
+app.post('/api/listings/:listingId/debug-reservations', requireScopedRole('Manager'), async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  const startDate = normaliseDateKey(req.body.startDate || req.body.checkinDate || req.body.arrivalDate);
+  const endDate = normaliseDateKey(req.body.endDate || req.body.checkoutDate || req.body.departureDate);
+
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+  if (!startDate || !endDate || endDate <= startDate) {
+    return res.status(400).json({ error: 'Start and end dates are required (end must be after start).' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const reservationIdentifier = await generateGlobalReservationIdentifier('private_reservation');
+    const reservation = await createReservationActivityForListing({
+      userId: req.accessContext.effectiveOwnerUserId,
+      clientAccountId: req.accessContext.activeClientAccountId,
+      listingId,
+      reservationIdentifier,
+      checkinDate: startDate,
+      checkoutDate: endDate,
+      firstName: 'Debug',
+      familyName: 'Reservation',
+      emailAddress: 'debug-reservation@automaticpeople.local',
+      guestCount: 1,
+      reservationAmount: 0,
+      holdUntilAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      paymentMethod: 'No Charge',
+      paymentDueAt: null,
+      status: 'confirmed',
+      notes: 'Created from Ops reservation calendar debug tools.'
+    });
+
+    return res.json({
+      message: 'Debug reservation created.',
+      reservation: reservation || null
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create debug reservation.' });
+  }
+});
+
+// DELETE /api/listings/:listingId/debug-reservations — delete all active direct reservations for listing
+app.delete('/api/listings/:listingId/debug-reservations', requireScopedRole('Manager'), async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const deletedResult = await pool.query(
+      `
+        DELETE FROM reservation_activity
+        WHERE listing_id = $1
+          AND client_account_id = $2
+          AND status = ANY($3::text[])
+        RETURNING listing_id,
+                  reservation_checkin_date::text AS reservation_checkin_date,
+                  reservation_checkout_date::text AS reservation_checkout_date
+      `,
+      [listingId, req.accessContext.activeClientAccountId, Array.from(DIRECT_RESERVATION_ACTIVE_STATUSES)]
+    );
+
+    const deletedRows = Array.isArray(deletedResult.rows) ? deletedResult.rows : [];
+    if (deletedRows.length) {
+      await deleteBookedInChangesForUser(
+        req.accessContext.effectiveOwnerUserId,
+        deletedRows.map((row) => ({
+          listingId: Number(row.listing_id),
+          reservationCheckinDate: row.reservation_checkin_date,
+          reservationCheckoutDate: row.reservation_checkout_date
+        }))
+      );
+    }
+
+    return res.json({ message: 'Debug delete-all completed.', deletedCount: Number(deletedResult.rowCount || 0) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete reservations.' });
+  }
+});
+
+// POST /api/listings/:listingId/debug-reservations/delete-by-date — delete active direct reservations overlapping date
+app.post('/api/listings/:listingId/debug-reservations/delete-by-date', requireScopedRole('Manager'), async (req, res) => {
+  const listingId = Number(req.params.listingId);
+  const targetDate = normaliseDateKey(req.body.date || req.body.targetDate);
+
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Invalid listing id.' });
+  }
+  if (!targetDate) {
+    return res.status(400).json({ error: 'Valid date is required.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const deletedResult = await pool.query(
+      `
+        DELETE FROM reservation_activity
+        WHERE listing_id = $1
+          AND client_account_id = $2
+          AND status = ANY($3::text[])
+          AND reservation_checkin_date <= $4::date
+          AND reservation_checkout_date > $4::date
+        RETURNING listing_id,
+                  reservation_checkin_date::text AS reservation_checkin_date,
+                  reservation_checkout_date::text AS reservation_checkout_date
+      `,
+      [listingId, req.accessContext.activeClientAccountId, Array.from(DIRECT_RESERVATION_ACTIVE_STATUSES), targetDate]
+    );
+
+    const deletedRows = Array.isArray(deletedResult.rows) ? deletedResult.rows : [];
+    if (deletedRows.length) {
+      await deleteBookedInChangesForUser(
+        req.accessContext.effectiveOwnerUserId,
+        deletedRows.map((row) => ({
+          listingId: Number(row.listing_id),
+          reservationCheckinDate: row.reservation_checkin_date,
+          reservationCheckoutDate: row.reservation_checkout_date
+        }))
+      );
+    }
+
+    return res.json({ message: 'Debug delete-by-date completed.', deletedCount: Number(deletedResult.rowCount || 0) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete reservations by date.' });
+  }
+});
+
+// POST /api/private-reservations — create a direct reservation activity entry
+app.get('/api/private-reservations', requireScopedRole('Manager'), async (req, res) => {
+  try {
+    const reservations = await getPrivateReservationsForScope(req);
+    return res.json({ reservations });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load private reservations.' });
+  }
+});
+
+app.get('/api/private-reservations/guest-users', requireScopedRole('Manager'), async (req, res) => {
+  try {
+    const guestUsers = await getGuestSiteUsersForClientAccount(req.accessContext.activeClientAccountId);
+    return res.json({
+      guestUsers: guestUsers.map((row) => {
+        const firstName = String(row && row.first_name || '').trim();
+        const familyName = String(row && row.family_name || '').trim();
+        const fullName = [firstName, familyName].filter(Boolean).join(' ').trim();
+        return {
+          id: Number(row && row.id || 0),
+          email: String(row && row.email || '').trim(),
+          firstName,
+          familyName,
+          displayName: fullName || String(row && row.email || '').trim()
+        };
+      })
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load guest users.' });
+  }
+});
+
+app.get('/api/shared-reservations/guest-users', requireScopedRole('Staff'), async (req, res) => {
+  try {
+    const guestUsers = await getReservationGuestOptionsForClientAccount(req.accessContext.activeClientAccountId);
+    return res.json({
+      guestUsers: guestUsers.map((row) => {
+        const firstName = String(row && row.first_name || '').trim();
+        const familyName = String(row && row.family_name || '').trim();
+        const email = String(row && row.email || '').trim();
+        const telephone = String(row && row.telephone || '').trim();
+        const fullName = [firstName, familyName].filter(Boolean).join(' ').trim();
+        return {
+          id: Number(row && row.id || 0) || null,
+          email,
+          firstName,
+          familyName,
+          telephone,
+          displayName: fullName || email || 'Guest'
+        };
+      })
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load reservation guest users.' });
+  }
+});
+
+app.delete('/api/private-reservations/:id', requireScopedRole('Manager'), async (req, res) => {
+  const reservationId = Number(req.params.id || 0);
+  if (!Number.isInteger(reservationId) || reservationId <= 0) {
+    return res.status(400).json({ error: 'Valid reservation id is required.' });
+  }
+
+  try {
+    const existingResult = await pool.query(
+      `
+        SELECT id,
+           reservation_identifier,
+               first_name,
+               family_name,
+               email_address,
+               listing_id,
+               reservation_checkin_date::text AS reservation_checkin_date,
+               reservation_checkout_date::text AS reservation_checkout_date,
+               status,
+               client_account_id
+        FROM reservation_activity
+        WHERE id = $1
+          AND client_account_id = $2
+        LIMIT 1
+      `,
+      [reservationId, req.accessContext.activeClientAccountId]
+    );
+
+    const existing = existingResult.rows[0] || null;
+    if (!existing) {
+      return res.status(404).json({ error: 'Private reservation not found.' });
+    }
+
+    const listing = await getListingByIdForUser(existing.listing_id, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Private reservation not found.' });
+    }
+
+    await pool.query(
+      `
+        DELETE FROM reservation_activity
+        WHERE id = $1
+          AND client_account_id = $2
+      `,
+      [reservationId, req.accessContext.activeClientAccountId]
+    );
+
+    await deleteBookedInChangesForUser(req.accessContext.effectiveOwnerUserId, [{
+      listingId: Number(existing.listing_id),
+      reservationCheckinDate: existing.reservation_checkin_date,
+      reservationCheckoutDate: existing.reservation_checkout_date
+    }]);
+
+    const guestEmail = normaliseOptionalEmail(existing.email_address);
+    if (guestEmail) {
+      const guestName = [
+        String(existing.first_name || '').trim(),
+        String(existing.family_name || '').trim()
+      ].filter(Boolean).join(' ').trim() || 'Guest';
+      const isProvisional = String(existing.status || '').trim().toLowerCase().startsWith('awaiting_');
+      const subject = isProvisional ? 'Provisional Reservation Cancelled' : 'Reservation Cancelled';
+      const reservationIdentifier = String(existing.reservation_identifier || '').trim();
+      const messageLines = [
+        subject,
+        '',
+        'Guest: ' + guestName,
+        'Property: ' + String(listing.property_name || '').trim(),
+        'Listing: ' + String(listing.name || '').trim(),
+        'Arrival date: ' + String(existing.reservation_checkin_date || '').trim(),
+        'Departure date: ' + String(existing.reservation_checkout_date || '').trim()
+      ];
+      if (isProvisional) {
+        if (reservationIdentifier) {
+          messageLines.unshift('Reservation ID: ' + reservationIdentifier, '');
+        }
+        messageLines.push('', 'This accommodation is no longer held for you');
+      }
+      const textBody = messageLines.join('\n');
+
+      const emailResult = await sendAppEmail({
+        to: guestEmail,
+        subject,
+        textBody
+      });
+      if (!emailResult.ok) {
+        console.warn('Failed to send private reservation cancellation email to guest.', emailResult.error || 'unknown email error');
+      }
+    }
+
+    return res.json({ deleted: true, id: reservationId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to cancel private reservation.' });
+  }
+});
+
+app.post('/api/private-reservations/:id/confirm-payment', requireScopedRole('Manager'), async (req, res) => {
+  const reservationId = Number(req.params.id || 0);
+  if (!Number.isInteger(reservationId) || reservationId <= 0) {
+    return res.status(400).json({ error: 'Valid reservation id is required.' });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        SELECT ra.id,
+           ra.reservation_identifier,
+               ra.client_account_id,
+               ra.listing_id,
+               ra.reservation_checkin_date::text AS reservation_checkin_date,
+               ra.reservation_checkout_date::text AS reservation_checkout_date,
+               ra.first_name,
+               ra.family_name,
+               ra.email_address,
+               ra.reservation_amount,
+               ra.payment_method,
+               ra.status,
+               ra.created_at,
+               l.name AS listing_name,
+               (ra.reservation_checkout_date - ra.reservation_checkin_date) AS stay_nights
+        FROM reservation_activity ra
+        JOIN listings l ON l.id = ra.listing_id
+        WHERE ra.id = $1
+          AND ra.client_account_id = $2
+        LIMIT 1
+      `,
+      [reservationId, req.accessContext.activeClientAccountId]
+    );
+
+    const existing = result.rows[0] || null;
+    if (!existing) {
+      return res.status(404).json({ error: 'Private reservation not found.' });
+    }
+
+    const listing = await getListingByIdForUser(existing.listing_id, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Private reservation not found.' });
+    }
+
+    if (String(existing.payment_method || '').trim() !== 'Bank Transfer') {
+      return res.status(400).json({ error: 'Only bank transfer reservations can be confirmed.' });
+    }
+
+    await ensureGuestSiteUserForClientAccount({
+      clientAccountId: req.accessContext.activeClientAccountId,
+      ownerUserId: req.accessContext.effectiveOwnerUserId,
+      firstName: existing.first_name,
+      familyName: existing.family_name,
+      email: existing.email_address,
+      sourceType: 'private_reservation',
+      sourceId: String(existing.id)
+    });
+
+    if (String(existing.status || '').trim().toLowerCase() !== 'awaiting_bank_transfer') {
+      return res.json({ reservation: mapPrivateReservationRow(existing) });
+    }
+
+    const updateResult = await pool.query(
+      `
+        UPDATE reservation_activity
+        SET status = 'confirmed',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING id,
+                  reservation_identifier,
+                  listing_id,
+                  reservation_checkin_date::text AS reservation_checkin_date,
+                  reservation_checkout_date::text AS reservation_checkout_date,
+                  first_name,
+                  family_name,
+                  email_address,
+                  reservation_amount,
+                  payment_method,
+                  status,
+                  created_at,
+                  (reservation_checkout_date - reservation_checkin_date) AS stay_nights
+      `,
+      [reservationId]
+    );
+
+    const updated = updateResult.rows[0] || null;
+    return res.json({
+      reservation: mapPrivateReservationRow({
+        ...updated,
+        listing_name: existing.listing_name
+      })
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to confirm private reservation payment.' });
+  }
+});
+
+app.post('/api/private-reservations', requireScopedRole('Manager'), async (req, res) => {
+  const arrivalDate = normaliseDateKey(req.body.arrivalDate);
+  const departureDate = normaliseDateKey(req.body.departureDate);
+  const listingId = Number(req.body.listingId || (Array.isArray(req.body.listingIds) ? req.body.listingIds[0] : 0));
+  const firstName = normaliseSharedResourceReservationText(req.body.firstName, 120);
+  const familyName = normaliseSharedResourceReservationText(req.body.familyName, 120);
+  const emailAddress = normaliseSharedResourceReservationEmail(req.body.email);
+  const guestCount = normaliseOptionalPositiveInteger(req.body.guestCount);
+  const reservationAmount = normaliseSharedResourceReservationAmount(req.body.cost);
+  const holdHours = normaliseOptionalPositiveInteger(req.body.holdHours);
+  const paymentMethod = normaliseDirectReservationPaymentMethod(req.body.paymentMethod);
+
+  if (!arrivalDate || !departureDate || departureDate <= arrivalDate) {
+    return res.status(400).json({ error: 'Arrival and departure dates are required and must be valid.' });
+  }
+  if (!Number.isInteger(listingId) || listingId <= 0) {
+    return res.status(400).json({ error: 'Exactly one listing must be selected.' });
+  }
+  if (!firstName || !familyName) {
+    return res.status(400).json({ error: 'First name and family name are required.' });
+  }
+  if (!emailAddress || !isValidEmailAddress(emailAddress)) {
+    return res.status(400).json({ error: 'A valid email address is required.' });
+  }
+  if (!Number.isInteger(guestCount) || guestCount <= 0 || guestCount > 50) {
+    return res.status(400).json({ error: 'Guest count is required.' });
+  }
+  if (!paymentMethod) {
+    return res.status(400).json({ error: 'Payment method is required.' });
+  }
+  if (paymentMethod === 'No Charge') {
+    // No charge reservations can explicitly carry a zero amount.
+    if (reservationAmount !== null && reservationAmount < 0) {
+      return res.status(400).json({ error: 'Cost cannot be negative.' });
+    }
+  } else if (reservationAmount === null) {
+    return res.status(400).json({ error: 'Cost is required.' });
+  }
+  if (!Number.isInteger(holdHours) || holdHours <= 0 || holdHours > 720) {
+    return res.status(400).json({ error: 'Hold period (hours) is required.' });
+  }
+
+  try {
+    const listing = await getListingByIdForUser(listingId, req.accessContext.effectiveOwnerUserId);
+    if (!listing || !isListingAllowedByScope(req, listing)) {
+      return res.status(404).json({ error: 'Listing not found.' });
+    }
+
+    const existingEvents = appendAvailabilityPolicyBlockEvents(
+      listing,
+      await getReservationEventsForListing(listingId)
+    );
+    const hasConflict = existingEvents.some((event) => {
+      const eventStart = getDateKeyFromEventDateTime(event && event.start);
+      const eventEnd = getDateKeyFromEventDateTime(event && event.end);
+      if (!eventStart || !eventEnd) {
+        return false;
+      }
+      return eventStart < departureDate && eventEnd > arrivalDate;
+    });
+    if (hasConflict) {
+      return res.status(409).json({ error: 'The selected listing is not available for those dates.' });
+    }
+
+    const nowMs = Date.now();
+    const holdUntilAt = new Date(nowMs + holdHours * 60 * 60 * 1000).toISOString();
+    const reservationIdentifier = await generateGlobalReservationIdentifier('private_reservation');
+    const reservationAmountValue = paymentMethod === 'No Charge'
+      ? 0
+      : Number(reservationAmount);
+    const baseUrl = getPreferredAppBaseUrl(req) || '';
+    const termsUrl = (baseUrl ? (baseUrl + '/guest-terms-and-conditions.html') : '/guest-terms-and-conditions.html');
+    const termsStatement = 'By making payment you as The Guest are accepting the terms of The Host for The Reservation as stated in this email.';
+    const nextStatus = paymentMethod === 'No Charge'
+      ? 'confirmed'
+      : paymentMethod === 'Bank Transfer'
+        ? 'awaiting_bank_transfer'
+        : 'awaiting_online_payment';
+
+    let emailDeliveryWarning = false;
+    let emailDeliveryReason = '';
+
+    if (paymentMethod === 'Bank Transfer') {
+      const bankResult = await pool.query(
+        'SELECT bank_account_name, bank_sort_code, bank_account_number, bank_is_business FROM client_accounts WHERE id = $1 LIMIT 1',
+        [req.accessContext.activeClientAccountId]
+      );
+      const bankRow = bankResult.rows[0] || {};
+      const bankAccountName = String(bankRow.bank_account_name || '').trim();
+      const bankSortCode = String(bankRow.bank_sort_code || '').trim();
+      const bankAccountNumber = String(bankRow.bank_account_number || '').trim();
+      const bankType = bankRow.bank_is_business === true ? 'Business' : 'Personal';
+      const dueText = formatDateTimeForMessage(holdUntilAt);
+
+      const textLines = [
+        'Payment Request For Accommodation',
+        '',
+        'Reservation ID: ' + reservationIdentifier,
+        'Guest: ' + firstName + ' ' + familyName,
+        'Number of guests: ' + String(guestCount),
+        'Arrival date: ' + arrivalDate,
+        'Departure date: ' + departureDate,
+        'Amount payable: ' + reservationAmountValue.toFixed(2),
+        'Payment due by: ' + dueText,
+        '',
+        'Bank details:',
+        'Account name: ' + (bankAccountName || 'Not configured'),
+        'Sort code: ' + (bankSortCode || 'Not configured'),
+        'Account number: ' + (bankAccountNumber || 'Not configured'),
+        'Account type: ' + bankType,
+        '',
+        termsStatement,
+        'Terms and Conditions: ' + termsUrl
+      ];
+
+      const emailResult = await sendAppEmail({
+        to: emailAddress,
+        subject: 'Payment Request For Accommodation',
+        textBody: textLines.join('\n')
+      });
+
+      if (!emailResult.ok && !String(emailResult.error || '').includes('not configured')) {
+        return res.status(502).json({ error: emailResult.error || 'Failed to send payment request email.' });
+      }
+
+      if (!emailResult.ok) {
+        emailDeliveryReason = String(emailResult.error || '').trim();
+        console.warn('Bank transfer email was not sent because email delivery is not configured. Reservation will still be recorded.', emailDeliveryReason);
+        emailDeliveryWarning = true;
+      }
+    }
+
+    const reservation = await createReservationActivityForListing({
+      userId: req.accessContext.effectiveOwnerUserId,
+      clientAccountId: req.accessContext.activeClientAccountId,
+      listingId,
+      reservationIdentifier,
+      checkinDate: arrivalDate,
+      checkoutDate: departureDate,
+      firstName,
+      familyName,
+      emailAddress,
+      guestCount,
+      reservationAmount: reservationAmountValue,
+      holdUntilAt,
+      paymentMethod,
+      paymentDueAt: holdUntilAt,
+      status: nextStatus,
+      notes: ''
+    });
+
+    if (paymentMethod === 'No Charge') {
+      const noChargeEmail = await sendAppEmail({
+        to: emailAddress,
+        subject: 'Reservation Confirmation',
+        textBody: [
+          'Reservation Confirmation',
+          '',
+          'Reservation ID: ' + reservationIdentifier,
+          'Guest: ' + firstName + ' ' + familyName,
+          'Arrival date: ' + arrivalDate,
+          'Departure date: ' + departureDate,
+          'Number of guests: ' + String(guestCount),
+          'Property: ' + String(listing.property_name || '').trim(),
+          'Listing: ' + String(listing.name || '').trim(),
+          '',
+          termsStatement,
+          'Terms and Conditions: ' + termsUrl
+        ].join('\n')
+      });
+
+      if (!noChargeEmail.ok) {
+        emailDeliveryReason = String(noChargeEmail.error || '').trim();
+        emailDeliveryWarning = true;
+      }
+
+      await ensureGuestSiteUserForClientAccount({
+        clientAccountId: req.accessContext.activeClientAccountId,
+        ownerUserId: req.accessContext.effectiveOwnerUserId,
+        firstName,
+        familyName,
+        email: emailAddress,
+        sourceType: 'private_reservation',
+        sourceId: String(reservation.id)
+      });
+    }
+
+    return res.json({
+      reservation,
+      nextUrl: '/dashboard.html?tab=panel-dashboard',
+      emailDeliveryWarning,
+      emailDeliveryReason,
+      message: paymentMethod === 'No Charge'
+        ? 'Private reservation confirmed and added to the listing calendar.'
+        : paymentMethod === 'Bank Transfer'
+          ? 'Payment request sent and reservation activity logged.'
+          : 'Reservation activity logged. Continue to online payment.'
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create private reservation.' });
   }
 });
 
@@ -8915,6 +12493,84 @@ app.post('/api/admin/stay/request', requireAdminAuth, async (req, res) => {
   }
 });
 
+// GET /api/admin/ics-log — ICS transaction log for admin diagnostics
+app.get('/api/admin/ics-log', requireAdminAuth, async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const result = await pool.query(
+      `SELECT itl.id, itl.logged_at, itl.listing_id, itl.channel_id,
+              l.name AS listing_name,
+              itl.importing_channel_label, itl.exporting_channel_label,
+              itl.import_url, itl.status, itl.event_count,
+              itl.raw_payload, itl.error_text
+       FROM ics_transaction_log itl
+       LEFT JOIN listings l ON l.id = itl.listing_id
+       ORDER BY itl.logged_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
+    );
+    const countResult = await pool.query('SELECT COUNT(*)::int AS total FROM ics_transaction_log');
+    return res.json({
+      entries: result.rows,
+      total: Number(countResult.rows[0].total || 0),
+      limit,
+      offset
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load ICS transaction log.' });
+  }
+});
+
+// POST /api/admin/ics-log/client-import — append admin-triggered sync transactions (calendar lab/manual sync)
+app.post('/api/admin/ics-log/client-import', requireAdminAuth, async (req, res) => {
+  try {
+    const body = (req.body && typeof req.body === 'object') ? req.body : {};
+    const parsedListingId = Number(body.listingId);
+    const parsedChannelId = Number(body.channelId);
+    const listingId = Number.isInteger(parsedListingId) && parsedListingId > 0 ? parsedListingId : null;
+    const channelId = Number.isInteger(parsedChannelId) && parsedChannelId > 0 ? parsedChannelId : null;
+    const importUrl = String(body.importUrl || '').trim();
+    const statusRaw = String(body.status || 'success').trim().toLowerCase();
+    const status = statusRaw === 'error' ? 'error' : 'success';
+    const eventCount = Math.max(Number(body.eventCount) || 0, 0);
+    const rawPayload = String(body.rawPayload || '');
+    const errorText = body.errorText ? String(body.errorText).trim().slice(0, 4000) : null;
+    const importingChannelLabel = String(body.importingChannelLabel || '').trim() || 'Manual ICS Import';
+    const providedExportingLabel = String(body.exportingChannelLabel || '').trim();
+    const exportingChannelLabel = providedExportingLabel || await findExportingChannelLabel(importUrl);
+
+    await logIcsTransaction({
+      listingId,
+      channelId,
+      importingChannelLabel,
+      exportingChannelLabel,
+      importUrl,
+      status,
+      eventCount,
+      rawPayload,
+      errorText
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to write ICS transaction log entry.' });
+  }
+});
+
+// DELETE /api/admin/ics-log — clear all ICS transaction log entries
+app.delete('/api/admin/ics-log', requireAdminAuth, async (_req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM ics_transaction_log');
+    return res.json({ ok: true, deletedCount: Number(result.rowCount || 0) });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to clear ICS transaction log.' });
+  }
+});
+
 // GET /health — simple health check for Render
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
@@ -8955,8 +12611,12 @@ async function startServer() {
 
     // Run initial refresh 15 s after startup, then every 10 minutes
     setTimeout(() => {
+      // Legacy cached_events refresh (old ICS blob store)
       refreshAllListingsEvents();
       setInterval(refreshAllListingsEvents, 10 * 60 * 1000);
+      // New per-event calendar store sync with conflict detection
+      refreshAllListingsCalendars();
+      setInterval(refreshAllListingsCalendars, 10 * 60 * 1000);
     }, 15000);
   } catch (err) {
     console.error('Failed to start server:', err);

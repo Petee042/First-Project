@@ -1,0 +1,43 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Publish: Alpha → Beta (develop → staging)",
+      "type": "shell",
+      "command": "git checkout staging && git merge --no-ff develop -m \"Publish tested changes\" && git push origin staging && git checkout develop && echo Done: develop merged into staging and pushed.",
+      "options": {
+        "shell": {
+          "executable": "cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
+      "group": "none",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Publish: Beta → Production (staging → main)",
+      "type": "shell",
+      "command": "git checkout main && git merge --no-ff staging -m \"Publish tested changes\" && git push origin main && git checkout develop && echo Done: staging merged into main and pushed.",
+      "options": {
+        "shell": {
+          "executable": "cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
+      "group": "none",
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

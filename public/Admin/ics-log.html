@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ICS Transaction Log - AutomaticPeople</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <style>
+    /* ── ICS Log page-specific styles ─────────────────────────────── */
+    .ics-log-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .ics-log-toolbar input[type="search"] {
+      flex: 1 1 220px;
+      min-width: 160px;
+    }
+    .ics-log-toolbar select {
+      flex: 0 0 auto;
+    }
+    .ics-log-toolbar .btn {
+      flex: 0 0 auto;
+    }
+
+    /* Table */
+    .ics-log-table-wrap {
+      overflow-x: auto;
+    }
+    .ics-log-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .ics-log-table th,
+    .ics-log-table td {
+      padding: 0.45rem 0.6rem;
+      border: 1px solid var(--border-color, #ddd);
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    .ics-log-table th {
+      background: var(--table-header-bg, #f5f5f5);
+      text-align: left;
+      font-weight: 600;
+    }
+    .ics-log-table tr:nth-child(even) td {
+      background: var(--table-row-alt-bg, #fafafa);
+    }
+    .ics-log-table tr:hover td {
+      background: var(--table-row-hover-bg, #f0f4ff);
+    }
+
+    /* Status badges */
+    .ics-status-badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .ics-status-success { background: #d4edda; color: #155724; }
+    .ics-status-error   { background: #f8d7da; color: #721c24; }
+
+    /* Payload cell — truncated preview */
+    .ics-info-cell {
+      text-align: center;
+      width: 2.2rem;
+    }
+    .ics-info-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.35rem;
+      height: 1.35rem;
+      border-radius: 999px;
+      border: 1px solid #3a5a8a;
+      color: #274c77;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.78rem;
+      background: #eef4ff;
+      cursor: pointer;
+    }
+    .ics-info-link:hover,
+    .ics-info-link:focus {
+      background: #dce9ff;
+      outline: none;
+    }
+    .ics-payload-cell {
+      max-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: text;
+      position: relative;
+    }
+
+    /* Pagination */
+    .ics-pagination {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      margin-top: 0.8rem;
+      flex-wrap: wrap;
+    }
+    .ics-pagination .hint {
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <header class="top-bar">
+    <div class="header-left">
+      <a href="/Admin/index.html" class="back-arrow-control" aria-label="Back"></a>
+      <a class="top-brand-link" href="/Admin/index.html" aria-label="AutomaticPeople admin home">
+        <img class="top-brand-logo" src="/images/Icon.jpg" alt="AutomaticPeople logo" />
+      </a>
+    </div>
+    <button id="adminLogoutBtn" class="btn secondary">Log Out</button>
+  </header>
+
+  <main class="dashboard">
+    <div class="card-container wide admin-card">
+      <h2>ICS Transaction Log</h2>
+      <p class="hint">Every ICS calendar import attempt is recorded here. Use <strong>(i)</strong> in the first column to open full payload details in a new tab.</p>
+      <p id="icsLogMessage" class="message" aria-live="polite"></p>
+
+      <section class="listing-form-section">
+        <div class="ics-log-toolbar">
+          <input id="icsLogSearch" type="search" placeholder="Search channel, URL, status…" aria-label="Search log entries" />
+          <select id="icsLogStatusFilter" aria-label="Filter by status">
+            <option value="">All statuses</option>
+            <option value="success">Success</option>
+            <option value="error">Error</option>
+          </select>
+          <button id="icsLogRefreshBtn" class="btn secondary">↺ Refresh</button>
+          <button id="icsLogClearBtn" class="btn secondary" title="Delete all ICS log entries">Clear ICS Log</button>
+        </div>
+
+        <p id="icsLogCount" class="hint">Loading…</p>
+
+        <div class="ics-log-table-wrap">
+          <table class="ics-log-table" aria-label="ICS transaction log">
+            <thead>
+              <tr>
+                <th title="Open full transaction details">Info</th>
+                <th>DTG</th>
+                <th>Listing ID</th>
+                <th>Listing Name</th>
+                <th>Importing Channel</th>
+                <th>Exporting Channel</th>
+                <th>Status</th>
+                <th>Events</th>
+                <th>Import URL</th>
+                <th>Payload Preview</th>
+              </tr>
+            </thead>
+            <tbody id="icsLogTableBody">
+              <tr><td colspan="10">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="ics-pagination">
+          <button id="icsLogPrevBtn" class="btn secondary" disabled>← Prev</button>
+          <span id="icsLogPageInfo" class="hint">Page 1</span>
+          <button id="icsLogNextBtn" class="btn secondary" disabled>Next →</button>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script src="/Admin/ics-log.js"></script>
+</body>
+</html>

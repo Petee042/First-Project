@@ -40,6 +40,8 @@
         <p><a class="btn secondary inline-btn" href="/Admin/api-test.html">Open KAYAK API Test Console</a></p>
         <p style="margin-top:0.5rem"><a class="btn secondary inline-btn" href="/Admin/stay-api.html">Open Stay API Test Console</a></p>
         <p style="margin-top:0.5rem"><a class="btn secondary inline-btn" href="/Admin/email-test.html">Open Email Test Console</a></p>
+        <p style="margin-top:0.5rem"><a class="btn secondary inline-btn" href="/Admin/calendar-lab.html">Open Calendar ICS Test Lab</a></p>
+        <p style="margin-top:0.5rem"><a class="btn secondary inline-btn" href="/Admin/ics-log.html">Open ICS Transaction Log</a></p>
 
         <h3>Delete User</h3>
         <div class="calendar-source-row admin-delete-row">
@@ -48,6 +50,13 @@
           <button id="deleteUserBtn" type="button" class="btn secondary action-icon action-delete floating-standalone-action" aria-label="Delete User">Delete User</button>
         </div>
         <p class="hint">Deleting a user removes all listings, feeds, colors, and user account data.</p>
+
+        <h3>Danger Zone</h3>
+        <div class="calendar-source-row admin-delete-row">
+          <label for="resetSchemaBtn">Database</label>
+          <button id="resetSchemaBtn" type="button" class="btn secondary action-icon action-delete floating-standalone-action" aria-label="Delete all database data and recreate schema">Delete All Data</button>
+        </div>
+        <p class="hint">This permanently deletes all schema data in the connected database and recreates empty tables.</p>
       </section>
     </div>
   </main>

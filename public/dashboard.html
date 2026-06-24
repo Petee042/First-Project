@@ -9,12 +9,23 @@
 <body class="logged-page">
   <div class="sticky-page-chrome">
     <div class="sticky-page-inner">
-      <nav class="dashboard-tab-bar" role="tablist" aria-label="Main sections">
-        <button class="dashboard-tab-btn active" data-panel="panel-dashboard" role="tab" aria-selected="true" aria-controls="panel-dashboard">Dashboard</button>
-        <button class="dashboard-tab-btn" data-panel="panel-config" role="tab" aria-selected="false" aria-controls="panel-config">Config</button>
-        <button class="dashboard-tab-btn" data-panel="panel-ops" role="tab" aria-selected="false" aria-controls="panel-ops">Ops</button>
-        <button class="dashboard-tab-btn" data-panel="panel-account" role="tab" aria-selected="false" aria-controls="panel-account">Account</button>
-      </nav>
+      <div class="tab-bar-row">
+        <nav class="dashboard-tab-bar" role="tablist" aria-label="Main sections">
+          <button class="dashboard-tab-btn active" data-panel="panel-dashboard" role="tab" aria-selected="true" aria-controls="panel-dashboard">Dashboard</button>
+          <button class="dashboard-tab-btn" data-panel="panel-config" role="tab" aria-selected="false" aria-controls="panel-config">Config</button>
+          <button class="dashboard-tab-btn" data-panel="panel-ops" role="tab" aria-selected="false" aria-controls="panel-ops">Ops</button>
+          <button class="dashboard-tab-btn" data-panel="panel-account" role="tab" aria-selected="false" aria-controls="panel-account">Account</button>
+        </nav>
+        <button id="tabMenuBtn" class="tab-menu-btn" aria-label="Section menu" aria-expanded="false" aria-haspopup="true">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="9.5" fill="none" stroke="currentColor" stroke-width="1.7"/>
+            <line x1="7.5" y1="9" x2="16.5" y2="9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            <line x1="7.5" y1="12" x2="16.5" y2="12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            <line x1="7.5" y1="15" x2="16.5" y2="15" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <div id="tabContextMenu" class="tab-context-menu hidden" role="menu" aria-label="Section actions"></div>
+      </div>
 
       <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
     </div>
@@ -27,7 +38,39 @@
       <!-- ── Dashboard tab ──────────────────────────────────── -->
       <div id="panel-dashboard" class="dashboard-tab-panel" role="tabpanel">
 
+        <section class="listing-form-section" id="activitySection">
+          <h3>Activity</h3>
+          <p id="dashboardActivityStatus" class="activity-status" aria-live="polite"></p>
+          <div id="dashboardActivityRows" class="activity-rows" aria-live="polite">
+            <p class="cleaning-empty">Loading activity...</p>
+          </div>
+        </section>
 
+        <section class="listing-form-section" id="eventLogSection">
+          <div class="config-block-header">
+            <h3>Calendar Event Log</h3>
+            <button type="button" id="eventLogClearBtn" class="btn secondary config-icon-btn event-log-clear-btn" title="Clear Event Log Entries" aria-label="Clear Event Log Entries">x</button>
+          </div>
+          <p id="eventLogMessage" class="message"></p>
+          <div class="table-wrap">
+            <table class="calendar-table" aria-label="Calendar event log">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Type</th>
+                  <th>Listing</th>
+                  <th>Channel</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="eventLogTableBody">
+                <tr>
+                  <td colspan="5">Loading event log...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
       </div><!-- /panel-dashboard -->
 
@@ -88,19 +131,19 @@
       <div id="panel-ops" class="dashboard-tab-panel hidden" role="tabpanel">
 
         <section class="listing-form-section" id="opsCalendarSection">
-          <h3>Reservation Calendar</h3>
+          <div class="ops-section-header">
+            <h3>Reservation Calendar</h3>
+            <button type="button" id="opsCalendarRefreshBtn" class="btn primary calendar-refresh-btn schedule-action-icon schedule-refresh-icon" aria-label="Refresh Calendar" title="Refresh Calendar"></button>
+          </div>
           <div id="opsCalendarListings" class="cleaning-listings ops-calendar-listings" aria-label="Select listings to display">
             <p class="cleaning-empty">Loading listings...</p>
           </div>
-          <div class="ops-calendar-controls">
-            <button type="button" id="opsCalendarRefreshBtn" class="btn primary calendar-btn">Refresh</button>
-            <span id="opsCalendarFetchedAt" class="calendar-fetched-at"></span>
-          </div>
+          <span id="opsCalendarFetchedAt" class="calendar-fetched-at"></span>
           <p id="opsCalendarMessage" class="message"></p>
           <div class="calendar-month-header">
-            <button type="button" id="opsCalendarPrevBtn" class="btn secondary">Prev</button>
+            <button type="button" id="opsCalendarPrevBtn" class="btn action-icon prev-icon" aria-label="Previous Month" title="Previous Month"></button>
             <h4 id="opsCalendarMonthLabel" class="month-label">Month</h4>
-            <button type="button" id="opsCalendarNextBtn" class="btn secondary">Next</button>
+            <button type="button" id="opsCalendarNextBtn" class="btn action-icon next-icon" aria-label="Next Month" title="Next Month"></button>
           </div>
           <div id="opsCalendarCleanerLegend" class="calendar-cleaner-legend"></div>
           <div class="reservation-calendar-wrap">
@@ -109,7 +152,10 @@
         </section>
 
         <section class="listing-form-section">
-          <h3>Schedule</h3>
+          <div class="ops-section-header">
+            <h3>Changeover Schedule</h3>
+            <button id="refreshScheduleBtn" type="button" class="btn primary schedule-refresh-btn schedule-action-icon schedule-refresh-icon" aria-label="Refresh Schedule" title="Refresh Schedule"></button>
+          </div>
           <form id="cleaningScheduleForm" novalidate>
             <div class="cleaning-actions-row">
               <label for="cleaningStartDate">Start date</label>
@@ -127,19 +173,16 @@
               <div class="schedule-table-footer">
                 <div class="schedule-actions-panel">
                   <div class="schedule-actions-row">
-                  <button id="refreshScheduleBtn" type="button" class="btn primary schedule-refresh-btn schedule-action-icon schedule-refresh-icon" aria-label="Refresh Schedule" title="Refresh Schedule">Refresh Schedule</button>
-                  <button id="saveScheduleChangesBtn" type="button" class="btn primary schedule-save-btn schedule-action-icon schedule-tick-icon" aria-label="Save Changes to Changeover Staff and Date" title="Save Changes to Changeover Staff and Date">Save Changes</button>
-                </div>
-                </div>
-                <div class="schedule-export-panel">
-                  <div class="schedule-export-row">
-                    <label for="cleaningFormat" class="schedule-export-label">Export</label>
-                    <select id="cleaningFormat">
-                      <option value="csv">.csv</option>
-                      <option value="txt">.txt</option>
-                    </select>
-                    <button id="downloadCleaningScheduleBtn" type="submit" class="btn primary schedule-download-btn schedule-action-icon schedule-download-icon" aria-label="Download Schedule" title="Download Schedule">Download Schedule</button>
-                    <button id="sendScheduleEmailBtn" type="button" class="btn primary schedule-email-btn schedule-action-icon schedule-email-icon" aria-label="Email Schedule" title="Email Schedule">Email Schedule</button>
+                    <div class="schedule-export-group">
+                      <label for="cleaningFormat" class="schedule-export-label">Export</label>
+                      <select id="cleaningFormat">
+                        <option value="csv">.csv</option>
+                        <option value="txt">.txt</option>
+                      </select>
+                      <button id="downloadCleaningScheduleBtn" type="submit" class="btn primary schedule-download-btn schedule-action-icon schedule-download-icon" aria-label="Download Schedule" title="Download Schedule">Download Schedule</button>
+                      <button id="sendScheduleEmailBtn" type="button" class="btn primary schedule-email-btn schedule-action-icon schedule-email-icon" aria-label="Email Schedule" title="Email Schedule">Email Schedule</button>
+                    </div>
+                    <button id="saveScheduleChangesBtn" type="button" class="btn primary schedule-save-btn schedule-action-icon schedule-tick-icon" aria-label="Save Changes to Changeover Staff and Date" title="Save Changes to Changeover Staff and Date">Save Changes</button>
                   </div>
                 </div>
               </div>
@@ -165,30 +208,6 @@
           </form>
         </dialog>
 
-        <section class="listing-form-section">
-          <h3>Reservations</h3>
-          <p id="allReservationsMessage" class="message"></p>
-          <div class="table-wrap">
-            <table class="calendar-table" aria-label="All shared resource reservations">
-              <thead>
-                <tr>
-                  <th>Resource</th>
-                  <th>Guest</th>
-                  <th>Start</th>
-                  <th>End</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="allReservationsTableBody">
-                <tr>
-                  <td colspan="6">Loading reservations...</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
       </div><!-- /panel-ops -->
 
       <!-- ── Account tab ────────────────────────────────────── -->
@@ -201,6 +220,32 @@
             <button type="button" id="startStripeConnectBtn" class="btn secondary">Connect Stripe Account</button>
             <button type="button" id="logoutBtn" class="btn secondary">Log Out</button>
           </div>
+        </section>
+
+        <section class="listing-form-section">
+          <h3>Bank Details</h3>
+          <p id="bankDetailsMessage" class="message"></p>
+          <form id="bankDetailsForm" class="bank-details-form" novalidate>
+            <div class="calendar-source-row">
+              <label for="bankAccountName">Account Name</label>
+              <input id="bankAccountName" type="text" maxlength="200" />
+            </div>
+            <div class="calendar-source-row">
+              <label for="bankSortCode">Sort Code</label>
+              <input id="bankSortCode" type="text" maxlength="20" placeholder="00-00-00" />
+            </div>
+            <div class="calendar-source-row">
+              <label for="bankAccountNumber">Account Number</label>
+              <input id="bankAccountNumber" type="text" maxlength="20" />
+            </div>
+            <div class="calendar-source-row checkbox-row">
+              <label for="bankIsBusiness">Business Account</label>
+              <input id="bankIsBusiness" type="checkbox" />
+            </div>
+            <div class="feed-actions" style="margin-top: 0.9rem; justify-content: flex-end;">
+              <button type="submit" id="saveBankDetailsBtn" class="btn primary action-icon action-save" aria-label="Save Bank Details">Save Bank Details</button>
+            </div>
+          </form>
         </section>
 
       </div><!-- /panel-account -->

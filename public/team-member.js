@@ -252,8 +252,7 @@ document.getElementById('teamMemberForm').addEventListener('submit', async (even
       return;
     }
 
-    setMessage('Team member saved.', false);
-    initialFormState = getFormState();
+    goBackToConfig();
   } catch (err) {
     setMessage(err.message || 'Failed to save team member.', true);
   } finally {

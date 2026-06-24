@@ -38,6 +38,7 @@ let opsCalCurrentCleaningChanges = [];
 let opsCalCurrentFetchedAt = null;
 let opsCalSelectedListingIds = new Set();
 let opsCalRequestId = 0;
+let dashboardActivityRequestId = 0;
 let savedDashboardState = null;
 
 const opsCalSourceColorMap = {};
@@ -570,7 +571,7 @@ function renderTeamMembers(team) {
     if (canManageTeam() || canViewTeam()) {
       const actionBtn = document.createElement('button');
       actionBtn.type = 'button';
-      actionBtn.className = 'btn secondary';
+      actionBtn.className = 'btn secondary config-edit-btn';
       actionBtn.textContent = '✎';
       actionBtn.title = 'View/Update/Delete';
       actionBtn.setAttribute('aria-label', 'View/Update/Delete');
@@ -1180,7 +1181,7 @@ function renderListings(listings) {
     const actionCell = document.createElement('td');
     const openBtn = document.createElement('button');
     openBtn.type = 'button';
-    openBtn.className = 'btn secondary';
+    openBtn.className = 'btn secondary config-edit-btn';
     openBtn.textContent = '✎';
     openBtn.title = 'View/Edit';
     openBtn.setAttribute('aria-label', 'View/Edit');
@@ -1242,7 +1243,7 @@ function renderProperties(properties) {
       const actionCell = document.createElement('td');
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
-      openBtn.className = 'btn secondary';
+      openBtn.className = 'btn secondary config-edit-btn';
       openBtn.textContent = '✎';
       openBtn.title = 'View/Edit';
       openBtn.setAttribute('aria-label', 'View/Edit');
@@ -1341,7 +1342,7 @@ function renderCleaners(cleaners) {
     const actionCell = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
-    editBtn.className = 'btn secondary';
+    editBtn.className = 'btn secondary config-edit-btn';
     editBtn.textContent = '✎';
     editBtn.title = 'View Details/Edit';
     editBtn.setAttribute('aria-label', 'View Details/Edit');
@@ -1428,7 +1429,7 @@ function renderSharedResources(resources) {
     const actionCell = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
-    editBtn.className = 'btn secondary';
+    editBtn.className = 'btn secondary config-edit-btn';
     editBtn.textContent = '✎';
     editBtn.title = 'View/Edit';
     editBtn.setAttribute('aria-label', 'View/Edit');
@@ -1476,6 +1477,255 @@ function toDateKey(value) {
 function formatMonthLabel(date) {
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   return monthNames[date.getUTCMonth()] + ' ' + date.getUTCFullYear();
+}
+
+function setDashboardActivityStatus(text) {
+  const el = document.getElementById('dashboardActivityStatus');
+  if (!el) {
+    return;
+  }
+  el.textContent = String(text || '').trim();
+}
+
+function formatActivityDayHeader(dayKey) {
+  const date = utcDateFromKey(dayKey);
+  return WEEKDAY_NAMES[date.getUTCDay()] + ' ' + date.getUTCDate() + ' ' + MONTH_SHORT_NAMES[date.getUTCMonth()];
+}
+
+function getActivityGuestName(event) {
+  const explicit = String(
+    event && (
+      event.guestName
+      || event.guest_name
+      || event.guest
+      || event.reservationGuestName
+      || event.reservation_guest_name
+      || ''
+    )
+  ).trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const description = String(event && event.description ? event.description : '');
+  if (description) {
+    const guestMatch = description.match(/guest\s*:\s*([^\n\r]+)/i);
+    if (guestMatch && guestMatch[1]) {
+      return String(guestMatch[1]).trim();
+    }
+  }
+
+  return '';
+}
+
+function renderDashboardActivityRows(dayKeys, activityByDay) {
+  const container = document.getElementById('dashboardActivityRows');
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = '';
+
+  dayKeys.forEach((dayKey) => {
+    const dayRow = document.createElement('div');
+    dayRow.className = 'activity-day-row';
+
+    const dayHeader = document.createElement('div');
+    dayHeader.className = 'activity-day-header';
+    dayHeader.textContent = formatActivityDayHeader(dayKey);
+    dayRow.appendChild(dayHeader);
+
+    const entries = activityByDay.get(dayKey) || [];
+    if (!entries.length) {
+      const emptyRow = document.createElement('div');
+      emptyRow.className = 'activity-empty-row';
+      emptyRow.textContent = 'No activity';
+      dayRow.appendChild(emptyRow);
+    }
+    entries.forEach((entry) => {
+      const itemRow = document.createElement('div');
+      itemRow.className = 'activity-item-row';
+
+      const title = document.createElement('div');
+      title.className = 'activity-item-title';
+      title.textContent = entry.type;
+
+      const details = document.createElement('div');
+      details.className = 'activity-item-details';
+
+      const parts = [
+        entry.propertyName || 'Unknown property',
+        entry.listingName || 'Unknown listing'
+      ];
+      if (entry.changeoverName) {
+        parts.push('Changeover: ' + entry.changeoverName);
+      }
+      if (entry.guestName) {
+        parts.push('Guest: ' + entry.guestName);
+      }
+
+      parts.forEach((part) => {
+        const chip = document.createElement('span');
+        chip.className = 'activity-item-chip';
+        chip.textContent = part;
+        details.appendChild(chip);
+      });
+
+      itemRow.appendChild(title);
+      itemRow.appendChild(details);
+      dayRow.appendChild(itemRow);
+    });
+
+    container.appendChild(dayRow);
+  });
+}
+
+async function refreshDashboardActivity() {
+  const container = document.getElementById('dashboardActivityRows');
+  if (!container) {
+    return;
+  }
+
+  const requestId = ++dashboardActivityRequestId;
+  const now = new Date();
+  const todayUtc = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const dayKeys = [];
+  for (let i = 0; i < 7; i += 1) {
+    dayKeys.push(keyFromUtcDate(addUtcDays(todayUtc, i)));
+  }
+
+  const listings = Array.isArray(currentListings) ? currentListings.filter((listing) => Number(listing.id) > 0) : [];
+  if (!listings.length) {
+    setDashboardActivityStatus('');
+    renderDashboardActivityRows(dayKeys, new Map(dayKeys.map((key) => [key, []])));
+    return;
+  }
+
+  setDashboardActivityStatus('Loading activity...');
+
+  const results = await Promise.all(listings.map(async (listing) => {
+    try {
+      const data = await fetchOpsCalendarListingData(listing, false);
+      return { listing, data };
+    } catch (err) {
+      return { listing, error: err };
+    }
+  }));
+
+  if (requestId !== dashboardActivityRequestId) {
+    return;
+  }
+
+  const events = [];
+  const cleaningChanges = [];
+  const issues = [];
+
+  results.forEach((result) => {
+    if (result.error) {
+      issues.push((result.listing.name || ('Listing #' + result.listing.id)) + ': ' + (result.error.message || 'Failed to load activity.'));
+      return;
+    }
+
+    const data = result.data || {};
+    const listingMeta = getListingMetaById(result.listing.id) || {};
+    const listingName = result.listing.name || listingMeta.name || ('Listing #' + result.listing.id);
+    const propertyName = listingMeta.property_name || '';
+
+    events.push(...(data.events || []).map((event) => Object.assign({}, event, {
+      listingId: result.listing.id,
+      listingName,
+      listingPropertyName: propertyName
+    })));
+
+    cleaningChanges.push(...(data.cleaningChanges || []).map((change) => Object.assign({}, change, {
+      listingId: result.listing.id,
+      listingName,
+      reservation_checkin_date: toDateKey(change.reservation_checkin_date),
+      reservation_checkout_date: toDateKey(change.reservation_checkout_date),
+      changeover_date: toDateKey(change.changeover_date)
+    })));
+  });
+
+  const normalizedChanges = cleaningChanges.concat(buildOpsDefaultCleaningChanges(events, cleaningChanges));
+  const cleanerByReservationKey = new Map();
+  normalizedChanges.forEach((change) => {
+    const listingId = Number(change.listingId || change.listing_id || 0);
+    const checkinKey = toDateKey(change.reservation_checkin_date);
+    const checkoutKey = toDateKey(change.reservation_checkout_date);
+    if (!Number.isInteger(listingId) || listingId <= 0 || !checkinKey || !checkoutKey) {
+      return;
+    }
+
+    const cleanerName = resolveCleanerNameFromChange(change, currentCleaners);
+    if (!cleanerName || cleanerName === 'Unallocated') {
+      return;
+    }
+
+    const key = reservationChangeKey(listingId, checkinKey, checkoutKey);
+    if (!cleanerByReservationKey.has(key)) {
+      cleanerByReservationKey.set(key, cleanerName);
+    }
+  });
+
+  const dayKeySet = new Set(dayKeys);
+  const activityByDay = new Map(dayKeys.map((key) => [key, []]));
+  (events || []).forEach((event) => {
+    if (event && event.isReservation === false) {
+      return;
+    }
+
+    const listingId = Number(event && (event.listingId || event.listing_id || 0));
+    const listingMeta = getListingMetaById(listingId) || {};
+    const listingName = String(event && event.listingName ? event.listingName : listingMeta.name || ('Listing #' + listingId)).trim();
+    const propertyName = String(event && event.listingPropertyName ? event.listingPropertyName : listingMeta.property_name || '').trim() || 'Unknown property';
+    const checkinKey = toDateKey(event && event.start);
+    const checkoutKey = toDateKey(event && event.end);
+    const guestName = getActivityGuestName(event);
+    const dateBasis = listingMeta.date_basis === 'checkin' ? 'checkin' : 'checkout';
+    const reservationKeyValue = reservationChangeKey(listingId, checkinKey, checkoutKey);
+    const changeoverName = cleanerByReservationKey.get(reservationKeyValue) || '';
+
+    if (checkinKey && dayKeySet.has(checkinKey)) {
+      activityByDay.get(checkinKey).push({
+        type: 'Check-in',
+        propertyName,
+        listingName,
+        changeoverName: dateBasis === 'checkin' ? changeoverName : '',
+        guestName
+      });
+    }
+
+    if (checkoutKey && dayKeySet.has(checkoutKey)) {
+      activityByDay.get(checkoutKey).push({
+        type: 'Check-out',
+        propertyName,
+        listingName,
+        changeoverName: dateBasis === 'checkout' ? changeoverName : '',
+        guestName
+      });
+    }
+  });
+
+  dayKeys.forEach((dayKey) => {
+    const entries = activityByDay.get(dayKey) || [];
+    entries.sort((a, b) => {
+      if (a.type !== b.type) {
+        return a.type === 'Check-out' ? -1 : 1;
+      }
+      const propertySort = String(a.propertyName || '').localeCompare(String(b.propertyName || ''));
+      if (propertySort !== 0) {
+        return propertySort;
+      }
+      return String(a.listingName || '').localeCompare(String(b.listingName || ''));
+    });
+  });
+
+  renderDashboardActivityRows(dayKeys, activityByDay);
+  if (issues.length) {
+    setDashboardActivityStatus('Loaded with some feed issues.');
+  } else {
+    setDashboardActivityStatus('');
+  }
 }
 
 function renderCleaningListings(listings) {
@@ -1849,6 +2099,60 @@ async function buildSchedule(selectedListings, days, startDateUtc) {
   };
 }
 
+function buildScheduleEditSnapshot(rows) {
+  const snapshot = new Map();
+  (rows || []).forEach((row) => {
+    if (!row || !row.reservationKey) {
+      return;
+    }
+    snapshot.set(row.reservationKey, {
+      changeDate: row.changeDate || row.date || '',
+      cleanerId: Number.isInteger(Number(row.cleanerId)) && Number(row.cleanerId) > 0
+        ? Number(row.cleanerId)
+        : null,
+      cleanerName: row.cleanerName || ''
+    });
+  });
+  return snapshot;
+}
+
+function mergeScheduleRowsWithSnapshot(rows, snapshot) {
+  if (!snapshot || !snapshot.size) {
+    return rows || [];
+  }
+
+  (rows || []).forEach((row) => {
+    if (!row || !row.reservationKey) {
+      return;
+    }
+
+    const saved = snapshot.get(row.reservationKey);
+    if (!saved) {
+      return;
+    }
+
+    row.changeDate = saved.changeDate || row.changeDate || row.date;
+    row.cleanerId = Number.isInteger(saved.cleanerId) && saved.cleanerId > 0
+      ? saved.cleanerId
+      : null;
+
+    if (!row.cleanerId) {
+      row.cleanerName = 'Unallocated';
+      return;
+    }
+
+    if (saved.cleanerName) {
+      row.cleanerName = saved.cleanerName;
+      return;
+    }
+
+    const cleaner = (currentCleaners || []).find((item) => Number(item && item.cleaner_user_id ? item.cleaner_user_id : 0) === row.cleanerId);
+    row.cleanerName = cleaner ? getCleanerDisplayName(cleaner) : row.cleanerName;
+  });
+
+  return rows;
+}
+
 function formatDisplayDate(dateKey) {
   if (!dateKey) return '';
   const utcDate = utcDateFromKey(dateKey);
@@ -2215,10 +2519,20 @@ function buildBarTooltip(events) {
     return '';
   }
 
+  const hasConflict = hasConflictInOpsEventSet(events);
+
   return events.map((event) => {
+    const metadata = parseApMetadataFromDescription(event && event.description);
+    const eventType = deriveOpsEventType(event, metadata);
+    const eventSource = deriveOpsEventSource(event, metadata, event && event.listingName);
+    const eventOrigin = deriveOpsEventOrigin(event, metadata);
     const checkin = formatDateKeyForTooltip(toDateKey(event.start));
     const checkout = formatDateKeyForTooltip(toDateKey(event.end));
-    return 'Summary: ' + (event.title || (event.raw && event.raw.SUMMARY) || '(untitled)')
+    return 'Type: ' + eventType
+      + '\nSource: ' + eventSource
+      + '\nOrigin: ' + eventOrigin
+      + '\nConflict: ' + ((hasConflict || (event && event.isInConflict === true)) ? 'YES' : 'No')
+      + '\nSummary: ' + (event.title || (event.raw && event.raw.SUMMARY) || '(untitled)')
       + '\nCheck-in: ' + checkin
       + '\nCheck-out: ' + checkout;
   }).join('\n\n');
@@ -2233,8 +2547,136 @@ function formatDateKeyForTooltip(key) {
   return date.getUTCDate() + ' ' + monthNames[date.getUTCMonth()] + ' ' + date.getUTCFullYear();
 }
 
+function getOpsEventRange(event) {
+  const startKey = toDateKey(event && event.start);
+  const rawEndKey = toDateKey(event && event.end);
+  if (!startKey) {
+    return null;
+  }
+
+  let endKey = rawEndKey || keyFromUtcDate(addUtcDays(utcDateFromKey(startKey), 1));
+  if (!endKey || endKey <= startKey) {
+    endKey = keyFromUtcDate(addUtcDays(utcDateFromKey(startKey), 1));
+  }
+  return { startKey, endKey };
+}
+
+function isOpsConflictCandidate(event) {
+  return Boolean(event && event.isReservation !== false && event.isUnavailableBlock !== true);
+}
+
+function getOpsConflictIdentity(event) {
+  if (!event || typeof event !== 'object') {
+    return '';
+  }
+  const reservationActivityId = Number(event.reservationActivityId || 0);
+  if (Number.isInteger(reservationActivityId) && reservationActivityId > 0) {
+    return 'reservation:' + reservationActivityId;
+  }
+  const calendarEventId = Number(event.calendarEventId || 0);
+  if (Number.isInteger(calendarEventId) && calendarEventId > 0) {
+    return 'calendar:' + calendarEventId;
+  }
+  return [
+    String(event.listingId || ''),
+    String(event.source || ''),
+    String(event.start || ''),
+    String(event.end || ''),
+    String(event.title || '')
+  ].join('|');
+}
+
+function hasConflictInOpsEventSet(events) {
+  const list = [];
+  const seen = new Set();
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const key = getOpsConflictIdentity(event);
+    if (key && seen.has(key)) {
+      return;
+    }
+    if (key) {
+      seen.add(key);
+    }
+    list.push(event);
+  });
+  const ranges = list.map((event) => getOpsEventRange(event));
+
+  for (let i = 0; i < list.length; i += 1) {
+    const left = list[i];
+    if (!isOpsConflictCandidate(left)) continue;
+    if (left && left.isInConflict === true) return true;
+
+    for (let j = i + 1; j < list.length; j += 1) {
+      const right = list[j];
+      if (!isOpsConflictCandidate(right)) continue;
+      const leftRange = ranges[i];
+      const rightRange = ranges[j];
+      if (!leftRange || !rightRange) continue;
+      if (leftRange.startKey < rightRange.endKey && leftRange.endKey > rightRange.startKey) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 function getOpsEventSummary(event) {
   return event.title || (event.raw && event.raw.SUMMARY) || '(untitled)';
+}
+
+function parseApMetadataFromDescription(descriptionText) {
+  const metadata = {
+    type: '',
+    source: '',
+    origin: '',
+    scope: ''
+  };
+
+  String(descriptionText || '')
+    .split(/\n|\\n/)
+    .forEach((line) => {
+      const text = String(line || '').trim();
+      if (!text) return;
+
+      const idx = text.indexOf(':');
+      if (idx <= 0) return;
+      const key = text.slice(0, idx).trim().toUpperCase();
+      const value = text.slice(idx + 1).trim();
+      if (!value) return;
+
+      if (key === 'AP-TYPE') metadata.type = value;
+      if (key === 'AP-SOURCE') metadata.source = value;
+      if (key === 'AP-ORIGIN') metadata.origin = value;
+      if (key === 'AP-SCOPE') metadata.scope = value;
+    });
+
+  return metadata;
+}
+
+function deriveOpsEventType(event, metadata) {
+  const explicitType = String(metadata && metadata.type || event && event.eventType || '').trim().toLowerCase();
+  if (explicitType === 'block') return 'Block';
+  if (explicitType === 'reservation') return 'Reservation';
+  if (event && (event.isReservation === false || event.isUnavailableBlock === true)) return 'Block';
+  return 'Reservation';
+}
+
+function deriveOpsEventSource(event, metadata, listingName) {
+  const explicit = String(metadata && metadata.source || event && event.source || '').trim();
+  if (explicit) return explicit;
+  return String(listingName || getListingDisplayNameFromEvent(event) || 'Unknown source');
+}
+
+function deriveOpsEventOrigin(event, metadata) {
+  const explicit = String(metadata && metadata.origin || event && event.eventOrigin || '').trim();
+  if (explicit) return explicit;
+
+  const sourceKey = opsCalendarSourceKey(event && event.source || '');
+  if (sourceKey === 'direct booking' || sourceKey === 'automaticpeople' || Number(event && event.reservationActivityId || 0) > 0) {
+    return 'Local';
+  }
+  return 'Remote';
 }
 
 function isOpsAirbnbNotAvailableEvent(event, sourceLabel) {
@@ -2287,6 +2729,7 @@ function opsCalendarBuildDayIndex(events) {
       day.listings.set(listingKey, {
         name: listingName,
         color,
+        conflict: false,
         stays: new Set(),
         checkins: new Set(),
         checkouts: new Set(),
@@ -2338,6 +2781,18 @@ function opsCalendarBuildDayIndex(events) {
       listingEntry.stayEvents.push(event);
       listingEntry.events.push(event);
     }
+  });
+
+  Object.values(index).forEach((day) => {
+    let dayConflict = false;
+    day.listings.forEach((listingEntry) => {
+      const listingConflict = hasConflictInOpsEventSet(listingEntry.events || []);
+      listingEntry.conflict = listingConflict;
+      if (listingConflict) {
+        dayConflict = true;
+      }
+    });
+    day.conflict = dayConflict || hasConflictInOpsEventSet(day.events || []);
   });
 
   return index;
@@ -2505,9 +2960,6 @@ function opsCalendarRenderReservationCalendar(events, changes) {
 
       const cell = document.createElement('div');
       cell.className = 'calendar-day';
-      if (dayEntry && dayEntry.conflict) {
-        cell.classList.add('calendar-day-conflict');
-      }
       cell.title = buildDayTooltip(dayEntry);
 
       const num = document.createElement('div');
@@ -2600,6 +3052,10 @@ function opsCalendarRenderReservationCalendar(events, changes) {
           }
         } else {
           bar.classList.add('day-bar-empty');
+        }
+
+        if (listingEntry && listingEntry.conflict && !bar.classList.contains('day-bar-empty')) {
+          bar.classList.add('day-bar-conflict');
         }
 
         slot.appendChild(bar);
@@ -2738,6 +3194,7 @@ async function updateSchedulePreview() {
   const daysValue = Number(document.getElementById('cleaningDays').value);
   const startDateUtc = getSelectedStartDateUtc();
   const selectedListings = getSelectedCleaningListings();
+  const pendingScheduleEdits = buildScheduleEditSnapshot(currentScheduleRows);
   const requestId = ++schedulePreviewRequestId;
 
   if (!selectedListings.length) {
@@ -2773,7 +3230,7 @@ async function updateSchedulePreview() {
       }
     }
 
-    currentScheduleRows = result.rows || [];
+    currentScheduleRows = mergeScheduleRowsWithSnapshot(result.rows || [], pendingScheduleEdits);
     currentScheduleErrors = result.errors || [];
     renderSchedulePreviewTable(currentScheduleRows, currentScheduleErrors, notifications);
   } catch {
@@ -2884,6 +3341,7 @@ async function fetchListings() {
   renderCleaningListings(currentListings);
   renderOpsCalendarListingSelector(currentListings);
   await refreshOpsCalendar(false);
+  await refreshDashboardActivity();
 }
 
 async function fetchProperties() {
@@ -2988,6 +3446,7 @@ async function loadDashboardData() {
   await fetchManagerAssignments();
   await fetchGuests();
   await fetchStripeConnectStatus();
+  await fetchBankDetails();
 
   const managerSelect = document.getElementById('managerAssignmentMembership');
   if (managerSelect) {
@@ -2996,21 +3455,19 @@ async function loadDashboardData() {
 }
 
 function restorePersistedScheduleControls() {
-  if (!savedDashboardState) {
-    return;
-  }
-
   const startDateInput = document.getElementById('cleaningStartDate');
   const daysInput = document.getElementById('cleaningDays');
   const formatInput = document.getElementById('cleaningFormat');
 
-  if (startDateInput && savedDashboardState.cleaningStartDate) {
-    startDateInput.value = savedDashboardState.cleaningStartDate;
+  // Always default start date to today (local date) on page load
+  if (startDateInput) {
+    const today = new Date();
+    startDateInput.value = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
   }
-  if (daysInput && savedDashboardState.cleaningDays) {
+  if (daysInput && savedDashboardState && savedDashboardState.cleaningDays) {
     daysInput.value = String(savedDashboardState.cleaningDays);
   }
-  if (formatInput && savedDashboardState.cleaningFormat) {
+  if (formatInput && savedDashboardState && savedDashboardState.cleaningFormat) {
     formatInput.value = savedDashboardState.cleaningFormat;
   }
 }
@@ -3175,7 +3632,9 @@ async function sendScheduleEmailToRecipient(toEmail) {
     renderStripeConnectStatus(meData.stripeConnect || null);
 
     await fetchAccessContext();
+    await loadPrivateReservations();
     await loadDashboardData();
+    await loadEventLog();
 
     const now = new Date();
     const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -3487,12 +3946,376 @@ if (_closeTeamMemberEditorBtn) _closeTeamMemberEditorBtn.addEventListener('click
   closeTeamMemberEditor();
 });
 
-document.getElementById('logoutBtn').addEventListener('click', async () => {
+const _logoutBtn = document.getElementById('logoutBtn');
+if (_logoutBtn) _logoutBtn.addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/';
 });
 
-document.getElementById('startStripeConnectBtn').addEventListener('click', async () => {
+// ── Bank Details ──────────────────────────────────────────────
+
+function setBankDetailsMessage(text, isError) {
+  const el = document.getElementById('bankDetailsMessage');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
+}
+
+function setPrivateReservationsMessage(text, isError) {
+  const el = document.getElementById('privateReservationsMessage');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
+}
+
+function formatPrivateReservationArrival(dateValue) {
+  const value = String(dateValue || '').trim();
+  if (!value) {
+    return '—';
+  }
+  const parsed = new Date(value + 'T00:00:00');
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString([], { dateStyle: 'medium' });
+}
+
+function formatPrivateReservationAmount(amount) {
+  const numeric = Number(amount);
+  return Number.isFinite(numeric) ? numeric.toFixed(2) : '—';
+}
+
+function createPrivateReservationActionButton(symbol, title, className, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn secondary config-icon-btn private-res-action-btn ' + className;
+  button.textContent = symbol;
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function createSharedReservationActionButton(symbol, title, className, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'btn secondary config-icon-btn resource-res-action-btn ' + className;
+  button.textContent = symbol;
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+async function deleteSharedReservation(resourceId, reservationId, button) {
+  const parsedResourceId = Number(resourceId || 0);
+  const parsedReservationId = Number(reservationId || 0);
+  if (!Number.isInteger(parsedResourceId) || parsedResourceId <= 0 || !Number.isInteger(parsedReservationId) || parsedReservationId <= 0) {
+    setMessage('Select a valid shared resource reservation first.', true);
+    return;
+  }
+
+  const confirmed = window.confirm('Delete this shared resource reservation? This cannot be undone.');
+  if (!confirmed) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+  }
+  setMessage('Deleting reservation...', false);
+
+  try {
+    const res = await fetch(
+      '/api/shared-resources/' + encodeURIComponent(String(parsedResourceId))
+      + '/reservations/' + encodeURIComponent(String(parsedReservationId)),
+      { method: 'DELETE' }
+    );
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to delete reservation.');
+    }
+
+    await loadAllReservations();
+    setMessage('Reservation deleted.', false);
+  } catch (err) {
+    setMessage(err.message || 'Failed to delete reservation.', true);
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+async function confirmSharedReservationPayment(resourceId, reservationId, status, button) {
+  const parsedResourceId = Number(resourceId || 0);
+  const parsedReservationId = Number(reservationId || 0);
+  const nextStatus = String(status || '').trim();
+
+  if (!Number.isInteger(parsedResourceId) || parsedResourceId <= 0 || !Number.isInteger(parsedReservationId) || parsedReservationId <= 0 || !nextStatus) {
+    setMessage('Select a valid shared resource reservation first.', true);
+    return;
+  }
+
+  const confirmed = window.confirm('Confirm payment received for this reservation?');
+  if (!confirmed) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+  }
+  setMessage('Registering payment receipt...', false);
+
+  try {
+    const res = await fetch(
+      '/api/shared-resources/' + encodeURIComponent(String(parsedResourceId))
+      + '/reservations/' + encodeURIComponent(String(parsedReservationId))
+      + '/status',
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus })
+      }
+    );
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to register payment receipt.');
+    }
+
+    await loadAllReservations();
+    setMessage('Payment receipt registered.', false);
+  } catch (err) {
+    setMessage(err.message || 'Failed to register payment receipt.', true);
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+async function cancelPrivateReservation(reservationId, button) {
+  const id = Number(reservationId || 0);
+  if (!Number.isInteger(id) || id <= 0) {
+    setPrivateReservationsMessage('Select a valid reservation first.', true);
+    return;
+  }
+
+  const confirmed = window.confirm('Cancel this reservation? No automatic refund will be issued if the reservation is cancelled.');
+  if (!confirmed) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+  }
+  setPrivateReservationsMessage('Cancelling reservation...', false);
+
+  try {
+    const res = await fetch('/api/private-reservations/' + encodeURIComponent(String(id)), {
+      method: 'DELETE'
+    });
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to cancel reservation.');
+    }
+
+    await loadPrivateReservations();
+    setPrivateReservationsMessage('Reservation cancelled.', false);
+  } catch (err) {
+    setPrivateReservationsMessage(err.message || 'Failed to cancel reservation.', true);
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+async function confirmPrivateReservationPayment(reservationId, button) {
+  const id = Number(reservationId || 0);
+  if (!Number.isInteger(id) || id <= 0) {
+    setPrivateReservationsMessage('Select a valid reservation first.', true);
+    return;
+  }
+
+  const confirmed = window.confirm('Confirm payment receipt');
+  if (!confirmed) {
+    return;
+  }
+
+  if (button) {
+    button.disabled = true;
+  }
+  setPrivateReservationsMessage('Confirming payment...', false);
+
+  try {
+    const res = await fetch('/api/private-reservations/' + encodeURIComponent(String(id)) + '/confirm-payment', {
+      method: 'POST'
+    });
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to confirm payment.');
+    }
+
+    await loadPrivateReservations();
+    setPrivateReservationsMessage('Payment confirmed.', false);
+  } catch (err) {
+    setPrivateReservationsMessage(err.message || 'Failed to confirm payment.', true);
+    if (button) {
+      button.disabled = false;
+    }
+  }
+}
+
+async function loadPrivateReservations() {
+  const tbody = document.getElementById('privateReservationsTableBody');
+  if (!tbody) {
+    return;
+  }
+
+  tbody.innerHTML = '<tr><td colspan="7">Loading private reservations...</td></tr>';
+  setPrivateReservationsMessage('', false);
+
+  try {
+    const res = await fetch('/api/private-reservations');
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+    if (res.status === 403) {
+      tbody.innerHTML = '<tr><td colspan="7">Access restricted.</td></tr>';
+      return;
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to load private reservations.');
+    }
+
+    const reservations = Array.isArray(data.reservations) ? data.reservations : [];
+    if (!reservations.length) {
+      tbody.innerHTML = '<tr><td colspan="7">No private reservations found.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = '';
+    reservations.forEach((reservation) => {
+      const tr = document.createElement('tr');
+      if (reservation && reservation.isOverduePayment === true) {
+        tr.classList.add('conflict-row');
+      }
+
+      const reservationIdCell = document.createElement('td');
+      reservationIdCell.textContent = reservation.reservationIdentifier || '—';
+
+      const guestCell = document.createElement('td');
+      guestCell.textContent = reservation.guestName || '—';
+
+      const listingCell = document.createElement('td');
+      listingCell.textContent = reservation.listingName || '—';
+
+      const arrivalCell = document.createElement('td');
+      arrivalCell.textContent = formatPrivateReservationArrival(reservation.arrivalDate);
+
+      const nightsCell = document.createElement('td');
+      nightsCell.textContent = String(Number(reservation.stayNights || 0) || 0);
+
+      const amountCell = document.createElement('td');
+      amountCell.textContent = formatPrivateReservationAmount(reservation.amount);
+
+      const actionCell = document.createElement('td');
+      const actionsWrap = document.createElement('div');
+      actionsWrap.className = 'feed-actions';
+
+      const cancelBtn = createPrivateReservationActionButton('✖', 'Cancel Reservation', 'private-res-cancel-btn', () => {
+        cancelPrivateReservation(reservation.id, cancelBtn);
+      });
+      actionsWrap.appendChild(cancelBtn);
+
+      if (reservation.canConfirmPayment) {
+        const confirmBtn = createPrivateReservationActionButton('✔', 'Confirm Payment Receipt', 'private-res-confirm-btn', () => {
+          confirmPrivateReservationPayment(reservation.id, confirmBtn);
+        });
+        actionsWrap.appendChild(confirmBtn);
+      }
+      actionCell.appendChild(actionsWrap);
+
+      tr.appendChild(reservationIdCell);
+      tr.appendChild(guestCell);
+      tr.appendChild(listingCell);
+      tr.appendChild(arrivalCell);
+      tr.appendChild(nightsCell);
+      tr.appendChild(amountCell);
+      tr.appendChild(actionCell);
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="7">Failed to load private reservations.</td></tr>';
+    setPrivateReservationsMessage(err.message || 'Failed to load private reservations.', true);
+  }
+}
+
+async function fetchBankDetails() {
+  try {
+    const res = await fetch('/api/account/bank-details');
+    if (!res.ok) return;
+    const data = await res.json();
+    document.getElementById('bankAccountName').value = data.accountName || '';
+    document.getElementById('bankSortCode').value = data.sortCode || '';
+    document.getElementById('bankAccountNumber').value = data.accountNumber || '';
+    document.getElementById('bankIsBusiness').checked = data.isBusiness === true;
+  } catch {
+    // non-fatal
+  }
+}
+
+const _bankDetailsForm = document.getElementById('bankDetailsForm');
+if (_bankDetailsForm) _bankDetailsForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  setBankDetailsMessage('', false);
+  const btn = document.getElementById('saveBankDetailsBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/account/bank-details', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        accountName: (document.getElementById('bankAccountName') || {}).value || '',
+        sortCode: (document.getElementById('bankSortCode') || {}).value || '',
+        accountNumber: (document.getElementById('bankAccountNumber') || {}).value || '',
+        isBusiness: !!(document.getElementById('bankIsBusiness') || {}).checked
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to save bank details.');
+    setBankDetailsMessage('Bank details saved.', false);
+  } catch (err) {
+    setBankDetailsMessage(err.message || 'Failed to save bank details.', true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+
+const _startStripeConnectBtn = document.getElementById('startStripeConnectBtn');
+if (_startStripeConnectBtn) _startStripeConnectBtn.addEventListener('click', async () => {
   const button = document.getElementById('startStripeConnectBtn');
   button.disabled = true;
   setStripeConnectStatus('Opening Stripe onboarding...', false);
@@ -3545,17 +4368,18 @@ if (_opsCalendarNextBtn) _opsCalendarNextBtn.addEventListener('click', () => {
   renderOpsCalendarForCurrentMonth();
 });
 
-document.getElementById('refreshScheduleBtn').addEventListener('click', async () => {
-  const button = document.getElementById('refreshScheduleBtn');
-  button.disabled = true;
+const _refreshScheduleBtn = document.getElementById('refreshScheduleBtn');
+if (_refreshScheduleBtn) _refreshScheduleBtn.addEventListener('click', async () => {
+  _refreshScheduleBtn.disabled = true;
   try {
     await updateSchedulePreview();
   } finally {
-    button.disabled = false;
+    _refreshScheduleBtn.disabled = false;
   }
 });
 
-document.getElementById('sendScheduleEmailBtn').addEventListener('click', () => {
+const _sendScheduleEmailBtn = document.getElementById('sendScheduleEmailBtn');
+if (_sendScheduleEmailBtn) _sendScheduleEmailBtn.addEventListener('click', () => {
   openScheduleEmailDialog();
 });
 
@@ -3586,7 +4410,8 @@ document.querySelectorAll('.cleaning-listing-checkbox, .ops-calendar-listing-che
   });
 });
 
-document.getElementById('cleaningScheduleForm').addEventListener('submit', async (e) => {
+const _cleaningScheduleForm = document.getElementById('cleaningScheduleForm');
+if (_cleaningScheduleForm) _cleaningScheduleForm.addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const button = document.getElementById('downloadCleaningScheduleBtn');
@@ -3610,12 +4435,14 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
     return;
   }
 
+  const pendingScheduleEdits = buildScheduleEditSnapshot(currentScheduleRows);
+
   button.disabled = true;
   setMessage('Building schedule from latest feeds...', false);
 
   try {
     const result = await buildSchedule(selectedListings, daysValue, startDateUtc);
-    currentScheduleRows = result.rows || [];
+    currentScheduleRows = mergeScheduleRowsWithSnapshot(result.rows || [], pendingScheduleEdits);
     currentScheduleErrors = result.errors || [];
     renderSchedulePreviewTable(currentScheduleRows, currentScheduleErrors, result.notifications || []);
 
@@ -3651,7 +4478,8 @@ document.getElementById('cleaningScheduleForm').addEventListener('submit', async
   }
 });
 
-document.getElementById('saveScheduleChangesBtn').addEventListener('click', async () => {
+const _saveScheduleChangesBtn = document.getElementById('saveScheduleChangesBtn');
+if (_saveScheduleChangesBtn) _saveScheduleChangesBtn.addEventListener('click', async () => {
   const button = document.getElementById('saveScheduleChangesBtn');
   button.disabled = true;
   try {
@@ -3726,7 +4554,8 @@ if (cancelCleanerEditBtn) {
   });
 }
 
-document.getElementById('copyConsolidatedIcsUrlBtn').addEventListener('click', async () => {
+const _copyConsolidatedIcsUrlBtn = document.getElementById('copyConsolidatedIcsUrlBtn');
+if (_copyConsolidatedIcsUrlBtn) _copyConsolidatedIcsUrlBtn.addEventListener('click', async () => {
   const url = document.getElementById('consolidatedIcsExportUrl').value;
   if (!url) return;
 
@@ -3764,8 +4593,9 @@ document.getElementById('copyConsolidatedIcsUrlBtn').addEventListener('click', a
     } catch {
       // ignore
     }
-    if (panelId === 'panel-ops') {
-      loadAllReservations();
+    if (panelId === 'panel-dashboard') {
+      refreshDashboardActivity();
+      loadEventLog();
     }
   }
 
@@ -3851,13 +4681,29 @@ async function loadAllReservations() {
       statusCell.textContent = row.status || '—';
 
       const actionCell = document.createElement('td');
-      const editLink = document.createElement('a');
-      editLink.href = '/shared-resource.html?id=' + encodeURIComponent(row.shared_resource_id);
-      editLink.className = 'btn secondary';
-      editLink.textContent = '✎';
-      editLink.title = 'View Resource';
-      editLink.setAttribute('aria-label', 'View Resource');
-      actionCell.appendChild(editLink);
+      const actionsWrap = document.createElement('div');
+      actionsWrap.className = 'feed-actions';
+
+      const deleteBtn = createSharedReservationActionButton('✖', 'Delete Reservation', 'resource-delete-btn', () => {
+        deleteSharedReservation(row.shared_resource_id, row.id, deleteBtn);
+      });
+
+      const statusText = String(row.status || '').trim();
+      if (statusText === 'cash') {
+        const confirmCashBtn = createSharedReservationActionButton('◍◍$', 'Register Cash Payment Received', 'resource-pay-cash-btn', () => {
+          confirmSharedReservationPayment(row.shared_resource_id, row.id, 'Cash Received', confirmCashBtn);
+        });
+        actionsWrap.appendChild(confirmCashBtn);
+      } else if (statusText === 'Awaiting Bank Transfer') {
+        const confirmBankBtn = createSharedReservationActionButton('⌂⇄', 'Register Bank Transfer Received', 'resource-pay-bank-btn', () => {
+          confirmSharedReservationPayment(row.shared_resource_id, row.id, 'Bank Transfer Confirmed', confirmBankBtn);
+        });
+        actionsWrap.appendChild(confirmBankBtn);
+      }
+
+      actionsWrap.appendChild(deleteBtn);
+
+      actionCell.appendChild(actionsWrap);
 
       tr.appendChild(resourceCell);
       tr.appendChild(guestCell);
@@ -3875,3 +4721,358 @@ async function loadAllReservations() {
     tbody.innerHTML = '<tr><td colspan="6">—</td></tr>';
   }
 }
+
+
+// -- Tab context menu ------------------------------------------
+
+(function initTabContextMenu() {
+  const TAB_SUBMENUS = {
+    'panel-dashboard': [
+      { label: 'View Private Reservations', href: '/dashboard-private-reservations.html' },
+      { label: 'View Facility Reservations', href: '/dashboard-facility-reservations.html' }
+    ],
+    'panel-config': [],
+    'panel-ops': [
+      { label: 'New Private Reservation', href: '/private-reservation.html' },
+      { label: 'New Facility Booking', href: '/resource-booking.html' }
+    ],
+    'panel-account': []
+  };
+
+  const menuBtn = document.getElementById('tabMenuBtn');
+  const menuEl = document.getElementById('tabContextMenu');
+  if (!menuBtn || !menuEl) return;
+
+  function getActivePanel() {
+    const active = document.querySelector('.dashboard-tab-btn.active');
+    return active ? active.dataset.panel : 'panel-dashboard';
+  }
+
+  function buildMenu(panelId) {
+    const items = TAB_SUBMENUS[panelId] || [];
+    if (!items.length) {
+      menuEl.innerHTML = '<span class="tab-context-menu-empty">No actions for this section.</span>';
+    } else {
+      menuEl.innerHTML = items.map(function(item) {
+        return '<a class="tab-context-menu-item" href="' + item.href + '">' + item.label + '</a>';
+      }).join('');
+    }
+  }
+
+  function openMenu() {
+    buildMenu(getActivePanel());
+    menuEl.classList.remove('hidden');
+    menuBtn.setAttribute('aria-expanded', 'true');
+    menuBtn.classList.add('open');
+  }
+
+  function closeMenu() {
+    menuEl.classList.add('hidden');
+    menuBtn.setAttribute('aria-expanded', 'false');
+    menuBtn.classList.remove('open');
+  }
+
+  menuBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (menuEl.classList.contains('hidden')) {
+      openMenu();
+    } else {
+      closeMenu();
+    }
+  });
+
+  document.addEventListener('click', function() { closeMenu(); });
+
+  menuEl.addEventListener('click', function(e) {
+    const item = e.target.closest('.tab-context-menu-item');
+    if (item) { closeMenu(); }
+  });
+
+  // Rebuild submenu if user changes tab while menu is open
+  document.querySelectorAll('.dashboard-tab-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      if (!menuEl.classList.contains('hidden')) {
+        buildMenu(btn.dataset.panel);
+      }
+    });
+  });
+})();
+
+// ── Calendar Event Log ────────────────────────────────────────
+
+function setEventLogMessage(text, isError) {
+  const el = document.getElementById('eventLogMessage');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = text ? ('message ' + (isError ? 'error' : 'success')) : 'message';
+}
+
+function formatEventLogTime(isoString) {
+  if (!isoString) return '—';
+  const d = new Date(isoString);
+  if (Number.isNaN(d.getTime())) return isoString;
+  return d.toLocaleDateString([], { dateStyle: 'short' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatEventLogType(entryType) {
+  const type = String(entryType || '').trim();
+  if (type === 'conflict') return '⚠ Conflict';
+  if (type === 'reservation_changed') return '✎ Date Change';
+  if (type === 'new_reservation') return '+ New';
+  if (type === 'sync') return '↻ Sync';
+  return type || '—';
+}
+
+function escapeHtml(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatEventLogDateRange(entry) {
+  const startDate = String(entry && (entry.new_start_date || entry.old_start_date) || '').trim();
+  const endDate = String(entry && (entry.new_end_date || entry.old_end_date) || '').trim();
+  return {
+    startDate: startDate || '—',
+    endDate: endDate || '—'
+  };
+}
+
+function formatEventLogDescription(entry) {
+  let text = String(entry && entry.description || '—');
+  const listingName = String(entry && entry.listing_name || '').trim();
+  if (listingName && String(entry && entry.entry_type || '').trim() === 'conflict') {
+    text = text.replace(/listing\s+\d+/ig, 'listing "' + listingName + '"');
+  }
+  return text;
+}
+
+function buildEventLogDetailsText(entry, conflictEvents) {
+  const dateRange = formatEventLogDateRange(entry);
+  const lines = [
+    'Type: ' + formatEventLogType(entry && entry.entry_type),
+    'Listing: ' + String(entry && entry.listing_name || '—'),
+    'Channel: ' + String(entry && (entry.channel_label || entry.channel_id) || '—'),
+    'Start Date: ' + dateRange.startDate,
+    'End Date: ' + dateRange.endDate,
+    'Description: ' + formatEventLogDescription(entry)
+  ];
+
+  if (String(entry && entry.entry_type || '').trim() === 'conflict') {
+    lines.push('');
+    lines.push('All Events In This Conflict: ' + String(Array.isArray(conflictEvents) ? conflictEvents.length : 0));
+    if (Array.isArray(conflictEvents) && conflictEvents.length) {
+      conflictEvents.forEach((event, index) => {
+        lines.push(
+          String(index + 1) + '. '
+          + 'Summary: ' + String(event && event.summary || 'Reservation')
+          + ' | Channel: ' + String(event && event.channel_label || 'Unknown')
+          + ' | Listing: ' + String(event && event.listing_name || (entry && entry.listing_name) || '—')
+          + ' | Start: ' + String(event && event.start_date || '—')
+          + ' | End: ' + String(event && event.end_date || '—')
+        );
+      });
+    } else {
+      lines.push('No related conflict events found.');
+    }
+  }
+
+  return lines.join('\n');
+}
+
+async function fetchEventLogDetails(entryId) {
+  const id = Number(entryId || 0);
+  if (!Number.isInteger(id) || id <= 0) {
+    return { entry: null, conflictEvents: [] };
+  }
+
+  const res = await fetch('/api/event-log/' + id + '/details');
+  if (res.status === 401) {
+    window.location.href = '/';
+    throw new Error('Your session expired. Please log in again.');
+  }
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(payload.error || 'Failed to load event details.');
+  }
+  return {
+    entry: payload && payload.entry ? payload.entry : null,
+    conflictEvents: Array.isArray(payload && payload.conflictEvents) ? payload.conflictEvents : []
+  };
+}
+
+async function openEventLogDetailsTab(entry) {
+  const tab = window.open('about:blank', '_blank');
+  if (!tab) {
+    setEventLogMessage('Popup blocked by browser. Allow popups to view event details.', true);
+    return;
+  }
+
+  const escapedTitle = escapeHtml('Calendar Event Log Details');
+  tab.document.open();
+  tab.document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapedTitle}</title>
+  <style>
+    body { margin: 0; padding: 1rem; font-family: Consolas, 'Courier New', monospace; background: #0f172a; color: #e2e8f0; }
+    h1 { margin: 0 0 0.8rem; font-size: 1rem; font-family: Segoe UI, Arial, sans-serif; color: #bfdbfe; }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-word; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 1rem; max-height: calc(100vh - 4rem); overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>${escapedTitle}</h1>
+  <pre>Loading...</pre>
+</body>
+</html>`);
+  tab.document.close();
+
+  let detailsEntry = entry;
+  let conflictEvents = [];
+  try {
+    const details = await fetchEventLogDetails(entry && entry.id);
+    if (details.entry) {
+      detailsEntry = details.entry;
+    }
+    conflictEvents = details.conflictEvents;
+  } catch (err) {
+    setEventLogMessage(err.message || 'Failed to load event details.', true);
+  }
+
+  const escapedText = escapeHtml(buildEventLogDetailsText(detailsEntry, conflictEvents));
+  tab.document.open();
+  tab.document.write(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapedTitle}</title>
+  <style>
+    body { margin: 0; padding: 1rem; font-family: Consolas, 'Courier New', monospace; background: #0f172a; color: #e2e8f0; }
+    h1 { margin: 0 0 0.8rem; font-size: 1rem; font-family: Segoe UI, Arial, sans-serif; color: #bfdbfe; }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-word; background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 1rem; max-height: calc(100vh - 4rem); overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>${escapedTitle}</h1>
+  <pre>${escapedText}</pre>
+</body>
+</html>`);
+  tab.document.close();
+}
+
+async function loadEventLog() {
+  const tbody = document.getElementById('eventLogTableBody');
+  if (!tbody) return;
+
+  tbody.innerHTML = '<tr><td colspan="5">Loading event log...</td></tr>';
+  setEventLogMessage('', false);
+
+  try {
+    const res = await fetch('/api/event-log');
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+    if (res.status === 403) {
+      tbody.innerHTML = '<tr><td colspan="5">Access restricted.</td></tr>';
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to load event log.');
+    }
+
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+    if (!entries.length) {
+      tbody.innerHTML = '<tr><td colspan="5">No calendar events logged yet.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = '';
+    entries.forEach((entry) => {
+      const tr = document.createElement('tr');
+      if (entry.entry_type === 'conflict') {
+        tr.classList.add('conflict-row');
+      }
+
+      const timeCell = document.createElement('td');
+      timeCell.textContent = formatEventLogTime(entry.created_at);
+
+      const typeCell = document.createElement('td');
+      typeCell.textContent = formatEventLogType(entry.entry_type);
+
+      const listingCell = document.createElement('td');
+      listingCell.textContent = entry.listing_name || ('Listing #' + entry.listing_id) || '—';
+
+      const channelCell = document.createElement('td');
+      channelCell.textContent = entry.channel_label || entry.channel_id || '—';
+
+      const detailsCell = document.createElement('td');
+      const infoBtn = document.createElement('button');
+      infoBtn.type = 'button';
+      infoBtn.className = 'event-log-info-btn';
+      infoBtn.textContent = 'i';
+      infoBtn.title = 'Open event details';
+      infoBtn.setAttribute('aria-label', 'Open event details');
+      infoBtn.addEventListener('click', function() {
+        openEventLogDetailsTab(entry);
+      });
+      detailsCell.appendChild(infoBtn);
+
+      tr.appendChild(timeCell);
+      tr.appendChild(typeCell);
+      tr.appendChild(listingCell);
+      tr.appendChild(channelCell);
+      tr.appendChild(detailsCell);
+      tbody.appendChild(tr);
+    });
+
+    setEventLogMessage('', false);
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="5">Failed to load event log.</td></tr>';
+    setEventLogMessage(err.message || 'Failed to load event log.', true);
+  }
+}
+
+const _eventLogClearBtn = document.getElementById('eventLogClearBtn');
+if (_eventLogClearBtn) _eventLogClearBtn.addEventListener('click', async () => {
+  const confirmed = window.confirm('Clear all Calendar Event Log entries for this account? This cannot be undone.');
+  if (!confirmed) {
+    return;
+  }
+
+  _eventLogClearBtn.disabled = true;
+  setEventLogMessage('Clearing event log...', false);
+  try {
+    const res = await fetch('/api/event-log', {
+      method: 'DELETE'
+    });
+
+    if (res.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+    if (res.status === 403) {
+      setEventLogMessage('Access restricted.', true);
+      return;
+    }
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setEventLogMessage(data.error || 'Failed to clear event log.', true);
+      return;
+    }
+
+    setEventLogMessage('Event log cleared (' + String(Number(data.deletedCount || 0)) + ' entries removed).', false);
+    await loadEventLog();
+  } catch {
+    setEventLogMessage('Failed to clear event log.', true);
+  } finally {
+    _eventLogClearBtn.disabled = false;
+  }
+});

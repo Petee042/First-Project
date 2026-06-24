@@ -6,7 +6,19 @@
   <title>Online Payment Reservation</title>
   <link rel="stylesheet" href="../styles.css" />
 </head>
-<body>
+<body class="logged-page">
+  <div class="sticky-page-chrome">
+    <div class="sticky-page-inner">
+      <nav class="dashboard-tab-bar page-top-nav" aria-label="Main navigation">
+        <a class="dashboard-tab-link active" href="/dashboard.html?tab=panel-dashboard">Dashboard</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-config">Config</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-ops">Ops</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-account">Account</a>
+      </nav>
+      <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
+    </div>
+  </div>
+
   <main class="dashboard">
     <div class="card-container wide public-booking-card">
       <div class="feed-actions back-row" style="margin-bottom: 0.7rem;">
@@ -65,6 +77,7 @@
   </main>
 
   <script src="https://js.stripe.com/v3/"></script>
+  <script src="../sticky-layout.js"></script>
   <script src="online-payment-reservation.js"></script>
 </body>
 </html>

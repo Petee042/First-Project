@@ -33,6 +33,8 @@ const cleanerBadgeColorMap = {};
 const sourceColorMap = {};
 const sourcePalette = ['#ff5a5f', '#003580', '#2a9d8f', '#e76f51', '#264653', '#f4a261', '#8a5cf6'];
 const cleanerBadgePalette = ['#0f766e', '#1d4ed8', '#b45309', '#be123c', '#4338ca', '#166534', '#92400e', '#0369a1'];
+const weekdayValueSet = new Set(['0', '1', '2', '3', '4', '5', '6']);
+const FEED_SAVE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
 
 function getListingFormState() {
   return JSON.stringify({
@@ -40,7 +42,9 @@ function getListingFormState() {
     propertyId: String(document.getElementById('listingPropertyId').value || ''),
     dateBasis: String(document.getElementById('listingDateBasis').value || ''),
     usualCleanerId: String(document.getElementById('listingUsualCleaner').value || ''),
-    emptyExport: String(document.getElementById('listingEmptyExport').checked)
+    emptyExport: String(document.getElementById('listingEmptyExport').checked),
+    blockAdvanceDays: String(document.getElementById('listingBlockAdvanceDays').value || ''),
+    noChangeDays: getSelectedNoChangeDays().join(',')
   });
 }
 
@@ -146,6 +150,55 @@ function addUtcDays(date, days) {
   const copy = new Date(date.getTime());
   copy.setUTCDate(copy.getUTCDate() + days);
   return copy;
+}
+
+function normaliseWeekdayList(values) {
+  const numbers = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6);
+  return Array.from(new Set(numbers)).sort((a, b) => a - b);
+}
+
+function hasConsecutiveWeekdays(days) {
+  const daySet = new Set(normaliseWeekdayList(days));
+  return Array.from(daySet).some((day) => daySet.has((day + 1) % 7));
+}
+
+function hasTooManyNoChangeWeekdays(days) {
+  return normaliseWeekdayList(days).length > 6;
+}
+
+function getSelectedNoChangeDays() {
+  return Array.from(document.querySelectorAll('.listing-no-change-day-checkbox:checked'))
+    .map((input) => String(input.value || '').trim())
+    .filter((value) => weekdayValueSet.has(value))
+    .map((value) => Number(value))
+    .sort((a, b) => a - b);
+}
+
+function setSelectedNoChangeDays(values) {
+  const days = normaliseWeekdayList(values);
+  const daySet = new Set(days.map((value) => String(value)));
+  Array.from(document.querySelectorAll('.listing-no-change-day-checkbox')).forEach((input) => {
+    input.checked = daySet.has(String(input.value || '').trim());
+  });
+}
+
+function bindNoChangeDayCheckboxValidation() {
+  const inputs = Array.from(document.querySelectorAll('.listing-no-change-day-checkbox'));
+  if (!inputs.length) {
+    return;
+  }
+
+  inputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      const selectedDays = getSelectedNoChangeDays();
+      if (selectedDays.length > 6) {
+        input.checked = false;
+        setListingMessage('No Changes On can contain at most 6 weekdays.', true);
+      }
+    });
+  });
 }
 
 function dateKeyLess(a, b) {
@@ -409,6 +462,60 @@ function getEventSummary(event) {
   return event.title || (event.raw && event.raw.SUMMARY) || '(untitled)';
 }
 
+function parseApMetadataFromDescription(descriptionText) {
+  const metadata = {
+    type: '',
+    source: '',
+    origin: '',
+    scope: ''
+  };
+
+  String(descriptionText || '')
+    .split(/\n|\\n/)
+    .forEach((line) => {
+      const text = String(line || '').trim();
+      if (!text) return;
+
+      const idx = text.indexOf(':');
+      if (idx <= 0) return;
+      const key = text.slice(0, idx).trim().toUpperCase();
+      const value = text.slice(idx + 1).trim();
+      if (!value) return;
+
+      if (key === 'AP-TYPE') metadata.type = value;
+      if (key === 'AP-SOURCE') metadata.source = value;
+      if (key === 'AP-ORIGIN') metadata.origin = value;
+      if (key === 'AP-SCOPE') metadata.scope = value;
+    });
+
+  return metadata;
+}
+
+function deriveEventType(event, metadata) {
+  const explicitType = String(metadata && metadata.type || event && event.eventType || '').trim().toLowerCase();
+  if (explicitType === 'block') return 'Block';
+  if (explicitType === 'reservation') return 'Reservation';
+  if (event && (event.isReservation === false || event.isUnavailableBlock === true)) return 'Block';
+  return 'Reservation';
+}
+
+function deriveEventSource(event, metadata) {
+  const source = String(metadata && metadata.source || event && event.source || '').trim();
+  if (source) return source;
+  return String(currentListingMeta && currentListingMeta.name || 'Unknown source');
+}
+
+function deriveEventOrigin(event, metadata) {
+  const explicit = String(metadata && metadata.origin || event && event.eventOrigin || '').trim();
+  if (explicit) return explicit;
+
+  const sourceKey = normaliseSourceKey(event && event.source || '');
+  if (sourceKey === 'direct booking' || sourceKey === 'automaticpeople' || Number(event && event.reservationActivityId || 0) > 0) {
+    return 'Local';
+  }
+  return 'Remote';
+}
+
 function isAirbnbNotAvailableEvent(event, sourceLabel) {
   const sourceKey = normaliseSourceKey(sourceLabel || (event && event.source));
   if (!sourceKey.includes('airbnb')) {
@@ -426,11 +533,42 @@ function buildBarTooltip(events) {
   if (!events || !events.length) return '';
 
   return events.map((event) => {
+    const metadata = parseApMetadataFromDescription(event && event.description);
+    const eventType = deriveEventType(event, metadata);
+    const eventSource = deriveEventSource(event, metadata);
+    const eventOrigin = deriveEventOrigin(event, metadata);
     const checkin = formatDateKeyForTooltip(toDateKey(event.start));
     const checkout = formatDateKeyForTooltip(toDateKey(event.end));
-    return 'Summary: ' + getEventSummary(event)
-      + '\nCheck-in: ' + checkin
-      + '\nCheck-out: ' + checkout;
+
+    const lines = [
+      'Type: ' + eventType,
+      'Source: ' + eventSource,
+      'Origin: ' + eventOrigin,
+      'Check-in: ' + checkin,
+      'Check-out: ' + checkout
+    ];
+
+    // Extended fields from the new calendar event store
+    if (event.channelLabel) {
+      lines.push('Channel: ' + event.channelLabel);
+    }
+    if (event.notes) {
+      lines.push('Notes: ' + event.notes);
+    }
+    if (event.isInConflict) {
+      lines.push('⚠ IN CONFLICT');
+    }
+    if (event.isModified) {
+      lines.push('✎ Dates changed since first imported');
+    }
+    if (event.lastSyncedAt) {
+      const syncDate = new Date(event.lastSyncedAt);
+      if (!Number.isNaN(syncDate.getTime())) {
+        lines.push('Last synced: ' + syncDate.toLocaleString());
+      }
+    }
+
+    return lines.join('\n');
   }).join('\n\n');
 }
 
@@ -656,6 +794,11 @@ function renderReservationCalendar(events) {
   const cleanerBadgesByDate = buildCleaningBadgesByDate(currentCleaningChanges);
   const sources = getCalendarSources(events);
 
+  const advanceDaysRaw = currentListingMeta && currentListingMeta.block_advance_days != null ? Number(currentListingMeta.block_advance_days) : null;
+  const advanceCutoff = (Number.isInteger(advanceDaysRaw) && advanceDaysRaw > 0)
+    ? new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()) + advanceDaysRaw * 86400000)
+    : null;
+
   monthLabel.textContent = formatMonthLabel(monthStart);
   calendar.innerHTML = '';
 
@@ -735,11 +878,23 @@ function renderReservationCalendar(events) {
       const date = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), dayNum));
       const key = keyFromUtcDate(date);
       const dayEntry = dayIndex[key];
+      const dayHasUnavailableOnly = Boolean(dayEntry)
+        && hasDisplayUnavailable(dayEntry.events)
+        && !hasReservationEligible(dayEntry.events);
 
       const cell = document.createElement('div');
       cell.className = 'calendar-day';
       if (dayEntry && dayEntry.conflict) {
         cell.classList.add('calendar-day-conflict');
+      }
+      if (dayHasUnavailableOnly) {
+        cell.classList.add('calendar-day-policy-blocked');
+      }
+      if (advanceCutoff && date >= advanceCutoff) {
+        cell.classList.add('calendar-day-advance-blocked');
+        if (!cell.title) {
+          cell.title = 'Blocked: beyond advance booking limit';
+        }
       }
       cell.title = buildDayTooltip(dayEntry);
 
@@ -789,46 +944,70 @@ function renderReservationCalendar(events) {
 
         if (hasCheckout && hasCheckin) {
           const transitionEvents = (dayEntry.checkoutEventsBySource[source] || []).concat(dayEntry.checkinEventsBySource[source] || []);
+          const unavailableOnly = hasDisplayUnavailable(transitionEvents) && !hasReservationEligible(transitionEvents);
           bar.classList.add('day-transition-bar');
           // Same-channel checkout + checkin on one day: show a thin center split/gap.
-          bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 47%, ' + transparentStop + ' 47% 53%, ' + color + ' 53% 100%)';
-          if (shouldDimBar(transitionEvents, source)) {
+          if (unavailableOnly) {
+            bar.classList.add('day-bar-policy-block');
+            bar.style.background = 'linear-gradient(90deg, #6b7280 0 47%, rgba(107,114,128,0) 47% 53%, #6b7280 53% 100%)';
+          } else {
+            bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 47%, ' + transparentStop + ' 47% 53%, ' + color + ' 53% 100%)';
+          }
+          if (!unavailableOnly && shouldDimBar(transitionEvents, source)) {
             bar.style.opacity = '0.5';
           }
           bar.title = buildBarTooltip(transitionEvents);
-          if (hasDisplayUnavailable(transitionEvents) && !hasReservationEligible(transitionEvents)) {
+          if (unavailableOnly) {
             applyUnavailableHatch(bar);
           }
         } else if (hasCheckout) {
           const checkoutEvents = dayEntry.checkoutEventsBySource[source] || [];
+          const unavailableOnly = hasDisplayUnavailable(checkoutEvents) && !hasReservationEligible(checkoutEvents);
           bar.classList.add('day-transition-bar');
-          bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + transparentStop + ' 50% 100%)';
-          if (shouldDimBar(checkoutEvents, source)) {
+          if (unavailableOnly) {
+            bar.classList.add('day-bar-policy-block');
+            bar.style.background = 'linear-gradient(90deg, #6b7280 0 50%, rgba(107,114,128,0) 50% 100%)';
+          } else {
+            bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 50%, ' + transparentStop + ' 50% 100%)';
+          }
+          if (!unavailableOnly && shouldDimBar(checkoutEvents, source)) {
             bar.style.opacity = '0.5';
           }
           bar.title = buildBarTooltip(checkoutEvents);
-          if (hasDisplayUnavailable(checkoutEvents) && !hasReservationEligible(checkoutEvents)) {
+          if (unavailableOnly) {
             applyUnavailableHatch(bar);
           }
         } else if (hasCheckin) {
           const checkinEvents = dayEntry.checkinEventsBySource[source] || [];
+          const unavailableOnly = hasDisplayUnavailable(checkinEvents) && !hasReservationEligible(checkinEvents);
           bar.classList.add('day-transition-bar');
-          bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 50%, ' + color + ' 50% 100%)';
-          if (shouldDimBar(checkinEvents, source)) {
+          if (unavailableOnly) {
+            bar.classList.add('day-bar-policy-block');
+            bar.style.background = 'linear-gradient(90deg, rgba(107,114,128,0) 0 50%, #6b7280 50% 100%)';
+          } else {
+            bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 50%, ' + color + ' 50% 100%)';
+          }
+          if (!unavailableOnly && shouldDimBar(checkinEvents, source)) {
             bar.style.opacity = '0.5';
           }
           bar.title = buildBarTooltip(checkinEvents);
-          if (hasDisplayUnavailable(checkinEvents) && !hasReservationEligible(checkinEvents)) {
+          if (unavailableOnly) {
             applyUnavailableHatch(bar);
           }
         } else if (hasStay) {
           const stayEvents = dayEntry.stayEventsBySource[source] || [];
-          bar.style.backgroundColor = color;
-          if (shouldDimBar(stayEvents, source)) {
+          const unavailableOnly = hasDisplayUnavailable(stayEvents) && !hasReservationEligible(stayEvents);
+          if (unavailableOnly) {
+            bar.classList.add('day-bar-policy-block');
+            bar.style.backgroundColor = '#6b7280';
+          } else {
+            bar.style.backgroundColor = color;
+          }
+          if (!unavailableOnly && shouldDimBar(stayEvents, source)) {
             bar.style.opacity = '0.5';
           }
           bar.title = buildBarTooltip(stayEvents);
-          if (hasDisplayUnavailable(stayEvents) && !hasReservationEligible(stayEvents)) {
+          if (unavailableOnly) {
             applyUnavailableHatch(bar);
           }
         } else {
@@ -940,6 +1119,15 @@ function applyListingAccess(role) {
     });
   }
 
+  const saveFeedBtn = document.getElementById('saveFeedBtn');
+  if (saveFeedBtn) {
+    saveFeedBtn.disabled = !canEditListing;
+  }
+  const deleteFeedBtn = document.getElementById('cancelFeedEditBtn');
+  if (deleteFeedBtn) {
+    deleteFeedBtn.disabled = !canEditListing;
+  }
+
   if (updateCalendarsBtn) {
     updateCalendarsBtn.disabled = !canEditListing;
   }
@@ -976,7 +1164,7 @@ function renderFeeds(feeds) {
     const actionCell = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
-    editBtn.className = 'btn secondary';
+    editBtn.className = 'btn secondary config-edit-btn';
     editBtn.textContent = '✎';
     editBtn.title = 'Edit';
     editBtn.setAttribute('aria-label', 'Edit');
@@ -984,7 +1172,10 @@ function renderFeeds(feeds) {
       document.getElementById('feedId').value = String(feed.id);
       document.getElementById('feedLabel').value = feed.label;
       document.getElementById('feedUrl').value = feed.url;
-      document.getElementById('saveFeedBtn').textContent = 'Save Feed';
+      const saveBtn = document.getElementById('saveFeedBtn');
+      saveBtn.title = 'Save Feed';
+      saveBtn.setAttribute('aria-label', 'Save Feed');
+      saveBtn.innerHTML = FEED_SAVE_ICON;
       document.getElementById('cancelFeedEditBtn').classList.remove('hidden');
       setListingMessage('Editing feed: ' + feed.label, false);
     });
@@ -1004,9 +1195,15 @@ function clearFeedEditMode() {
   document.getElementById('feedId').value = '';
   document.getElementById('feedLabel').value = '';
   document.getElementById('feedUrl').value = '';
-  document.getElementById('saveFeedBtn').textContent = 'Add Feed';
+  const saveBtn = document.getElementById('saveFeedBtn');
+  saveBtn.title = 'Save Feed';
+  saveBtn.setAttribute('aria-label', 'Save Feed');
+  saveBtn.innerHTML = FEED_SAVE_ICON;
   document.getElementById('cancelFeedEditBtn').classList.add('hidden');
 }
+
+bindNoChangeDayCheckboxValidation();
+clearFeedEditMode();
 
 function hasValidListingId() {
   return Number.isInteger(listingId) && listingId > 0;
@@ -1023,7 +1220,7 @@ async function loadListing() {
   document.getElementById('listingFeedsSection').classList.remove('hidden');
   document.getElementById('listingAssignmentEditor').classList.remove('hidden');
 
-  const listingRes = await fetch('/api/listings/' + listingId);
+  const listingRes = await fetch('/api/listings/' + listingId, { cache: 'no-store' });
   if (listingRes.status === 401) {
     window.location.href = '/';
     return;
@@ -1046,6 +1243,8 @@ async function loadListing() {
   document.getElementById('listingPropertyId').value = String(listing.property_id || '');
   document.getElementById('listingDateBasis').value = listing.date_basis === 'checkin' ? 'checkin' : 'checkout';
   document.getElementById('listingEmptyExport').checked = listing.empty_export === true || listing.empty_export === 'true';
+  document.getElementById('listingBlockAdvanceDays').value = (listing.block_advance_days != null && listing.block_advance_days !== '') ? String(listing.block_advance_days) : '';
+  setSelectedNoChangeDays(Array.isArray(listing.no_change_days) ? listing.no_change_days : []);
 
   if (currentAccessRole === 'Manager') {
     if (!managerScopeState.hasAssignments) {
@@ -1184,6 +1383,7 @@ async function updateCalendars() {
       initialListingFormState = getListingFormState();
     } else {
       await loadListing();
+      await loadCachedCalendar();
       await fetchListingManagers();
       initialListingFormState = getListingFormState();
     }
@@ -1380,6 +1580,9 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
   const usualCleanerRaw = document.getElementById('listingUsualCleaner').value;
   const usualCleanerId = usualCleanerRaw ? Number(usualCleanerRaw) : null;
   const emptyExport = document.getElementById('listingEmptyExport').checked;
+  const blockAdvanceDaysRaw = document.getElementById('listingBlockAdvanceDays').value.trim();
+  const blockAdvanceDays = blockAdvanceDaysRaw !== '' && Number.isInteger(Number(blockAdvanceDaysRaw)) && Number(blockAdvanceDaysRaw) > 0 ? Number(blockAdvanceDaysRaw) : null;
+  const noChangeDays = getSelectedNoChangeDays();
   const hasValidListingId = Number.isInteger(listingId) && listingId > 0;
   const shouldCreate = isCreateMode || !hasValidListingId;
 
@@ -1393,12 +1596,17 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     return;
   }
 
+  if (hasTooManyNoChangeWeekdays(noChangeDays)) {
+    setListingMessage('No Changes On can contain at most 6 weekdays.', true);
+    return;
+  }
+
   button.disabled = true;
   try {
     const res = await fetch(shouldCreate ? '/api/listings' : ('/api/listings/' + listingId), {
       method: shouldCreate ? 'POST' : 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId, emptyExport })
+      body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId, emptyExport, blockAdvanceDays, noChangeDays })
     });
     const data = await res.json();
 
@@ -1429,6 +1637,8 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
       await saveListingManagerAssignments();
     }
 
+    await loadListing();
+    await loadCachedCalendar();
     document.getElementById('listingTitle').textContent = 'Listing: ' + data.listing.name;
     initialListingFormState = getListingFormState();
     setListingMessage('Listing updated.', false);
@@ -1496,9 +1706,45 @@ if (feedForm) feedForm.addEventListener('submit', async (e) => {
   }
 });
 
-document.getElementById('cancelFeedEditBtn').addEventListener('click', () => {
-  clearFeedEditMode();
-  setListingMessage('', false);
+document.getElementById('cancelFeedEditBtn').addEventListener('click', async () => {
+  const feedId = document.getElementById('feedId').value.trim();
+  if (!feedId) {
+    clearFeedEditMode();
+    setListingMessage('', false);
+    return;
+  }
+
+  if (!canEditListing) {
+    setListingMessage('Read-only access: deleting feeds is not allowed for your role.', true);
+    return;
+  }
+
+  const confirmed = window.confirm('Delete this feed link?');
+  if (!confirmed) {
+    return;
+  }
+
+  const deleteBtn = document.getElementById('cancelFeedEditBtn');
+  deleteBtn.disabled = true;
+  try {
+    const res = await fetch('/api/listings/' + listingId + '/feeds/' + encodeURIComponent(feedId), {
+      method: 'DELETE'
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setListingMessage(data.error || 'Failed to delete feed.', true);
+      return;
+    }
+
+    clearFeedEditMode();
+    setListingMessage('Feed deleted.', false);
+    await loadListing();
+  } catch {
+    setListingMessage('Network error deleting feed.', true);
+  } finally {
+    deleteBtn.disabled = false;
+  }
 });
 
 const _updateCalendarsBtn = document.getElementById('updateCalendarsBtn');
@@ -1510,9 +1756,10 @@ document.getElementById('copyIcsUrlBtn').addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(url);
     const btn = document.getElementById('copyIcsUrlBtn');
-    const orig = btn.textContent;
-    btn.textContent = 'Copied!';
-    setTimeout(() => { btn.textContent = orig; }, 1800);
+    const orig = btn.title;
+    btn.title = 'Copied!';
+    btn.setAttribute('aria-label', 'Copied!');
+    setTimeout(() => { btn.title = orig; btn.setAttribute('aria-label', orig); }, 1800);
   } catch {
     setListingMessage('Could not copy to clipboard.', true);
   }
