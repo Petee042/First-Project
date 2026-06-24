@@ -11622,17 +11622,32 @@ app.delete('/api/listings/:listingId/debug-reservations', requireScopedRole('Man
       return res.status(404).json({ error: 'Listing not found.' });
     }
 
-    const result = await pool.query(
+    const deletedResult = await pool.query(
       `
         DELETE FROM reservation_activity
         WHERE listing_id = $1
           AND client_account_id = $2
           AND status = ANY($3::text[])
+        RETURNING listing_id,
+                  reservation_checkin_date::text AS reservation_checkin_date,
+                  reservation_checkout_date::text AS reservation_checkout_date
       `,
       [listingId, req.accessContext.activeClientAccountId, Array.from(DIRECT_RESERVATION_ACTIVE_STATUSES)]
     );
 
-    return res.json({ message: 'Debug delete-all completed.', deletedCount: Number(result.rowCount || 0) });
+    const deletedRows = Array.isArray(deletedResult.rows) ? deletedResult.rows : [];
+    if (deletedRows.length) {
+      await deleteBookedInChangesForUser(
+        req.accessContext.effectiveOwnerUserId,
+        deletedRows.map((row) => ({
+          listingId: Number(row.listing_id),
+          reservationCheckinDate: row.reservation_checkin_date,
+          reservationCheckoutDate: row.reservation_checkout_date
+        }))
+      );
+    }
+
+    return res.json({ message: 'Debug delete-all completed.', deletedCount: Number(deletedResult.rowCount || 0) });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to delete reservations.' });
@@ -11657,7 +11672,7 @@ app.post('/api/listings/:listingId/debug-reservations/delete-by-date', requireSc
       return res.status(404).json({ error: 'Listing not found.' });
     }
 
-    const result = await pool.query(
+    const deletedResult = await pool.query(
       `
         DELETE FROM reservation_activity
         WHERE listing_id = $1
@@ -11665,11 +11680,26 @@ app.post('/api/listings/:listingId/debug-reservations/delete-by-date', requireSc
           AND status = ANY($3::text[])
           AND reservation_checkin_date <= $4::date
           AND reservation_checkout_date > $4::date
+        RETURNING listing_id,
+                  reservation_checkin_date::text AS reservation_checkin_date,
+                  reservation_checkout_date::text AS reservation_checkout_date
       `,
       [listingId, req.accessContext.activeClientAccountId, Array.from(DIRECT_RESERVATION_ACTIVE_STATUSES), targetDate]
     );
 
-    return res.json({ message: 'Debug delete-by-date completed.', deletedCount: Number(result.rowCount || 0) });
+    const deletedRows = Array.isArray(deletedResult.rows) ? deletedResult.rows : [];
+    if (deletedRows.length) {
+      await deleteBookedInChangesForUser(
+        req.accessContext.effectiveOwnerUserId,
+        deletedRows.map((row) => ({
+          listingId: Number(row.listing_id),
+          reservationCheckinDate: row.reservation_checkin_date,
+          reservationCheckoutDate: row.reservation_checkout_date
+        }))
+      );
+    }
+
+    return res.json({ message: 'Debug delete-by-date completed.', deletedCount: Number(deletedResult.rowCount || 0) });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to delete reservations by date.' });
@@ -11781,6 +11811,12 @@ app.delete('/api/private-reservations/:id', requireScopedRole('Manager'), async 
       `,
       [reservationId, req.accessContext.activeClientAccountId]
     );
+
+    await deleteBookedInChangesForUser(req.accessContext.effectiveOwnerUserId, [{
+      listingId: Number(existing.listing_id),
+      reservationCheckinDate: existing.reservation_checkin_date,
+      reservationCheckoutDate: existing.reservation_checkout_date
+    }]);
 
     const guestEmail = normaliseOptionalEmail(existing.email_address);
     if (guestEmail) {

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Facility Reservations - AutomaticPeople</title>
+  <link rel="stylesheet" href="styles.v20260520.css" />
+</head>
+<body class="logged-page">
+  <div class="sticky-page-chrome">
+    <div class="sticky-page-inner">
+      <nav class="dashboard-tab-bar page-top-nav" aria-label="Main navigation">
+        <a class="dashboard-tab-link active" href="/dashboard.html?tab=panel-dashboard">Dashboard</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-config">Config</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-ops">Ops</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-account">Account</a>
+      </nav>
+      <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
+    </div>
+  </div>
+
+  <main class="dashboard">
+    <div class="card-container wide">
+      <div class="feed-actions back-row" style="margin-bottom: 0.7rem;">
+        <button id="backBtn" type="button" class="back-arrow-control" aria-label="Back"></button>
+      </div>
+
+      <h2>Facility Reservations</h2>
+      <p id="dashboardPageMessage" class="message"></p>
+
+      <section class="listing-form-section">
+        <p id="allReservationsMessage" class="message"></p>
+        <div class="table-wrap">
+          <table class="calendar-table" aria-label="All shared resource reservations">
+            <thead>
+              <tr>
+                <th>Resource</th>
+                <th>Guest</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="allReservationsTableBody">
+              <tr>
+                <td colspan="6">Loading reservations...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="sticky-layout.js"></script>
+  <script src="dashboard-facility-reservations.js"></script>
+</body>
+</html>

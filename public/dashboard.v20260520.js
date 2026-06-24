@@ -4594,7 +4594,7 @@ if (_copyConsolidatedIcsUrlBtn) _copyConsolidatedIcsUrlBtn.addEventListener('cli
       // ignore
     }
     if (panelId === 'panel-dashboard') {
-      loadAllReservations();
+      refreshDashboardActivity();
       loadEventLog();
     }
   }
@@ -4728,11 +4728,14 @@ async function loadAllReservations() {
 (function initTabContextMenu() {
   const TAB_SUBMENUS = {
     'panel-dashboard': [
+      { label: 'View Private Reservations', href: '/dashboard-private-reservations.html' },
+      { label: 'View Facility Reservations', href: '/dashboard-facility-reservations.html' }
+    ],
+    'panel-config': [],
+    'panel-ops': [
       { label: 'New Private Reservation', href: '/private-reservation.html' },
       { label: 'New Facility Booking', href: '/resource-booking.html' }
     ],
-    'panel-config': [],
-    'panel-ops': [],
     'panel-account': []
   };
 
