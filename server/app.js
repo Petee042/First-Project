@@ -8147,16 +8147,44 @@ app.post('/api/admin/system/reset-schema', requireAdminAuth, async (req, res) =>
     return res.status(400).json({ error: 'Confirmation text mismatch.' });
   }
 
+  const dbClient = await pool.connect();
   try {
-    await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
-    await pool.query('CREATE SCHEMA public AUTHORIZATION CURRENT_USER');
-    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
-    await pool.query('GRANT USAGE ON SCHEMA public TO public');
+    let resetMode = 'schema';
+
+    await dbClient.query('BEGIN');
+    try {
+      await dbClient.query('DROP SCHEMA IF EXISTS public CASCADE');
+      await dbClient.query('CREATE SCHEMA public AUTHORIZATION CURRENT_USER');
+      await dbClient.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
+      await dbClient.query('GRANT USAGE ON SCHEMA public TO public');
+      await dbClient.query('COMMIT');
+    } catch (schemaErr) {
+      await dbClient.query('ROLLBACK');
+      resetMode = 'truncate';
+
+      await dbClient.query('BEGIN');
+      const tablesResult = await dbClient.query(
+        `
+          SELECT tablename
+          FROM pg_tables
+          WHERE schemaname = 'public'
+        `
+      );
+      const tableNames = tablesResult.rows
+        .map((row) => String(row.tablename || '').trim())
+        .filter(Boolean);
+      if (tableNames.length) {
+        const truncateList = tableNames.map((name) => '"' + name.replace(/"/g, '""') + '"').join(', ');
+        await dbClient.query('TRUNCATE TABLE ' + truncateList + ' RESTART IDENTITY CASCADE');
+      }
+      await dbClient.query('COMMIT');
+    }
 
     await initializeUserStore();
 
     return res.json({
       message: 'Schema reset complete.',
+      mode: resetMode,
       warning: 'All previous data has been permanently deleted.'
     });
   } catch (err) {
@@ -8165,6 +8193,8 @@ app.post('/api/admin/system/reset-schema', requireAdminAuth, async (req, res) =>
       error: 'Failed to reset database schema.',
       details: err && err.message ? String(err.message) : 'Unknown database error.'
     });
+  } finally {
+    dbClient.release();
   }
 });
 

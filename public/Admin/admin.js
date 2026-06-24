@@ -243,11 +243,15 @@ document.getElementById('resetSchemaBtn').addEventListener('click', async () => 
       return;
     }
     if (!res.ok) {
-      setAdminMessage(data.error || 'Failed to reset schema.', true);
+      const detailText = data && data.details ? (' Details: ' + String(data.details)) : '';
+      setAdminMessage((data.error || 'Failed to reset schema.') + detailText, true);
       return;
     }
 
-    setAdminMessage('Database schema reset complete and tables recreated.', false);
+    const modeText = data && data.mode === 'truncate'
+      ? ' (truncate fallback mode)'
+      : '';
+    setAdminMessage('Database schema reset complete and tables recreated.' + modeText, false);
     await loadUsers();
   } catch (err) {
     setAdminMessage(err.message || 'Network error resetting schema.', true);
