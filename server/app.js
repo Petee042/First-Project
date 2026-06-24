@@ -623,19 +623,6 @@ async function initializeUserStore() {
     ON listing_event_log (listing_id, created_at DESC)
   `);
 
-  await pool.query(`
-    ALTER TABLE listing_event_log
-    DROP CONSTRAINT IF EXISTS listing_event_log_client_account_id_fkey
-  `);
-
-  await pool.query(`
-    ALTER TABLE listing_event_log
-    ADD CONSTRAINT listing_event_log_client_account_id_fkey
-    FOREIGN KEY (client_account_id)
-    REFERENCES client_accounts(id)
-    ON DELETE CASCADE
-  `);
-
   // ── ICS transaction log: records every ICS fetch attempt for admin diagnostics
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ics_transaction_log (
@@ -933,6 +920,19 @@ async function initializeUserStore() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_event_log
+    DROP CONSTRAINT IF EXISTS listing_event_log_client_account_id_fkey
+  `);
+
+  await pool.query(`
+    ALTER TABLE listing_event_log
+    ADD CONSTRAINT listing_event_log_client_account_id_fkey
+    FOREIGN KEY (client_account_id)
+    REFERENCES client_accounts(id)
+    ON DELETE CASCADE
   `);
 
   await pool.query(`
