@@ -425,6 +425,17 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS client_accounts (
+      id BIGSERIAL PRIMARY KEY,
+      created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+      display_name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS listings (
       id BIGSERIAL PRIMARY KEY,
       user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -909,17 +920,6 @@ async function initializeUserStore() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_shared_resource_reservations_payment_intent_id
     ON shared_resource_reservations (payment_intent_id)
     WHERE payment_intent_id IS NOT NULL
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS client_accounts (
-      id BIGSERIAL PRIMARY KEY,
-      created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-      display_name TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-    )
   `);
 
   await pool.query(`
