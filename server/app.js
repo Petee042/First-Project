@@ -11304,6 +11304,39 @@ app.get('/api/listings/:listingId/events', requireScopedRole('Staff'), async (re
       : null;
 
     const bookedChanges = await getBookedInChangesForUserByListings(req.accessContext.effectiveOwnerUserId, [listingId]);
+    const activeReservationKeySet = new Set(
+      (mergedEventsWithConflicts || [])
+        .map((event) => {
+          if (event && event.isReservation === false) {
+            return null;
+          }
+          const checkinDate = normaliseDateKey(event && event.start);
+          const checkoutDate = normaliseDateKey(event && event.end);
+          if (!checkinDate || !checkoutDate || checkoutDate <= checkinDate) {
+            return null;
+          }
+          return checkinDate + '|' + checkoutDate;
+        })
+        .filter(Boolean)
+    );
+    const orphanedBookedChanges = (bookedChanges || []).filter((row) => {
+      const key = String(row.reservation_checkin_date || '') + '|' + String(row.reservation_checkout_date || '');
+      return key && !activeReservationKeySet.has(key);
+    });
+    if (orphanedBookedChanges.length) {
+      await deleteBookedInChangesForUser(
+        req.accessContext.effectiveOwnerUserId,
+        orphanedBookedChanges.map((row) => ({
+          listingId,
+          reservationCheckinDate: row.reservation_checkin_date,
+          reservationCheckoutDate: row.reservation_checkout_date
+        }))
+      );
+    }
+    const activeBookedChanges = (bookedChanges || []).filter((row) => {
+      const key = String(row.reservation_checkin_date || '') + '|' + String(row.reservation_checkout_date || '');
+      return key && activeReservationKeySet.has(key);
+    });
     const cleaners = await getCleanersForUser(req.accessContext.effectiveOwnerUserId);
     const cleanerNameById = new Map(
       (cleaners || []).map((cleaner) => {
@@ -11311,7 +11344,7 @@ app.get('/api/listings/:listingId/events', requireScopedRole('Staff'), async (re
         return [Number(cleaner.id), fullName || 'Unallocated'];
       })
     );
-    const cleaningChanges = (bookedChanges || []).map((row) => ({
+    const cleaningChanges = activeBookedChanges.map((row) => ({
       reservation_checkin_date: row.reservation_checkin_date,
       reservation_checkout_date: row.reservation_checkout_date,
       changeover_date: row.changeover_date,
@@ -11380,6 +11413,39 @@ app.post('/api/listings/:listingId/events/refresh', requireScopedRole('Manager')
       : null;
 
     const bookedChanges = await getBookedInChangesForUserByListings(req.accessContext.effectiveOwnerUserId, [listingId]);
+    const activeReservationKeySet = new Set(
+      (mergedEventsWithConflicts || [])
+        .map((event) => {
+          if (event && event.isReservation === false) {
+            return null;
+          }
+          const checkinDate = normaliseDateKey(event && event.start);
+          const checkoutDate = normaliseDateKey(event && event.end);
+          if (!checkinDate || !checkoutDate || checkoutDate <= checkinDate) {
+            return null;
+          }
+          return checkinDate + '|' + checkoutDate;
+        })
+        .filter(Boolean)
+    );
+    const orphanedBookedChanges = (bookedChanges || []).filter((row) => {
+      const key = String(row.reservation_checkin_date || '') + '|' + String(row.reservation_checkout_date || '');
+      return key && !activeReservationKeySet.has(key);
+    });
+    if (orphanedBookedChanges.length) {
+      await deleteBookedInChangesForUser(
+        req.accessContext.effectiveOwnerUserId,
+        orphanedBookedChanges.map((row) => ({
+          listingId,
+          reservationCheckinDate: row.reservation_checkin_date,
+          reservationCheckoutDate: row.reservation_checkout_date
+        }))
+      );
+    }
+    const activeBookedChanges = (bookedChanges || []).filter((row) => {
+      const key = String(row.reservation_checkin_date || '') + '|' + String(row.reservation_checkout_date || '');
+      return key && activeReservationKeySet.has(key);
+    });
     const cleaners = await getCleanersForUser(req.accessContext.effectiveOwnerUserId);
     const cleanerNameById = new Map(
       (cleaners || []).map((cleaner) => {
@@ -11387,7 +11453,7 @@ app.post('/api/listings/:listingId/events/refresh', requireScopedRole('Manager')
         return [Number(cleaner.id), fullName || 'Unallocated'];
       })
     );
-    const cleaningChanges = (bookedChanges || []).map((row) => ({
+    const cleaningChanges = activeBookedChanges.map((row) => ({
       reservation_checkin_date: row.reservation_checkin_date,
       reservation_checkout_date: row.reservation_checkout_date,
       changeover_date: row.changeover_date,
