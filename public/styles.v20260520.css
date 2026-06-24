@@ -812,6 +812,12 @@ textarea:focus {
   margin-bottom: 0.8rem;
 }
 
+.dashboard-breadcrumb {
+  margin: -0.1rem 0 0.55rem;
+  font-size: 0.8rem;
+  color: #5b6784;
+}
+
 .activity-status {
   font-size: 0.8rem;
   color: #5b6784;
