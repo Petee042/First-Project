@@ -8127,6 +8127,31 @@ app.delete('/api/admin/users/:userId', requireAdminAuth, async (req, res) => {
   }
 });
 
+// POST /api/admin/system/reset-schema
+app.post('/api/admin/system/reset-schema', requireAdminAuth, async (req, res) => {
+  const confirmText = String(req.body && req.body.confirmText || '').trim();
+  if (confirmText !== 'DELETE ALL DATA') {
+    return res.status(400).json({ error: 'Confirmation text mismatch.' });
+  }
+
+  try {
+    await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
+    await pool.query('CREATE SCHEMA public');
+    await pool.query('GRANT ALL ON SCHEMA public TO postgres');
+    await pool.query('GRANT ALL ON SCHEMA public TO public');
+
+    await initializeUserStore();
+
+    return res.json({
+      message: 'Schema reset complete.',
+      warning: 'All previous data has been permanently deleted.'
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to reset database schema.' });
+  }
+});
+
 // GET /api/admin/email/test/config
 app.get('/api/admin/email/test/config', requireAdminAuth, (req, res) => {
   return res.json({

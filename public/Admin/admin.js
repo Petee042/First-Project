@@ -210,3 +210,48 @@ document.getElementById('adminLogoutBtn').addEventListener('click', async () => 
   await fetch('/api/logout', { method: 'POST' });
   window.location.href = '/Admin/index.html';
 });
+
+document.getElementById('resetSchemaBtn').addEventListener('click', async () => {
+  const confirmed = window.confirm(
+    'This will permanently delete all data in the connected database and recreate empty tables. Continue?'
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const typed = window.prompt('Type DELETE ALL DATA to confirm this destructive action.');
+  if (typed !== 'DELETE ALL DATA') {
+    setAdminMessage('Schema reset cancelled. Confirmation text did not match.', true);
+    return;
+  }
+
+  const button = document.getElementById('resetSchemaBtn');
+  button.disabled = true;
+  setAdminMessage('Resetting database schema. Please wait...', false);
+
+  try {
+    const res = await fetch('/api/admin/system/reset-schema', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmText: typed })
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      setAdminAuthenticated(false);
+      setAdminMessage('Admin login required.', true);
+      return;
+    }
+    if (!res.ok) {
+      setAdminMessage(data.error || 'Failed to reset schema.', true);
+      return;
+    }
+
+    setAdminMessage('Database schema reset complete and tables recreated.', false);
+    await loadUsers();
+  } catch (err) {
+    setAdminMessage(err.message || 'Network error resetting schema.', true);
+  } finally {
+    button.disabled = false;
+  }
+});
