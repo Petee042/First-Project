@@ -10335,6 +10335,18 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
     if (error) {
       return res.status(409).json({ error });
     }
+
+    if (!normaliseCleanerId(usualCleanerId)) {
+      const changesToClear = await getBookedInChangesForUserByListings(req.accessContext.effectiveOwnerUserId, [listingId]);
+      if (changesToClear.length) {
+        await deleteBookedInChangesForUser(req.accessContext.effectiveOwnerUserId, changesToClear.map((row) => ({
+          listingId,
+          reservationCheckinDate: row.reservation_checkin_date,
+          reservationCheckoutDate: row.reservation_checkout_date
+        })));
+      }
+    }
+
     return res.json({ listing });
   } catch (err) {
     console.error(err);

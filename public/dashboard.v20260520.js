@@ -1558,7 +1558,7 @@ function renderDashboardActivityRows(dayKeys, activityByDay) {
         entry.listingName || 'Unknown listing'
       ];
       if (entry.changeoverName) {
-        parts.push('Changeover: ' + entry.changeoverName);
+        parts.push('ch: ' + entry.changeoverName);
       }
       if (entry.guestName) {
         parts.push('Guest: ' + entry.guestName);
@@ -1656,17 +1656,10 @@ async function refreshDashboardActivity() {
       return;
     }
 
-    const cleanerName = resolveCleanerNameFromChange(change, currentCleaners);
+    let cleanerName = resolveCleanerNameFromChange(change, currentCleaners);
     if (!cleanerName || cleanerName === 'Unallocated') {
-      return;
+      cleanerName = String(change.default_cleaner_name || '').trim();
     }
-
-    const key = reservationChangeKey(listingId, checkinKey, checkoutKey);
-    if (!cleanerByReservationKey.has(key)) {
-      cleanerByReservationKey.set(key, cleanerName);
-    }
-  });
-
   const dayKeySet = new Set(dayKeys);
   const activityByDay = new Map(dayKeys.map((key) => [key, []]));
   (events || []).forEach((event) => {
