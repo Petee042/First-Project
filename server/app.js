@@ -8136,9 +8136,9 @@ app.post('/api/admin/system/reset-schema', requireAdminAuth, async (req, res) =>
 
   try {
     await pool.query('DROP SCHEMA IF EXISTS public CASCADE');
-    await pool.query('CREATE SCHEMA public');
-    await pool.query('GRANT ALL ON SCHEMA public TO postgres');
-    await pool.query('GRANT ALL ON SCHEMA public TO public');
+    await pool.query('CREATE SCHEMA public AUTHORIZATION CURRENT_USER');
+    await pool.query('GRANT ALL ON SCHEMA public TO CURRENT_USER');
+    await pool.query('GRANT USAGE ON SCHEMA public TO public');
 
     await initializeUserStore();
 
@@ -8148,7 +8148,10 @@ app.post('/api/admin/system/reset-schema', requireAdminAuth, async (req, res) =>
     });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: 'Failed to reset database schema.' });
+    return res.status(500).json({
+      error: 'Failed to reset database schema.',
+      details: err && err.message ? String(err.message) : 'Unknown database error.'
+    });
   }
 });
 
