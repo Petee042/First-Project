@@ -1660,6 +1660,16 @@ async function refreshDashboardActivity() {
     if (!cleanerName || cleanerName === 'Unallocated') {
       cleanerName = String(change.default_cleaner_name || '').trim();
     }
+    if (!cleanerName || cleanerName === 'Unallocated') {
+      return;
+    }
+
+    const key = reservationChangeKey(listingId, checkinKey, checkoutKey);
+    if (!cleanerByReservationKey.has(key)) {
+      cleanerByReservationKey.set(key, cleanerName);
+    }
+  });
+
   const dayKeySet = new Set(dayKeys);
   const activityByDay = new Map(dayKeys.map((key) => [key, []]));
   (events || []).forEach((event) => {
