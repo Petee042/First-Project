@@ -1536,6 +1536,12 @@ function renderDashboardActivityRows(dayKeys, activityByDay) {
     dayRow.appendChild(dayHeader);
 
     const entries = activityByDay.get(dayKey) || [];
+    if (!entries.length) {
+      const emptyRow = document.createElement('div');
+      emptyRow.className = 'activity-empty-row';
+      emptyRow.textContent = 'No activity';
+      dayRow.appendChild(emptyRow);
+    }
     entries.forEach((entry) => {
       const itemRow = document.createElement('div');
       itemRow.className = 'activity-item-row';

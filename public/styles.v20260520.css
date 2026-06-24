@@ -841,6 +841,13 @@ textarea:focus {
   letter-spacing: 0.01em;
 }
 
+.activity-empty-row {
+  padding: 0.45rem 0.55rem;
+  border-top: 1px solid #e4ebfa;
+  font-size: 0.82rem;
+  color: #6b7694;
+}
+
 .activity-item-row {
   display: grid;
   grid-template-columns: auto 1fr;
