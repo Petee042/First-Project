@@ -21,7 +21,9 @@ services:
       - key: SESSION_SECRET
         generateValue: true
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: automaticpeople-alpha-db
+          property: connectionString
       - key: APP_BASE_URL
         sync: false
       - key: POSTMARK_SERVER_TOKEN
@@ -62,7 +64,7 @@ services:
         generateValue: true
       - key: DATABASE_URL
         fromDatabase:
-          name: two-page-website-db
+          name: automaticpeople-db
           property: connectionString
       - key: APP_BASE_URL
         sync: false
@@ -104,7 +106,7 @@ services:
         generateValue: true
       - key: DATABASE_URL
         fromDatabase:
-          name: two-page-website-db
+          name: automaticpeople-db
           property: connectionString
       - key: POSTMARK_SERVER_TOKEN
         sync: false
@@ -122,10 +124,10 @@ services:
         value: GB
 
 databases:
-  - name: automaticpeople-db
+  - name: automaticpeople-alpha-db
     region: oregon
     postgresMajorVersion: "17"
 
-  - name: two-page-website-db
+  - name: automaticpeople-db
     region: oregon
     postgresMajorVersion: "17"

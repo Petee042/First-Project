@@ -3,7 +3,7 @@
 // Usage:
 //   node migrate-db.js <SOURCE_DATABASE_URL> <TARGET_DATABASE_URL>
 //
-// Copies all data from two-page-website-db into automaticpeople-db.
+// Copies all data from a source database into a target database.
 // Safe to re-run: truncates target tables before copying.
 // The target schema is created by the app's own migration on first boot,
 // so run this AFTER automaticpeople-db has been initialised by deploying
