@@ -16,12 +16,12 @@
 
     <!-- Tab bar -->
     <div class="tabs" role="tablist">
-      <button class="tab active" role="tab" aria-selected="true" data-tab="signup">Sign Up</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="login">Log In</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="signup">Sign Up</button>
+      <button class="tab active" role="tab" aria-selected="true" data-tab="login">Log In</button>
     </div>
 
     <!-- Sign-up form -->
-    <section id="signup" class="tab-panel" aria-label="Sign-up form">
+    <section id="signup" class="tab-panel hidden" aria-label="Sign-up form">
       <form id="signupForm" novalidate>
         <div class="field">
           <label for="su-first-name">First Name</label>
@@ -71,7 +71,7 @@
     </section>
 
     <!-- Log-in form -->
-    <section id="login" class="tab-panel hidden" aria-label="Log-in form">
+    <section id="login" class="tab-panel" aria-label="Log-in form">
       <form id="loginForm" novalidate>
         <div class="field">
           <label for="li-email">Email</label>
