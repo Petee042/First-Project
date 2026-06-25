@@ -1875,15 +1875,31 @@ textarea:focus {
 }
 
 .day-bar-slot {
-  min-height: 8px;
+  min-height: 12px;
 }
 
 .day-bar {
-  height: 8px;
+  height: 12px;
   border-radius: 4px;
   background: #cfd5e3;
   position: relative;
   overflow: hidden;
+}
+
+.day-bar-initials {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.52rem;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
+  z-index: 2;
+  pointer-events: none;
 }
 
 .day-bar-empty {

@@ -2831,6 +2831,47 @@ function opsCalendarBuildCleaningBadgesByDate(changes) {
   return byDate;
 }
 
+function opsCalendarBuildReservationCleanerBadgeMap(changes) {
+  const map = new Map();
+
+  (changes || []).forEach((change) => {
+    const listingId = Number(change && (change.listingId || change.listing_id) || 0);
+    const checkinKey = toDateKey(change && change.reservation_checkin_date);
+    const checkoutKey = toDateKey(change && change.reservation_checkout_date);
+    const initials = opsCalendarGetCleanerInitials(change);
+    if (!Number.isInteger(listingId) || listingId <= 0 || !checkinKey || !checkoutKey || !initials) {
+      return;
+    }
+
+    const key = reservationChangeKey(listingId, checkinKey, checkoutKey);
+    if (!map.has(key)) {
+      map.set(key, {
+        initials,
+        color: opsCalendarGetCleanerColor(change),
+        name: opsCalendarGetCleanerDisplayName(change)
+      });
+    }
+  });
+
+  return map;
+}
+
+function opsCalendarGetReservationCleanerBadgeForEvent(event, reservationCleanerBadgeMap) {
+  if (!event || !reservationCleanerBadgeMap || !reservationCleanerBadgeMap.size) {
+    return null;
+  }
+
+  const listingId = Number(event && (event.listingId || event.listing_id) || 0);
+  const checkinKey = toDateKey(event && event.start);
+  const checkoutKey = toDateKey(event && event.end);
+  if (!Number.isInteger(listingId) || listingId <= 0 || !checkinKey || !checkoutKey) {
+    return null;
+  }
+
+  const key = reservationChangeKey(listingId, checkinKey, checkoutKey);
+  return reservationCleanerBadgeMap.get(key) || null;
+}
+
 function opsCalendarRenderCleanerLegend(changes) {
   const legend = document.getElementById('opsCalendarCleanerLegend');
   if (!legend) {
@@ -2884,6 +2925,7 @@ function opsCalendarRenderReservationCalendar(events, changes) {
   const monthStart = opsCalendarMonthStart(opsCalCurrentMonth);
   const dayIndex = opsCalendarBuildDayIndex(events);
   const cleanerBadgesByDate = opsCalendarBuildCleaningBadgesByDate(changes);
+  const reservationCleanerBadgeMap = opsCalendarBuildReservationCleanerBadgeMap(changes);
   const listings = getOpsCalendarListings(events);
 
   monthLabel.textContent = formatMonthLabel(monthStart);
@@ -2995,6 +3037,7 @@ function opsCalendarRenderReservationCalendar(events, changes) {
 
         const bar = document.createElement('div');
         bar.className = 'day-bar';
+        let activeBarEvents = [];
 
         if (!dayEntry) {
           bar.classList.add('day-bar-empty');
@@ -3012,6 +3055,7 @@ function opsCalendarRenderReservationCalendar(events, changes) {
 
         if (hasCheckout && hasCheckin) {
           const transitionEvents = (listingEntry.checkoutEvents || []).concat(listingEntry.checkinEvents || []);
+          activeBarEvents = transitionEvents;
           bar.classList.add('day-transition-bar');
           bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 47%, ' + transparentStop + ' 47% 53%, ' + color + ' 53% 100%)';
           if (shouldDimBar(transitionEvents, listing.name)) {
@@ -3023,6 +3067,7 @@ function opsCalendarRenderReservationCalendar(events, changes) {
           }
         } else if (hasCheckout) {
           const checkoutEvents = listingEntry.checkoutEvents || [];
+          activeBarEvents = checkoutEvents;
           bar.classList.add('day-transition-bar');
           bar.style.background = 'linear-gradient(90deg, ' + color + ' 0 68%, ' + transparentStop + ' 68% 100%)';
           if (shouldDimBar(checkoutEvents, listing.name)) {
@@ -3034,6 +3079,7 @@ function opsCalendarRenderReservationCalendar(events, changes) {
           }
         } else if (hasCheckin) {
           const checkinEvents = listingEntry.checkinEvents || [];
+          activeBarEvents = checkinEvents;
           bar.classList.add('day-transition-bar');
           bar.style.background = 'linear-gradient(90deg, ' + transparentStop + ' 0 32%, ' + color + ' 32% 100%)';
           if (shouldDimBar(checkinEvents, listing.name)) {
@@ -3045,6 +3091,7 @@ function opsCalendarRenderReservationCalendar(events, changes) {
           }
         } else if (hasStay) {
           const stayEvents = listingEntry.stayEvents || [];
+          activeBarEvents = stayEvents;
           bar.style.backgroundColor = color;
           if (shouldDimBar(stayEvents, listing.name)) {
             bar.style.opacity = '0.5';
@@ -3059,6 +3106,18 @@ function opsCalendarRenderReservationCalendar(events, changes) {
 
         if (listingEntry && listingEntry.conflict && !bar.classList.contains('day-bar-empty')) {
           bar.classList.add('day-bar-conflict');
+        }
+
+        if (!bar.classList.contains('day-bar-empty') && hasReservationEligible(activeBarEvents)) {
+          const reservationEvent = (activeBarEvents || []).find((event) => event && event.isReservation !== false) || null;
+          const cleanerBadge = opsCalendarGetReservationCleanerBadgeForEvent(reservationEvent, reservationCleanerBadgeMap);
+          if (cleanerBadge && cleanerBadge.initials) {
+            const initialsEl = document.createElement('span');
+            initialsEl.className = 'day-bar-initials';
+            initialsEl.textContent = cleanerBadge.initials;
+            initialsEl.title = cleanerBadge.name || '';
+            bar.appendChild(initialsEl);
+          }
         }
 
         slot.appendChild(bar);
