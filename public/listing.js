@@ -44,6 +44,9 @@ function getListingFormState() {
     usualCleanerId: String(document.getElementById('listingUsualCleaner').value || ''),
     perNightPrice: String(document.getElementById('listingPerNightPrice').value || ''),
     perStayPrice: String(document.getElementById('listingPerStayPrice').value || ''),
+    maxGuests: String(document.getElementById('listingMaxGuests').value || ''),
+    baseOccupancy: String(document.getElementById('listingBaseOccupancy').value || ''),
+    additionalGuestUpliftPct: String(document.getElementById('listingAdditionalGuestUpliftPct').value || ''),
     emptyExport: String(document.getElementById('listingEmptyExport').checked),
     blockAdvanceDays: String(document.getElementById('listingBlockAdvanceDays').value || ''),
     noChangeDays: getSelectedNoChangeDays().join(',')
@@ -1246,6 +1249,9 @@ async function loadListing() {
   document.getElementById('listingDateBasis').value = listing.date_basis === 'checkin' ? 'checkin' : 'checkout';
   document.getElementById('listingPerNightPrice').value = (listing.per_night_price != null && listing.per_night_price !== '') ? String(listing.per_night_price) : '';
   document.getElementById('listingPerStayPrice').value = (listing.per_stay_price != null && listing.per_stay_price !== '') ? String(listing.per_stay_price) : '';
+  document.getElementById('listingMaxGuests').value = (listing.max_guests != null && listing.max_guests !== '') ? String(listing.max_guests) : '';
+  document.getElementById('listingBaseOccupancy').value = (listing.base_occupancy != null && listing.base_occupancy !== '') ? String(listing.base_occupancy) : '';
+  document.getElementById('listingAdditionalGuestUpliftPct').value = (listing.additional_guest_uplift_pct != null && listing.additional_guest_uplift_pct !== '') ? String(listing.additional_guest_uplift_pct) : '';
   document.getElementById('listingEmptyExport').checked = listing.empty_export === true || listing.empty_export === 'true';
   document.getElementById('listingBlockAdvanceDays').value = (listing.block_advance_days != null && listing.block_advance_days !== '') ? String(listing.block_advance_days) : '';
   setSelectedNoChangeDays(Array.isArray(listing.no_change_days) ? listing.no_change_days : []);
@@ -1585,8 +1591,14 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
   const usualCleanerId = usualCleanerRaw ? Number(usualCleanerRaw) : null;
   const perNightPriceRaw = document.getElementById('listingPerNightPrice').value.trim();
   const perStayPriceRaw = document.getElementById('listingPerStayPrice').value.trim();
+  const maxGuestsRaw = document.getElementById('listingMaxGuests').value.trim();
+  const baseOccupancyRaw = document.getElementById('listingBaseOccupancy').value.trim();
+  const additionalGuestUpliftPctRaw = document.getElementById('listingAdditionalGuestUpliftPct').value.trim();
   const perNightPrice = perNightPriceRaw === '' ? null : Number(perNightPriceRaw);
   const perStayPrice = perStayPriceRaw === '' ? null : Number(perStayPriceRaw);
+  const maxGuests = maxGuestsRaw === '' ? null : Number(maxGuestsRaw);
+  const baseOccupancy = baseOccupancyRaw === '' ? null : Number(baseOccupancyRaw);
+  const additionalGuestUpliftPct = additionalGuestUpliftPctRaw === '' ? null : Number(additionalGuestUpliftPctRaw);
   const emptyExport = document.getElementById('listingEmptyExport').checked;
   const blockAdvanceDaysRaw = document.getElementById('listingBlockAdvanceDays').value.trim();
   const blockAdvanceDays = blockAdvanceDaysRaw !== '' && Number.isInteger(Number(blockAdvanceDaysRaw)) && Number(blockAdvanceDaysRaw) > 0 ? Number(blockAdvanceDaysRaw) : null;
@@ -1614,6 +1626,26 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     return;
   }
 
+  if (maxGuestsRaw !== '' && (!Number.isInteger(maxGuests) || maxGuests <= 0)) {
+    setListingMessage('Maximum Number Of Guests must be a whole number greater than zero.', true);
+    return;
+  }
+
+  if (baseOccupancyRaw !== '' && (!Number.isInteger(baseOccupancy) || baseOccupancy < 0)) {
+    setListingMessage('Base Occupancy must be a whole number zero or greater.', true);
+    return;
+  }
+
+  if (baseOccupancy !== null && maxGuests !== null && baseOccupancy > maxGuests) {
+    setListingMessage('Base Occupancy cannot be greater than Maximum Number Of Guests.', true);
+    return;
+  }
+
+  if (additionalGuestUpliftPctRaw !== '' && (!Number.isFinite(additionalGuestUpliftPct) || additionalGuestUpliftPct < 0)) {
+    setListingMessage('Percentage Price Uplift per Additional Guest must be zero or greater.', true);
+    return;
+  }
+
   if (hasTooManyNoChangeWeekdays(noChangeDays)) {
     setListingMessage('No Changes On can contain at most 6 weekdays.', true);
     return;
@@ -1624,7 +1656,20 @@ document.getElementById('renameListingForm').addEventListener('submit', async (e
     const res = await fetch(shouldCreate ? '/api/listings' : ('/api/listings/' + listingId), {
       method: shouldCreate ? 'POST' : 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, propertyId, dateBasis, usualCleanerId, perNightPrice, perStayPrice, emptyExport, blockAdvanceDays, noChangeDays })
+      body: JSON.stringify({
+        name,
+        propertyId,
+        dateBasis,
+        usualCleanerId,
+        perNightPrice,
+        perStayPrice,
+        maxGuests,
+        baseOccupancy,
+        additionalGuestUpliftPct,
+        emptyExport,
+        blockAdvanceDays,
+        noChangeDays
+      })
     });
     const data = await res.json();
 

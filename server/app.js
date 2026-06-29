@@ -442,6 +442,9 @@ async function initializeUserStore() {
       name TEXT NOT NULL,
       per_night_price NUMERIC(12,2),
       per_stay_price NUMERIC(12,2),
+      max_guests INTEGER,
+      base_occupancy INTEGER,
+      additional_guest_uplift_pct NUMERIC(6,2),
       created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE (user_id, name)
     )
@@ -1145,6 +1148,21 @@ async function initializeUserStore() {
   await pool.query(`
     ALTER TABLE listings
     ADD COLUMN IF NOT EXISTS per_stay_price NUMERIC(12,2)
+  `);
+
+  await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS max_guests INTEGER
+  `);
+
+  await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS base_occupancy INTEGER
+  `);
+
+  await pool.query(`
+    ALTER TABLE listings
+    ADD COLUMN IF NOT EXISTS additional_guest_uplift_pct NUMERIC(6,2)
   `);
 
   await pool.query(`
@@ -2199,6 +2217,19 @@ function normaliseListingPrice(value) {
   }
 
   return { value: Math.round(numberValue * 100) / 100 };
+}
+
+function normaliseListingWholeNumber(value, fieldName, minValue) {
+  if (value === null || value === undefined || value === '') {
+    return { value: null };
+  }
+
+  const numberValue = Number(value);
+  if (!Number.isInteger(numberValue) || numberValue < minValue) {
+    return { error: fieldName + ' must be a whole number ' + (minValue > 0 ? 'greater than zero.' : 'zero or greater.') };
+  }
+
+  return { value: numberValue };
 }
 
 function isValidEmailAddress(value) {
@@ -6014,7 +6045,7 @@ async function getListingsForUser(userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.no_change_days, l.per_night_price, l.per_stay_price, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.no_change_days, l.per_night_price, l.per_stay_price, l.max_guests, l.base_occupancy, l.additional_guest_uplift_pct, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.user_id = $1
@@ -6032,7 +6063,7 @@ async function getListingByIdForUser(listingId, userId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.client_account_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.no_change_days, l.per_night_price, l.per_stay_price, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.client_account_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.no_change_days, l.per_night_price, l.per_stay_price, l.max_guests, l.base_occupancy, l.additional_guest_uplift_pct, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1 AND l.user_id = $2
@@ -6064,7 +6095,7 @@ async function getListingById(listingId) {
 
   const result = await pool.query(
     `
-      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.no_change_days, l.per_night_price, l.per_stay_price, l.created_at, p.name AS property_name
+      SELECT l.id, l.user_id, l.name, l.property_id, l.date_basis, l.usual_cleaner_id, l.empty_export, l.block_advance_days, l.no_change_days, l.per_night_price, l.per_stay_price, l.max_guests, l.base_occupancy, l.additional_guest_uplift_pct, l.created_at, p.name AS property_name
       FROM listings l
       LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.id = $1
@@ -6148,7 +6179,7 @@ function isValidIcsAccessToken(listing, token) {
   return timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
-async function createListingForUser(userId, name, propertyId, dateBasis, usualCleanerId, noChangeDays, perNightPrice, perStayPrice) {
+async function createListingForUser(userId, name, propertyId, dateBasis, usualCleanerId, noChangeDays, perNightPrice, perStayPrice, maxGuests, baseOccupancy, additionalGuestUpliftPct) {
   
 
   try {
@@ -6172,9 +6203,28 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
       return { error: perStayPriceNormalised.error };
     }
 
+    const maxGuestsNormalised = normaliseListingWholeNumber(maxGuests, 'Maximum Number Of Guests', 1);
+    if (maxGuestsNormalised.error) {
+      return { error: maxGuestsNormalised.error };
+    }
+
+    const baseOccupancyNormalised = normaliseListingWholeNumber(baseOccupancy, 'Base Occupancy', 0);
+    if (baseOccupancyNormalised.error) {
+      return { error: baseOccupancyNormalised.error };
+    }
+
+    if (maxGuestsNormalised.value !== null && baseOccupancyNormalised.value !== null && baseOccupancyNormalised.value > maxGuestsNormalised.value) {
+      return { error: 'Base Occupancy cannot be greater than Maximum Number Of Guests.' };
+    }
+
+    const additionalGuestUpliftPctNormalised = normaliseListingPrice(additionalGuestUpliftPct);
+    if (additionalGuestUpliftPctNormalised.error) {
+      return { error: 'Percentage Price Uplift per Additional Guest must be zero or greater.' };
+    }
+
     const result = await pool.query(
       `
-        INSERT INTO listings (user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, no_change_days, per_night_price, per_stay_price)
+        INSERT INTO listings (user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, no_change_days, per_night_price, per_stay_price, max_guests, base_occupancy, additional_guest_uplift_pct)
         VALUES (
           $1,
           (SELECT client_account_id FROM properties WHERE id = $3),
@@ -6184,9 +6234,12 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
           $5,
           $6,
           $7,
-          $8
+          $8,
+          $9,
+          $10,
+          $11
         )
-        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, no_change_days, per_night_price, per_stay_price, created_at
+        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, no_change_days, per_night_price, per_stay_price, max_guests, base_occupancy, additional_guest_uplift_pct, created_at
       `,
       [
         userId,
@@ -6196,7 +6249,10 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
         normaliseCleanerId(usualCleanerId),
         noChangeDaysNormalised.text,
         perNightPriceNormalised.value,
-        perStayPriceNormalised.value
+        perStayPriceNormalised.value,
+        maxGuestsNormalised.value,
+        baseOccupancyNormalised.value,
+        additionalGuestUpliftPctNormalised.value
       ]
     );
     result.rows[0].property_name = property.name;
@@ -6209,7 +6265,7 @@ async function createListingForUser(userId, name, propertyId, dateBasis, usualCl
   }
 }
 
-async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId, emptyExport, blockAdvanceDays, noChangeDays, perNightPrice, perStayPrice) {
+async function updateListingForUser(listingId, userId, name, propertyId, dateBasis, usualCleanerId, emptyExport, blockAdvanceDays, noChangeDays, perNightPrice, perStayPrice, maxGuests, baseOccupancy, additionalGuestUpliftPct) {
   
 
   try {
@@ -6231,6 +6287,25 @@ async function updateListingForUser(listingId, userId, name, propertyId, dateBas
     const perStayPriceNormalised = normaliseListingPrice(perStayPrice);
     if (perStayPriceNormalised.error) {
       return { error: perStayPriceNormalised.error };
+    }
+
+    const maxGuestsNormalised = normaliseListingWholeNumber(maxGuests, 'Maximum Number Of Guests', 1);
+    if (maxGuestsNormalised.error) {
+      return { error: maxGuestsNormalised.error };
+    }
+
+    const baseOccupancyNormalised = normaliseListingWholeNumber(baseOccupancy, 'Base Occupancy', 0);
+    if (baseOccupancyNormalised.error) {
+      return { error: baseOccupancyNormalised.error };
+    }
+
+    if (maxGuestsNormalised.value !== null && baseOccupancyNormalised.value !== null && baseOccupancyNormalised.value > maxGuestsNormalised.value) {
+      return { error: 'Base Occupancy cannot be greater than Maximum Number Of Guests.' };
+    }
+
+    const additionalGuestUpliftPctNormalised = normaliseListingPrice(additionalGuestUpliftPct);
+    if (additionalGuestUpliftPctNormalised.error) {
+      return { error: 'Percentage Price Uplift per Additional Guest must be zero or greater.' };
     }
 
     const result = await pool.query(
@@ -6245,9 +6320,12 @@ async function updateListingForUser(listingId, userId, name, propertyId, dateBas
             block_advance_days = $8,
             no_change_days = $9,
             per_night_price = $10,
-            per_stay_price = $11
+            per_stay_price = $11,
+            max_guests = $12,
+            base_occupancy = $13,
+            additional_guest_uplift_pct = $14
         WHERE id = $5 AND user_id = $6
-        RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, empty_export, block_advance_days, no_change_days, per_night_price, per_stay_price, created_at
+          RETURNING id, user_id, client_account_id, name, property_id, date_basis, usual_cleaner_id, empty_export, block_advance_days, no_change_days, per_night_price, per_stay_price, max_guests, base_occupancy, additional_guest_uplift_pct, created_at
       `,
       [
         name,
@@ -6260,7 +6338,10 @@ async function updateListingForUser(listingId, userId, name, propertyId, dateBas
         (blockAdvanceDays !== null && blockAdvanceDays !== undefined && Number.isInteger(Number(blockAdvanceDays)) && Number(blockAdvanceDays) > 0) ? Number(blockAdvanceDays) : null,
         noChangeDaysNormalised.text,
         perNightPriceNormalised.value,
-        perStayPriceNormalised.value
+        perStayPriceNormalised.value,
+        maxGuestsNormalised.value,
+        baseOccupancyNormalised.value,
+        additionalGuestUpliftPctNormalised.value
       ]
     );
 
@@ -10747,6 +10828,9 @@ app.post('/api/listings', requireScopedRole('Manager'), async (req, res) => {
   const noChangeDays = req.body.noChangeDays;
   const perNightPrice = req.body.perNightPrice;
   const perStayPrice = req.body.perStayPrice;
+  const maxGuests = req.body.maxGuests;
+  const baseOccupancy = req.body.baseOccupancy;
+  const additionalGuestUpliftPct = req.body.additionalGuestUpliftPct;
   const noChangeValidation = normaliseNoChangeDaysForStore(noChangeDays);
   if (!name) {
     return res.status(400).json({ error: 'Listing name is required.' });
@@ -10771,7 +10855,10 @@ app.post('/api/listings', requireScopedRole('Manager'), async (req, res) => {
       usualCleanerId,
       noChangeValidation.days,
       perNightPrice,
-      perStayPrice
+      perStayPrice,
+      maxGuests,
+      baseOccupancy,
+      additionalGuestUpliftPct
     );
     if (error) {
       return res.status(error === 'Property not found.' ? 404 : 409).json({ error });
@@ -10825,6 +10912,9 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
   const noChangeDays = req.body.noChangeDays;
   const perNightPrice = req.body.perNightPrice;
   const perStayPrice = req.body.perStayPrice;
+  const maxGuests = req.body.maxGuests;
+  const baseOccupancy = req.body.baseOccupancy;
+  const additionalGuestUpliftPct = req.body.additionalGuestUpliftPct;
   const noChangeValidation = normaliseNoChangeDaysForStore(noChangeDays);
 
   if (!Number.isInteger(listingId) || listingId <= 0) {
@@ -10861,7 +10951,10 @@ app.put('/api/listings/:listingId', requireScopedRole('Manager'), async (req, re
       blockAdvanceDays,
       noChangeValidation.days,
       perNightPrice,
-      perStayPrice
+      perStayPrice,
+      maxGuests,
+      baseOccupancy,
+      additionalGuestUpliftPct
     );
     if (error === 'Listing not found.') {
       return res.status(404).json({ error });
