@@ -408,7 +408,9 @@ async function copyTextToClipboard(text) {
 function buildReservationEnquiryLandingPublicUrl(row) {
   const params = new URLSearchParams();
   const slug = String(row && row.public_slug || '').trim();
-  const preferredListingId = Number(row && row.preferred_listing_id ? row.preferred_listing_id : 0);
+  const selectedListingIds = Array.isArray(row && row.selected_listing_ids) ? row.selected_listing_ids : [];
+  const fallbackListingId = selectedListingIds.length ? Number(selectedListingIds[0]) : 0;
+  const preferredListingId = Number(row && row.preferred_listing_id ? row.preferred_listing_id : fallbackListingId);
 
   if (slug) {
     params.set('landingPage', slug);

@@ -31,20 +31,68 @@
         <h3>Landing Page Configuration</h3>
         <form id="landingPageForm" novalidate>
           <div class="calendar-source-row">
-            <label for="landingPageName">Name</label>
+            <label for="landingPageName">Page Title</label>
             <input id="landingPageName" type="text" maxlength="160" required />
           </div>
 
-          <div class="calendar-source-row">
-            <label for="landingPageSlug">Public Slug</label>
-            <input id="landingPageSlug" type="text" maxlength="120" placeholder="e.g. summer-family-offer" required />
+          <div class="calendar-source-row resource-editor-row">
+            <label>Description Text</label>
+            <div class="resource-editor-wrap">
+              <div class="resource-editor-toolbar" role="toolbar" aria-label="Description text formatting toolbar">
+                <button type="button" class="btn secondary editor-btn landing-editor-btn" data-target="landingDescriptionEditor" data-command="bold"><strong>B</strong></button>
+                <button type="button" class="btn secondary editor-btn landing-editor-btn" data-target="landingDescriptionEditor" data-command="italic"><em>I</em></button>
+                <button type="button" class="btn secondary editor-btn landing-editor-btn" data-target="landingDescriptionEditor" data-command="underline"><span class="editor-underline">U</span></button>
+                <button type="button" class="btn secondary editor-btn landing-editor-btn" data-target="landingDescriptionEditor" data-command="insertUnorderedList">Bullets</button>
+                <button type="button" class="btn secondary editor-btn landing-editor-btn" data-target="landingDescriptionEditor" data-command="insertOrderedList">Numbers</button>
+              </div>
+              <div id="landingDescriptionEditor" class="resource-editor" contenteditable="true" spellcheck="true" aria-label="Description text editor"></div>
+            </div>
+          </div>
+
+          <div class="calendar-source-row resource-editor-row">
+            <label>Notes Text</label>
+            <div class="resource-editor-wrap">
+              <div class="resource-editor-toolbar" role="toolbar" aria-label="Notes text formatting toolbar">
+                <button type="button" class="btn secondary editor-btn landing-editor-btn" data-target="landingNotesEditor" data-command="bold"><strong>B</strong></button>
+                <button type="button" class="btn secondary editor-btn landing-editor-btn" data-target="landingNotesEditor" data-command="italic"><em>I</em></button>
+                <button type="button" class="btn secondary editor-btn landing-editor-btn" data-target="landingNotesEditor" data-command="underline"><span class="editor-underline">U</span></button>
+                <button type="button" class="btn secondary editor-btn landing-editor-btn" data-target="landingNotesEditor" data-command="insertUnorderedList">Bullets</button>
+                <button type="button" class="btn secondary editor-btn landing-editor-btn" data-target="landingNotesEditor" data-command="insertOrderedList">Numbers</button>
+              </div>
+              <div id="landingNotesEditor" class="resource-editor" contenteditable="true" spellcheck="true" aria-label="Notes text editor"></div>
+            </div>
           </div>
 
           <div class="calendar-source-row">
-            <label for="landingPagePreferredListing">Preferred Listing</label>
-            <select id="landingPagePreferredListing">
-              <option value="">None</option>
-            </select>
+            <label>Listings</label>
+            <div id="landingListingsSelection" class="landing-listing-selection" aria-label="Listings selection"></div>
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="landingPageDiscount">Percentage Discount</label>
+            <input id="landingPageDiscount" type="number" min="0" max="100" step="0.01" inputmode="decimal" required />
+          </div>
+
+          <div class="calendar-source-row resource-payment-row">
+            <label>Payment Methods Accepted</label>
+            <div class="resource-payment-options" aria-label="Accepted payment methods">
+              <label class="resource-payment-option" for="landingPaymentBankTransfer">
+                <input id="landingPaymentBankTransfer" type="checkbox" />
+                <span>Bank Transfer</span>
+              </label>
+              <label class="resource-payment-option" for="landingPaymentOnline">
+                <input id="landingPaymentOnline" type="checkbox" />
+                <span>Online</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="calendar-source-row resource-booking-url-row">
+            <label for="landingPagePublicUrl">Public URL</label>
+            <div class="resource-booking-url-wrap">
+              <input id="landingPagePublicUrl" type="text" readonly />
+              <button type="button" id="copyLandingPagePublicUrlBtn" class="btn secondary action-copy" aria-label="Copy public URL">Copy</button>
+            </div>
           </div>
 
           <div class="calendar-source-row checkbox-row">

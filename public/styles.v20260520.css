@@ -1090,6 +1090,39 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.landing-listing-selection {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.landing-listing-row {
+  border: 1px solid #e4e9f6;
+  border-radius: 10px;
+  padding: 0.55rem;
+  background: #fff;
+}
+
+.landing-listing-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.92rem;
+  color: #1f2d4f;
+}
+
+.landing-listing-url-row {
+  margin-top: 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.landing-listing-url-row input:disabled {
+  opacity: 0.65;
+}
+
 .config-item-empty {
   padding: 0.52rem 0.56rem;
   color: #5e6a86;

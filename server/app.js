@@ -840,6 +840,42 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    ALTER TABLE reservation_enquiry_landing_pages
+    ADD COLUMN IF NOT EXISTS description_html TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE reservation_enquiry_landing_pages
+    ADD COLUMN IF NOT EXISTS notes_html TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE reservation_enquiry_landing_pages
+    ADD COLUMN IF NOT EXISTS listing_filters_json TEXT NOT NULL DEFAULT '[]'
+  `);
+
+  await pool.query(`
+    ALTER TABLE reservation_enquiry_landing_pages
+    ADD COLUMN IF NOT EXISTS percentage_discount NUMERIC(5,2) NOT NULL DEFAULT 0
+  `);
+
+  await pool.query(`
+    ALTER TABLE reservation_enquiry_landing_pages
+    ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'bank_transfer'
+  `);
+
+  await pool.query(`
+    UPDATE reservation_enquiry_landing_pages
+    SET listing_filters_json = CASE
+      WHEN preferred_listing_id IS NOT NULL THEN json_build_array(
+        json_build_object('listingId', preferred_listing_id, 'listingUrl', '')
+      )::text
+      ELSE '[]'
+    END
+    WHERE COALESCE(TRIM(listing_filters_json), '') = ''
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS shared_resource_reservations (
       id BIGSERIAL PRIMARY KEY,
       user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1832,6 +1868,78 @@ function normaliseLandingPagePreferredListingId(value) {
     return null;
   }
   return parsed;
+}
+
+function normaliseLandingPageListingUrl(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+  if (!/^https?:\/\//i.test(text)) {
+    return null;
+  }
+  return text.slice(0, 1200);
+}
+
+function normaliseLandingPagePercentageDiscount(value) {
+  if (value === null || value === undefined || value === '') {
+    return 0;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    return null;
+  }
+  return Number(parsed.toFixed(2));
+}
+
+function normaliseLandingPagePaymentMethod(value) {
+  const method = String(value || '').trim().toLowerCase();
+  if (method === 'bank_transfer' || method === 'online') {
+    return method;
+  }
+  return null;
+}
+
+function parseLandingPageListingFilters(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set();
+  const rows = [];
+
+  value.forEach((item) => {
+    const listingId = Number(item && item.listingId);
+    if (!Number.isInteger(listingId) || listingId <= 0 || seen.has(listingId)) {
+      return;
+    }
+
+    const listingUrl = normaliseLandingPageListingUrl(item && item.listingUrl);
+    if (listingUrl === null) {
+      return;
+    }
+
+    seen.add(listingId);
+    rows.push({
+      listingId,
+      listingUrl: listingUrl || ''
+    });
+  });
+
+  return rows;
+}
+
+function parseLandingPageListingFiltersJson(value) {
+  if (Array.isArray(value)) {
+    return parseLandingPageListingFilters(value);
+  }
+
+  try {
+    const parsed = JSON.parse(String(value || '[]'));
+    return parseLandingPageListingFilters(parsed);
+  } catch {
+    return [];
+  }
 }
 
 function normaliseSharedResourceReservationEmail(value) {
@@ -4301,12 +4409,25 @@ async function getSharedResourceByIdPublic(resourceId) {
 }
 
 function mapReservationEnquiryLandingPageRow(row) {
+  const listingFilters = parseLandingPageListingFiltersJson(row && row.listing_filters_json);
+  const selectedListingIds = listingFilters.map((item) => Number(item.listingId)).filter((id) => Number.isInteger(id) && id > 0);
+  const paymentMethod = normaliseLandingPagePaymentMethod(row && row.payment_method) || 'bank_transfer';
   return {
     id: Number(row && row.id || 0),
     name: String(row && row.name || ''),
     public_slug: String(row && row.public_slug || ''),
     preferred_listing_id: row && row.preferred_listing_id ? Number(row.preferred_listing_id) : null,
     preferred_listing_name: String(row && row.preferred_listing_name || ''),
+    description_html: sanitiseRichTextHtml(row && row.description_html || ''),
+    notes_html: sanitiseRichTextHtml(row && row.notes_html || ''),
+    listing_filters: listingFilters,
+    selected_listing_ids: selectedListingIds,
+    percentage_discount: row && row.percentage_discount !== null && row.percentage_discount !== undefined
+      ? Number(row.percentage_discount)
+      : 0,
+    payment_method: paymentMethod,
+    payment_bank_transfer: paymentMethod === 'bank_transfer',
+    payment_online: paymentMethod === 'online',
     is_active: row && row.is_active === true,
     created_at: row && row.created_at,
     updated_at: row && row.updated_at
@@ -4322,6 +4443,11 @@ async function getReservationEnquiryLandingPagesForUser(userId, clientAccountId)
              relp.name,
              relp.public_slug,
              relp.preferred_listing_id,
+              relp.description_html,
+              relp.notes_html,
+              relp.listing_filters_json,
+              relp.percentage_discount,
+              relp.payment_method,
              relp.is_active,
              relp.created_at,
              relp.updated_at,
@@ -4346,6 +4472,11 @@ async function getReservationEnquiryLandingPageByIdForUser(id, userId, clientAcc
              relp.name,
              relp.public_slug,
              relp.preferred_listing_id,
+              relp.description_html,
+              relp.notes_html,
+              relp.listing_filters_json,
+              relp.percentage_discount,
+              relp.payment_method,
              relp.is_active,
              relp.created_at,
              relp.updated_at,
@@ -4362,20 +4493,70 @@ async function getReservationEnquiryLandingPageByIdForUser(id, userId, clientAcc
   return result.rows[0] ? mapReservationEnquiryLandingPageRow(result.rows[0]) : null;
 }
 
+async function ensureUniqueReservationEnquiryLandingPageSlug(clientAccountId, desiredSlug, excludeId) {
+  const baseSlug = slugifyLandingPageName(desiredSlug);
+  if (!baseSlug) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT public_slug
+      FROM reservation_enquiry_landing_pages
+      WHERE client_account_id = $1
+        AND ($2::BIGINT IS NULL OR id <> $2)
+    `,
+    [Number(clientAccountId), excludeId ? Number(excludeId) : null]
+  );
+
+  const existing = new Set(result.rows.map((row) => String(row.public_slug || '').trim().toLowerCase()).filter(Boolean));
+  if (!existing.has(baseSlug)) {
+    return baseSlug;
+  }
+
+  for (let i = 2; i <= 9999; i += 1) {
+    const candidate = (baseSlug + '-' + String(i)).slice(0, 120);
+    if (!existing.has(candidate)) {
+      return candidate;
+    }
+  }
+
+  return (baseSlug + '-' + String(Date.now())).slice(0, 120);
+}
+
 async function createReservationEnquiryLandingPageForUser(input) {
   const name = normaliseLandingPageName(input && input.name);
-  const slug = normaliseLandingPageSlug(input && input.publicSlug, name);
-  const preferredListingId = normaliseLandingPagePreferredListingId(input && input.preferredListingId);
+  const requestedSlug = normaliseLandingPageSlug(input && input.publicSlug, name);
+  const listingFilters = parseLandingPageListingFilters(input && input.listingFilters);
+  const preferredListingId = listingFilters[0] ? Number(listingFilters[0].listingId) : null;
+  const descriptionHtml = sanitiseRichTextHtml(input && input.descriptionHtml);
+  const notesHtml = sanitiseRichTextHtml(input && input.notesHtml);
+  const percentageDiscount = normaliseLandingPagePercentageDiscount(input && input.percentageDiscount);
+  const paymentMethod = normaliseLandingPagePaymentMethod(input && input.paymentMethod);
   const isActive = !(input && input.isActive === false);
 
   if (!name) {
     return { error: 'Landing page name is required.' };
   }
-  if (!slug) {
+  if (!requestedSlug) {
     return { error: 'Landing page slug is required.' };
+  }
+  if (!listingFilters.length) {
+    return { error: 'Select at least one listing for this landing page.' };
+  }
+  if (percentageDiscount === null) {
+    return { error: 'Percentage discount must be between 0 and 100.' };
+  }
+  if (!paymentMethod) {
+    return { error: 'Choose one payment method: Bank Transfer or Online.' };
   }
 
   try {
+    const slug = await ensureUniqueReservationEnquiryLandingPageSlug(input.clientAccountId, requestedSlug, null);
+    if (!slug) {
+      return { error: 'Landing page slug is required.' };
+    }
+
     const result = await pool.query(
       `
         INSERT INTO reservation_enquiry_landing_pages (
@@ -4384,16 +4565,26 @@ async function createReservationEnquiryLandingPageForUser(input) {
           name,
           public_slug,
           preferred_listing_id,
+          description_html,
+          notes_html,
+          listing_filters_json,
+          percentage_discount,
+          payment_method,
           is_active,
           updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)
         RETURNING id,
                   user_id,
                   client_account_id,
                   name,
                   public_slug,
                   preferred_listing_id,
+                  description_html,
+                  notes_html,
+                  listing_filters_json,
+                  percentage_discount,
+                  payment_method,
                   is_active,
                   created_at,
                   updated_at
@@ -4404,49 +4595,80 @@ async function createReservationEnquiryLandingPageForUser(input) {
         name,
         slug,
         preferredListingId,
+        descriptionHtml,
+        notesHtml,
+        JSON.stringify(listingFilters),
+        percentageDiscount,
+        paymentMethod,
         isActive
       ]
     );
     return { landingPage: mapReservationEnquiryLandingPageRow(result.rows[0]) };
   } catch (err) {
-    if (err && err.code === '23505') {
-      return { error: 'A landing page with this slug already exists for the active client account.' };
-    }
     throw err;
   }
 }
 
 async function updateReservationEnquiryLandingPageForUser(input) {
   const name = normaliseLandingPageName(input && input.name);
-  const slug = normaliseLandingPageSlug(input && input.publicSlug, name);
-  const preferredListingId = normaliseLandingPagePreferredListingId(input && input.preferredListingId);
+  const requestedSlug = normaliseLandingPageSlug(input && input.publicSlug, name);
+  const listingFilters = parseLandingPageListingFilters(input && input.listingFilters);
+  const preferredListingId = listingFilters[0] ? Number(listingFilters[0].listingId) : null;
+  const descriptionHtml = sanitiseRichTextHtml(input && input.descriptionHtml);
+  const notesHtml = sanitiseRichTextHtml(input && input.notesHtml);
+  const percentageDiscount = normaliseLandingPagePercentageDiscount(input && input.percentageDiscount);
+  const paymentMethod = normaliseLandingPagePaymentMethod(input && input.paymentMethod);
   const isActive = !(input && input.isActive === false);
 
   if (!name) {
     return { error: 'Landing page name is required.' };
   }
-  if (!slug) {
+  if (!requestedSlug) {
     return { error: 'Landing page slug is required.' };
+  }
+  if (!listingFilters.length) {
+    return { error: 'Select at least one listing for this landing page.' };
+  }
+  if (percentageDiscount === null) {
+    return { error: 'Percentage discount must be between 0 and 100.' };
+  }
+  if (!paymentMethod) {
+    return { error: 'Choose one payment method: Bank Transfer or Online.' };
   }
 
   try {
+    const slug = await ensureUniqueReservationEnquiryLandingPageSlug(input.clientAccountId, requestedSlug, input.id);
+    if (!slug) {
+      return { error: 'Landing page slug is required.' };
+    }
+
     const result = await pool.query(
       `
         UPDATE reservation_enquiry_landing_pages
         SET name = $1,
             public_slug = $2,
             preferred_listing_id = $3,
-            is_active = $4,
+            description_html = $4,
+            notes_html = $5,
+            listing_filters_json = $6,
+            percentage_discount = $7,
+            payment_method = $8,
+            is_active = $9,
             updated_at = CURRENT_TIMESTAMP
-        WHERE id = $5
-          AND user_id = $6
-          AND client_account_id = $7
+        WHERE id = $10
+          AND user_id = $11
+          AND client_account_id = $12
         RETURNING id,
                   user_id,
                   client_account_id,
                   name,
                   public_slug,
                   preferred_listing_id,
+                  description_html,
+                  notes_html,
+                  listing_filters_json,
+                  percentage_discount,
+                  payment_method,
                   is_active,
                   created_at,
                   updated_at
@@ -4455,6 +4677,11 @@ async function updateReservationEnquiryLandingPageForUser(input) {
         name,
         slug,
         preferredListingId,
+        descriptionHtml,
+        notesHtml,
+        JSON.stringify(listingFilters),
+        percentageDiscount,
+        paymentMethod,
         isActive,
         Number(input.id),
         Number(input.userId),
@@ -4466,9 +4693,6 @@ async function updateReservationEnquiryLandingPageForUser(input) {
     }
     return { landingPage: mapReservationEnquiryLandingPageRow(result.rows[0]) };
   } catch (err) {
-    if (err && err.code === '23505') {
-      return { error: 'A landing page with this slug already exists for the active client account.' };
-    }
     throw err;
   }
 }
@@ -4493,6 +4717,13 @@ async function deleteReservationEnquiryLandingPageForUser(id, userId, clientAcco
 function isReservationEnquiryLandingPageAllowedByScope(req, row) {
   if (!hasManagerAssignmentScope(req)) {
     return true;
+  }
+
+  const selectedListingIds = Array.isArray(row && row.selected_listing_ids)
+    ? row.selected_listing_ids
+    : [];
+  if (selectedListingIds.length) {
+    return selectedListingIds.some((listingId) => req.accessContext.assignmentScope.listingIdSet.has(Number(listingId)));
   }
 
   const listingId = Number(row && row.preferred_listing_id || 0);
@@ -10217,14 +10448,36 @@ app.get('/api/reservation-enquiry-landing-pages/:id', requireScopedRole('Staff')
 // POST /api/reservation-enquiry-landing-pages — create landing page
 app.post('/api/reservation-enquiry-landing-pages', requireScopedRole('Manager'), async (req, res) => {
   try {
-    const preferredListingId = normaliseLandingPagePreferredListingId(req.body.preferredListingId);
-    if (preferredListingId) {
-      const listing = await getListingByIdForUser(preferredListingId, req.accessContext.effectiveOwnerUserId);
-      if (!listing || !isListingAllowedByScope(req, listing)) {
-        return res.status(403).json({ error: 'You are not allowed to use the selected preferred listing.' });
+    const rawListingFilters = Array.isArray(req.body.listingFilters) ? req.body.listingFilters : [];
+    if (!rawListingFilters.length) {
+      return res.status(400).json({ error: 'Select at least one listing.' });
+    }
+
+    const listings = await getListingsForUser(req.accessContext.effectiveOwnerUserId);
+    const listingMap = new Map(
+      listings.map((listing) => [Number(listing.id), listing])
+    );
+
+    const seen = new Set();
+    const listingFilters = [];
+    for (const row of rawListingFilters) {
+      const listingId = Number(row && row.listingId);
+      if (!Number.isInteger(listingId) || listingId <= 0 || seen.has(listingId)) {
+        return res.status(400).json({ error: 'Selected listings are invalid.' });
       }
-    } else if (hasManagerAssignmentScope(req)) {
-      return res.status(403).json({ error: 'Preferred listing is required for your manager assignment scope.' });
+      seen.add(listingId);
+
+      const listing = listingMap.get(listingId);
+      if (!listing || !isListingAllowedByScope(req, listing)) {
+        return res.status(403).json({ error: 'You are not allowed to use one or more selected listings.' });
+      }
+
+      const listingUrl = normaliseLandingPageListingUrl(row && row.listingUrl);
+      if (listingUrl === null) {
+        return res.status(400).json({ error: 'Listing URL must start with http:// or https:// when provided.' });
+      }
+
+      listingFilters.push({ listingId, listingUrl: listingUrl || '' });
     }
 
     const result = await createReservationEnquiryLandingPageForUser({
@@ -10232,7 +10485,11 @@ app.post('/api/reservation-enquiry-landing-pages', requireScopedRole('Manager'),
       clientAccountId: req.accessContext.activeClientAccountId,
       name: req.body.name,
       publicSlug: req.body.publicSlug,
-      preferredListingId,
+      descriptionHtml: req.body.descriptionHtml,
+      notesHtml: req.body.notesHtml,
+      listingFilters,
+      percentageDiscount: req.body.percentageDiscount,
+      paymentMethod: req.body.paymentMethod,
       isActive: req.body.isActive !== false
     });
     if (result.error) {
@@ -10262,14 +10519,36 @@ app.put('/api/reservation-enquiry-landing-pages/:id', requireScopedRole('Manager
       return res.status(404).json({ error: 'Landing page not found.' });
     }
 
-    const preferredListingId = normaliseLandingPagePreferredListingId(req.body.preferredListingId);
-    if (preferredListingId) {
-      const listing = await getListingByIdForUser(preferredListingId, req.accessContext.effectiveOwnerUserId);
-      if (!listing || !isListingAllowedByScope(req, listing)) {
-        return res.status(403).json({ error: 'You are not allowed to use the selected preferred listing.' });
+    const rawListingFilters = Array.isArray(req.body.listingFilters) ? req.body.listingFilters : [];
+    if (!rawListingFilters.length) {
+      return res.status(400).json({ error: 'Select at least one listing.' });
+    }
+
+    const listings = await getListingsForUser(req.accessContext.effectiveOwnerUserId);
+    const listingMap = new Map(
+      listings.map((listing) => [Number(listing.id), listing])
+    );
+
+    const seen = new Set();
+    const listingFilters = [];
+    for (const row of rawListingFilters) {
+      const listingId = Number(row && row.listingId);
+      if (!Number.isInteger(listingId) || listingId <= 0 || seen.has(listingId)) {
+        return res.status(400).json({ error: 'Selected listings are invalid.' });
       }
-    } else if (hasManagerAssignmentScope(req)) {
-      return res.status(403).json({ error: 'Preferred listing is required for your manager assignment scope.' });
+      seen.add(listingId);
+
+      const listing = listingMap.get(listingId);
+      if (!listing || !isListingAllowedByScope(req, listing)) {
+        return res.status(403).json({ error: 'You are not allowed to use one or more selected listings.' });
+      }
+
+      const listingUrl = normaliseLandingPageListingUrl(row && row.listingUrl);
+      if (listingUrl === null) {
+        return res.status(400).json({ error: 'Listing URL must start with http:// or https:// when provided.' });
+      }
+
+      listingFilters.push({ listingId, listingUrl: listingUrl || '' });
     }
 
     const result = await updateReservationEnquiryLandingPageForUser({
@@ -10278,7 +10557,11 @@ app.put('/api/reservation-enquiry-landing-pages/:id', requireScopedRole('Manager
       clientAccountId: req.accessContext.activeClientAccountId,
       name: req.body.name,
       publicSlug: req.body.publicSlug,
-      preferredListingId,
+      descriptionHtml: req.body.descriptionHtml,
+      notesHtml: req.body.notesHtml,
+      listingFilters,
+      percentageDiscount: req.body.percentageDiscount,
+      paymentMethod: req.body.paymentMethod,
       isActive: req.body.isActive !== false
     });
     if (result.error === 'Landing page not found.') {

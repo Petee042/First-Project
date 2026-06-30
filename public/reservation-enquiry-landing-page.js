@@ -5,6 +5,8 @@ const landingPageIdParam = Number(params.get('id'));
 const isCreateMode = String(params.get('new') || '').trim() === '1' || !(Number.isInteger(landingPageIdParam) && landingPageIdParam > 0);
 let landingPageId = Number.isInteger(landingPageIdParam) && landingPageIdParam > 0 ? landingPageIdParam : null;
 let canManageLandingPages = false;
+let currentPublicSlug = '';
+let currentListings = [];
 
 function setLandingPageMessage(text, isError) {
   const el = document.getElementById('landingPageMessage');
@@ -27,42 +29,213 @@ function slugify(value) {
     .slice(0, 120);
 }
 
+function getDescriptionHtml() {
+  return String(document.getElementById('landingDescriptionEditor').innerHTML || '').trim();
+}
+
+function getNotesHtml() {
+  return String(document.getElementById('landingNotesEditor').innerHTML || '').trim();
+}
+
+function buildPublicUrl(slug) {
+  const cleanSlug = String(slug || '').trim();
+  if (!cleanSlug) {
+    return '';
+  }
+  return window.location.origin + '/private-reservation.html?landingPage=' + encodeURIComponent(cleanSlug);
+}
+
+function refreshPublicUrlDisplay() {
+  const input = document.getElementById('landingPagePublicUrl');
+  const copyBtn = document.getElementById('copyLandingPagePublicUrlBtn');
+  const previewSlug = currentPublicSlug || slugify(document.getElementById('landingPageName').value || '');
+  const url = buildPublicUrl(previewSlug);
+  input.value = url;
+  copyBtn.disabled = !url;
+}
+
+function applyEditorCommand(command, targetId) {
+  const editor = document.getElementById(targetId);
+  if (!editor) {
+    return;
+  }
+  editor.focus();
+  document.execCommand(command, false, null);
+  editor.focus();
+}
+
+function syncListingSelectionState() {
+  Array.from(document.querySelectorAll('.landing-listing-row')).forEach((row) => {
+    const checkbox = row.querySelector('input[type="checkbox"]');
+    const urlInput = row.querySelector('input[type="url"]');
+    if (!checkbox || !urlInput) {
+      return;
+    }
+    urlInput.disabled = !checkbox.checked;
+    if (!checkbox.checked) {
+      urlInput.value = '';
+    }
+  });
+}
+
+function renderListingSelection(selectedFilters) {
+  const container = document.getElementById('landingListingsSelection');
+  if (!container) {
+    return;
+  }
+
+  const selectedMap = new Map();
+  (Array.isArray(selectedFilters) ? selectedFilters : []).forEach((item) => {
+    const listingId = Number(item && item.listingId);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+      return;
+    }
+    selectedMap.set(listingId, String(item && item.listingUrl || ''));
+  });
+
+  container.innerHTML = '';
+  if (!currentListings.length) {
+    const empty = document.createElement('p');
+    empty.className = 'hint';
+    empty.textContent = 'No listings are available for selection.';
+    container.appendChild(empty);
+    return;
+  }
+
+  currentListings.forEach((listing) => {
+    const listingId = Number(listing.id);
+    const row = document.createElement('div');
+    row.className = 'landing-listing-row';
+
+    const toggleLabel = document.createElement('label');
+    toggleLabel.className = 'landing-listing-toggle';
+    toggleLabel.setAttribute('for', 'landingListingCheck' + listingId);
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = 'landingListingCheck' + listingId;
+    checkbox.dataset.listingId = String(listingId);
+    checkbox.checked = selectedMap.has(listingId);
+
+    const text = document.createElement('span');
+    text.textContent = String(listing.name || ('Listing #' + listingId));
+
+    toggleLabel.appendChild(checkbox);
+    toggleLabel.appendChild(text);
+
+    const urlRow = document.createElement('div');
+    urlRow.className = 'landing-listing-url-row';
+
+    const urlLabel = document.createElement('label');
+    urlLabel.setAttribute('for', 'landingListingUrl' + listingId);
+    urlLabel.textContent = 'Optional listing URL';
+
+    const urlInput = document.createElement('input');
+    urlInput.type = 'url';
+    urlInput.id = 'landingListingUrl' + listingId;
+    urlInput.placeholder = 'https://example.com/listing-page';
+    urlInput.maxLength = 1200;
+    urlInput.value = selectedMap.get(listingId) || '';
+    urlInput.disabled = !checkbox.checked;
+
+    checkbox.addEventListener('change', () => {
+      syncListingSelectionState();
+    });
+
+    urlRow.appendChild(urlLabel);
+    urlRow.appendChild(urlInput);
+    row.appendChild(toggleLabel);
+    row.appendChild(urlRow);
+    container.appendChild(row);
+  });
+}
+
+function setPaymentMethodSelection(nextMethod) {
+  const bank = document.getElementById('landingPaymentBankTransfer');
+  const online = document.getElementById('landingPaymentOnline');
+  if (!bank || !online) {
+    return;
+  }
+  bank.checked = nextMethod === 'bank_transfer';
+  online.checked = nextMethod === 'online';
+}
+
+function getSelectedPaymentMethod() {
+  const bank = document.getElementById('landingPaymentBankTransfer');
+  const online = document.getElementById('landingPaymentOnline');
+  const bankChecked = bank && bank.checked;
+  const onlineChecked = online && online.checked;
+  if (bankChecked === onlineChecked) {
+    return null;
+  }
+  return bankChecked ? 'bank_transfer' : 'online';
+}
+
 function getPayload() {
   const name = String(document.getElementById('landingPageName').value || '').trim();
-  const slugRaw = String(document.getElementById('landingPageSlug').value || '').trim();
-  const preferredListingIdRaw = String(document.getElementById('landingPagePreferredListing').value || '').trim();
+  const descriptionHtml = getDescriptionHtml();
+  const notesHtml = getNotesHtml();
   const isActive = !!document.getElementById('landingPageIsActive').checked;
+  const discountRaw = String(document.getElementById('landingPageDiscount').value || '').trim();
 
   if (!name) {
-    return { error: 'Name is required.' };
+    return { error: 'Page Title is required.' };
   }
 
-  const publicSlug = slugify(slugRaw || name);
+  const publicSlug = currentPublicSlug || slugify(name);
   if (!publicSlug) {
-    return { error: 'Public slug is required.' };
+    return { error: 'Public URL could not be generated.' };
   }
 
-  const preferredListingId = preferredListingIdRaw ? Number(preferredListingIdRaw) : null;
-  if (preferredListingIdRaw && (!Number.isInteger(preferredListingId) || preferredListingId <= 0)) {
-    return { error: 'Preferred listing is invalid.' };
+  const percentageDiscount = Number(discountRaw);
+  if (!Number.isFinite(percentageDiscount) || percentageDiscount < 0 || percentageDiscount > 100) {
+    return { error: 'Percentage Discount must be between 0 and 100.' };
+  }
+
+  const listingFilters = [];
+  Array.from(document.querySelectorAll('.landing-listing-row')).forEach((row) => {
+    const checkbox = row.querySelector('input[type="checkbox"]');
+    const urlInput = row.querySelector('input[type="url"]');
+    if (!checkbox || !urlInput || !checkbox.checked) {
+      return;
+    }
+
+    const listingId = Number(checkbox.dataset.listingId);
+    const listingUrl = String(urlInput.value || '').trim();
+    if (listingUrl && !/^https?:\/\//i.test(listingUrl)) {
+      throw new Error('Listing URLs must start with http:// or https://.');
+    }
+
+    listingFilters.push({
+      listingId,
+      listingUrl
+    });
+  });
+
+  if (!listingFilters.length) {
+    return { error: 'Select at least one listing.' };
+  }
+
+  const paymentMethod = getSelectedPaymentMethod();
+  if (!paymentMethod) {
+    return { error: 'Check exactly one payment method: Bank Transfer or Online.' };
   }
 
   return {
     payload: {
       name,
       publicSlug,
-      preferredListingId,
+      descriptionHtml,
+      notesHtml,
+      listingFilters,
+      percentageDiscount,
+      paymentMethod,
       isActive
     }
   };
 }
 
 async function loadListings() {
-  const select = document.getElementById('landingPagePreferredListing');
-  if (!select) {
-    return;
-  }
-
   const response = await fetch('/api/listings');
   if (response.status === 401) {
     window.location.href = '/';
@@ -73,19 +246,8 @@ async function loadListings() {
     throw new Error(data.error || 'Failed to load listings.');
   }
 
-  const listings = Array.isArray(data.listings) ? data.listings : [];
-  const selected = String(select.value || '');
-  select.innerHTML = '<option value="">None</option>';
-  listings.forEach((listing) => {
-    const option = document.createElement('option');
-    option.value = String(listing.id);
-    option.textContent = String(listing.name || ('Listing #' + listing.id));
-    select.appendChild(option);
-  });
-
-  if (selected && Array.from(select.options).some((opt) => opt.value === selected)) {
-    select.value = selected;
-  }
+  currentListings = Array.isArray(data.listings) ? data.listings : [];
+  renderListingSelection([]);
 }
 
 async function loadLandingPage() {
@@ -103,9 +265,16 @@ async function loadLandingPage() {
   const landingPage = data.landingPage || {};
   document.getElementById('landingPageTitle').textContent = 'Landing Page: ' + (landingPage.name || ('#' + landingPage.id));
   document.getElementById('landingPageName').value = landingPage.name || '';
-  document.getElementById('landingPageSlug').value = landingPage.public_slug || '';
-  document.getElementById('landingPagePreferredListing').value = landingPage.preferred_listing_id ? String(landingPage.preferred_listing_id) : '';
+  currentPublicSlug = String(landingPage.public_slug || '');
+  document.getElementById('landingDescriptionEditor').innerHTML = landingPage.description_html || '';
+  document.getElementById('landingNotesEditor').innerHTML = landingPage.notes_html || '';
+  document.getElementById('landingPageDiscount').value = landingPage.percentage_discount !== undefined && landingPage.percentage_discount !== null
+    ? String(landingPage.percentage_discount)
+    : '0';
+  renderListingSelection(Array.isArray(landingPage.listing_filters) ? landingPage.listing_filters : []);
+  setPaymentMethodSelection(landingPage.payment_method || 'bank_transfer');
   document.getElementById('landingPageIsActive').checked = landingPage.is_active !== false;
+  refreshPublicUrlDisplay();
 }
 
 (async () => {
@@ -125,6 +294,9 @@ async function loadLandingPage() {
     if (isCreateMode) {
       document.getElementById('landingPageTitle').textContent = 'Create Reservation Enquiry Landing Page';
       document.getElementById('deleteLandingPageBtn').classList.add('hidden');
+      document.getElementById('landingPageDiscount').value = '0';
+      setPaymentMethodSelection('bank_transfer');
+      refreshPublicUrlDisplay();
       return;
     }
 
@@ -134,30 +306,75 @@ async function loadLandingPage() {
       document.getElementById('saveLandingPageBtn').disabled = true;
       document.getElementById('deleteLandingPageBtn').disabled = true;
       setLandingPageMessage('Read-only access: your role cannot edit landing pages.', false);
+
+      const form = document.getElementById('landingPageForm');
+      if (form) {
+        Array.from(form.querySelectorAll('input, select, textarea, button, [contenteditable="true"]')).forEach((el) => {
+          if (el.id === 'landingPagePublicUrl' || el.id === 'copyLandingPagePublicUrlBtn') {
+            return;
+          }
+          if (el.id === 'landingDescriptionEditor' || el.id === 'landingNotesEditor') {
+            el.contentEditable = 'false';
+            return;
+          }
+          el.disabled = true;
+        });
+      }
     }
 
-    const slugInput = document.getElementById('landingPageSlug');
-    if (slugInput) {
-      slugInput.value = slugify(slugInput.value || '');
-    }
+    refreshPublicUrlDisplay();
   } catch (err) {
     setLandingPageMessage(err.message || 'Failed to load landing page.', true);
   }
 })();
 
 document.getElementById('landingPageName').addEventListener('input', () => {
-  const slugInput = document.getElementById('landingPageSlug');
-  if (!slugInput) {
-    return;
-  }
-  if (!String(slugInput.value || '').trim()) {
-    slugInput.value = slugify(document.getElementById('landingPageName').value || '');
+  if (!currentPublicSlug) {
+    refreshPublicUrlDisplay();
   }
 });
 
-document.getElementById('landingPageSlug').addEventListener('blur', () => {
-  const slugInput = document.getElementById('landingPageSlug');
-  slugInput.value = slugify(slugInput.value || '');
+Array.from(document.querySelectorAll('.landing-editor-btn')).forEach((btn) => {
+  btn.addEventListener('click', () => {
+    applyEditorCommand(btn.getAttribute('data-command'), btn.getAttribute('data-target'));
+  });
+});
+
+document.getElementById('landingPaymentBankTransfer').addEventListener('change', () => {
+  if (document.getElementById('landingPaymentBankTransfer').checked) {
+    document.getElementById('landingPaymentOnline').checked = false;
+  }
+});
+
+document.getElementById('landingPaymentOnline').addEventListener('change', () => {
+  if (document.getElementById('landingPaymentOnline').checked) {
+    document.getElementById('landingPaymentBankTransfer').checked = false;
+  }
+});
+
+document.getElementById('copyLandingPagePublicUrlBtn').addEventListener('click', async () => {
+  const url = String(document.getElementById('landingPagePublicUrl').value || '').trim();
+  if (!url) {
+    return;
+  }
+  try {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(url);
+    } else {
+      const temp = document.createElement('textarea');
+      temp.value = url;
+      temp.setAttribute('readonly', 'readonly');
+      temp.style.position = 'fixed';
+      temp.style.opacity = '0';
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand('copy');
+      document.body.removeChild(temp);
+    }
+    setLandingPageMessage('Public URL copied.', false);
+  } catch {
+    setLandingPageMessage('Could not copy public URL.', true);
+  }
 });
 
 document.getElementById('landingPageForm').addEventListener('submit', async (event) => {
@@ -168,7 +385,14 @@ document.getElementById('landingPageForm').addEventListener('submit', async (eve
     return;
   }
 
-  const body = getPayload();
+  let body;
+  try {
+    body = getPayload();
+  } catch (err) {
+    setLandingPageMessage(err.message || 'Landing page details are invalid.', true);
+    return;
+  }
+
   if (body.error) {
     setLandingPageMessage(body.error, true);
     return;
@@ -203,7 +427,8 @@ document.getElementById('landingPageForm').addEventListener('submit', async (eve
     }
 
     if (saved.public_slug) {
-      document.getElementById('landingPageSlug').value = saved.public_slug;
+      currentPublicSlug = String(saved.public_slug || '');
+      refreshPublicUrlDisplay();
     }
   } catch (err) {
     setLandingPageMessage(err.message || 'Failed to save landing page.', true);
