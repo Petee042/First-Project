@@ -12,6 +12,20 @@ let reservationEnquiryOptions = [];
 let reservationEnquirySelectedOptionKey = '';
 let reservationEnquiryLastSearch = null;
 
+function isReservationEnquiryConditionsConfirmed() {
+  const checkbox = document.getElementById('reservationEnquiryConfirmConditions');
+  return Boolean(checkbox && checkbox.checked);
+}
+
+function updateReservationEnquiryContinueButtonState() {
+  const button = document.getElementById('reservationEnquiryContinueBtn');
+  if (!button) {
+    return;
+  }
+  const selected = reservationEnquiryOptions.find((option) => option.key === reservationEnquirySelectedOptionKey) || null;
+  button.disabled = !selected || !isReservationEnquiryConditionsConfirmed();
+}
+
 function setReservationEnquiryMessage(text, isError) {
   const el = document.getElementById('reservationEnquiryMessage');
   if (!el) {
@@ -139,6 +153,7 @@ function renderReservationEnquiryResults() {
     const selected = reservationEnquiryOptions.find((option) => option.key === reservationEnquirySelectedOptionKey);
     summary.textContent = selected ? ('Selected: ' + String(selected.label || 'Reservation option')) : 'No reservation option selected.';
   }
+  updateReservationEnquiryContinueButtonState();
 }
 
 function getReservationEnquirySearchPayload() {
@@ -237,6 +252,10 @@ document.getElementById('reservationEnquirySearchForm').addEventListener('submit
 
   setReservationEnquiryMessage('Checking availability...', false);
   reservationEnquirySelectedOptionKey = '';
+  const conditionsCheckbox = document.getElementById('reservationEnquiryConfirmConditions');
+  if (conditionsCheckbox) {
+    conditionsCheckbox.checked = false;
+  }
 
   try {
     const response = await fetch('/api/public/reservation-enquiry-landing-pages/' + encodeURIComponent(reservationEnquirySlug) + '/check-availability', {
@@ -281,6 +300,13 @@ document.getElementById('reservationEnquiryResultsBody').addEventListener('chang
   renderReservationEnquiryResults();
 });
 
+const reservationEnquiryConfirmConditions = document.getElementById('reservationEnquiryConfirmConditions');
+if (reservationEnquiryConfirmConditions) {
+  reservationEnquiryConfirmConditions.addEventListener('change', () => {
+    updateReservationEnquiryContinueButtonState();
+  });
+}
+
 document.getElementById('reservationEnquiryResultsBody').addEventListener('click', (event) => {
   const target = event.target;
   if (!target || !target.classList || !target.classList.contains('reservation-enquiry-view-btn')) {
@@ -302,6 +328,10 @@ document.getElementById('reservationEnquiryContinueBtn').addEventListener('click
   const selected = reservationEnquiryOptions.find((option) => option.key === reservationEnquirySelectedOptionKey) || null;
   if (!selected) {
     setReservationEnquiryMessage('Select exactly one reservation option to continue.', true);
+    return;
+  }
+  if (!isReservationEnquiryConditionsConfirmed()) {
+    setReservationEnquiryMessage('Please confirm the Conditions before continuing.', true);
     return;
   }
   persistReservationEnquirySelection(selected);

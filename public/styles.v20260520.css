@@ -1209,12 +1209,12 @@ textarea:focus {
   color: #17346f;
 }
 
-.reservation-enquiry-inline-actions {
+.reservation-enquiry-section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.8rem;
-  margin-top: 0.6rem;
+  margin-bottom: 0.55rem;
 }
 
 .reservation-enquiry-terms-link {
@@ -1247,8 +1247,16 @@ textarea:focus {
   box-shadow: 0 7px 15px rgba(19, 48, 112, 0.2);
 }
 
-.reservation-enquiry-confirm-row {
-  padding-top: 0.2rem;
+.reservation-enquiry-terms-confirm-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  margin: 0.9rem 0 0.25rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #dce5f7;
+  border-radius: 12px;
+  background: #f8fbff;
 }
 
 .reservation-enquiry-confirm-label {
@@ -1443,12 +1451,18 @@ textarea:focus {
     flex-wrap: wrap;
   }
 
-  .reservation-enquiry-inline-actions {
+  .reservation-enquiry-section-header,
+  .reservation-enquiry-terms-confirm-block {
+    flex-direction: column;
     align-items: flex-start;
   }
 
   .reservation-enquiry-terms-link {
     flex: 1 1 auto;
+  }
+
+  .reservation-enquiry-confirm-label {
+    width: 100%;
   }
 }
 
