@@ -40,6 +40,17 @@ function loadCompletionData() {
   }
 }
 
+function setCompletionMessage(text, isError) {
+  const el = document.getElementById('completionMessage');
+  if (!el) {
+    return;
+  }
+  el.textContent = text || '';
+  el.className = text
+    ? ('message ' + (isError ? 'error' : 'success'))
+    : 'message hidden';
+}
+
 (function initCompletionPage() {
   const data = loadCompletionData();
   
@@ -52,6 +63,18 @@ function loadCompletionData() {
   document.getElementById('completionGuests').textContent = String(data.guestCount || '');
   document.getElementById('completionOption').textContent = String(data.option && data.option.label || '');
   document.getElementById('completionAmount').textContent = formatCompletionMoney(data.totalAmount);
+
+  if (data.emailDeliveryWarning === true) {
+    const reason = String(data.emailDeliveryReason || '').trim();
+    setCompletionMessage(
+      reason
+        ? ('Reservation request submitted, but payment email delivery failed: ' + reason)
+        : 'Reservation request submitted, but payment email delivery failed. Please contact support.',
+      true
+    );
+  } else {
+    setCompletionMessage('Reservation request submitted and payment email sent.', false);
+  }
 
   if (data.bankAccount) {
     document.getElementById('completionAccountName').textContent = String(data.bankAccount.accountName || '');

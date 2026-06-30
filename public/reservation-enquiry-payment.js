@@ -228,7 +228,9 @@ document.getElementById('reservationEnquiryPaymentSubmitBtn').addEventListener('
         guestCount: reservationEnquirySelection.guestCount,
         option: reservationEnquirySelection.option,
         totalAmount: payableAmount,
-        bankAccount: data.bankAccount || {}
+        bankAccount: data.bankAccount || {},
+        emailDeliveryWarning: data.emailDeliveryWarning === true,
+        emailDeliveryReason: String(data.emailDeliveryReason || '')
       };
       window.sessionStorage.setItem('reservationEnquiryCompletionContext', JSON.stringify(completionData));
       window.sessionStorage.removeItem(RESERVATION_ENQUIRY_SELECTION_STORAGE_KEY);
