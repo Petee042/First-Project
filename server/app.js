@@ -820,6 +820,26 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS reservation_enquiry_landing_pages (
+      id BIGSERIAL PRIMARY KEY,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      client_account_id BIGINT REFERENCES client_accounts(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      public_slug TEXT NOT NULL,
+      preferred_listing_id BIGINT REFERENCES listings(id) ON DELETE SET NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE (client_account_id, public_slug)
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_reservation_enquiry_landing_pages_client
+    ON reservation_enquiry_landing_pages (client_account_id, created_at DESC)
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS shared_resource_reservations (
       id BIGSERIAL PRIMARY KEY,
       user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1776,6 +1796,42 @@ function normaliseSharedResourceReservationText(value, maxLen) {
     return null;
   }
   return text.slice(0, maxLen || 200);
+}
+
+function slugifyLandingPageName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+}
+
+function normaliseLandingPageName(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return null;
+  }
+  return text.slice(0, 160);
+}
+
+function normaliseLandingPageSlug(value, fallbackName) {
+  const explicit = slugifyLandingPageName(value);
+  if (explicit) {
+    return explicit;
+  }
+  const fallback = slugifyLandingPageName(fallbackName);
+  return fallback || null;
+}
+
+function normaliseLandingPagePreferredListingId(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
 }
 
 function normaliseSharedResourceReservationEmail(value) {
@@ -4242,6 +4298,209 @@ async function getSharedResourceByIdPublic(resourceId) {
     property_id: row.property_id,
     listing_id: row.listing_id
   };
+}
+
+function mapReservationEnquiryLandingPageRow(row) {
+  return {
+    id: Number(row && row.id || 0),
+    name: String(row && row.name || ''),
+    public_slug: String(row && row.public_slug || ''),
+    preferred_listing_id: row && row.preferred_listing_id ? Number(row.preferred_listing_id) : null,
+    preferred_listing_name: String(row && row.preferred_listing_name || ''),
+    is_active: row && row.is_active === true,
+    created_at: row && row.created_at,
+    updated_at: row && row.updated_at
+  };
+}
+
+async function getReservationEnquiryLandingPagesForUser(userId, clientAccountId) {
+  const result = await pool.query(
+    `
+      SELECT relp.id,
+             relp.user_id,
+             relp.client_account_id,
+             relp.name,
+             relp.public_slug,
+             relp.preferred_listing_id,
+             relp.is_active,
+             relp.created_at,
+             relp.updated_at,
+             l.name AS preferred_listing_name
+      FROM reservation_enquiry_landing_pages relp
+      LEFT JOIN listings l ON l.id = relp.preferred_listing_id
+      WHERE relp.user_id = $1
+        AND relp.client_account_id = $2
+      ORDER BY LOWER(relp.name) ASC, relp.id ASC
+    `,
+    [Number(userId), Number(clientAccountId)]
+  );
+  return result.rows.map(mapReservationEnquiryLandingPageRow);
+}
+
+async function getReservationEnquiryLandingPageByIdForUser(id, userId, clientAccountId) {
+  const result = await pool.query(
+    `
+      SELECT relp.id,
+             relp.user_id,
+             relp.client_account_id,
+             relp.name,
+             relp.public_slug,
+             relp.preferred_listing_id,
+             relp.is_active,
+             relp.created_at,
+             relp.updated_at,
+             l.name AS preferred_listing_name
+      FROM reservation_enquiry_landing_pages relp
+      LEFT JOIN listings l ON l.id = relp.preferred_listing_id
+      WHERE relp.id = $1
+        AND relp.user_id = $2
+        AND relp.client_account_id = $3
+      LIMIT 1
+    `,
+    [Number(id), Number(userId), Number(clientAccountId)]
+  );
+  return result.rows[0] ? mapReservationEnquiryLandingPageRow(result.rows[0]) : null;
+}
+
+async function createReservationEnquiryLandingPageForUser(input) {
+  const name = normaliseLandingPageName(input && input.name);
+  const slug = normaliseLandingPageSlug(input && input.publicSlug, name);
+  const preferredListingId = normaliseLandingPagePreferredListingId(input && input.preferredListingId);
+  const isActive = !(input && input.isActive === false);
+
+  if (!name) {
+    return { error: 'Landing page name is required.' };
+  }
+  if (!slug) {
+    return { error: 'Landing page slug is required.' };
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        INSERT INTO reservation_enquiry_landing_pages (
+          user_id,
+          client_account_id,
+          name,
+          public_slug,
+          preferred_listing_id,
+          is_active,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP)
+        RETURNING id,
+                  user_id,
+                  client_account_id,
+                  name,
+                  public_slug,
+                  preferred_listing_id,
+                  is_active,
+                  created_at,
+                  updated_at
+      `,
+      [
+        Number(input.userId),
+        Number(input.clientAccountId),
+        name,
+        slug,
+        preferredListingId,
+        isActive
+      ]
+    );
+    return { landingPage: mapReservationEnquiryLandingPageRow(result.rows[0]) };
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return { error: 'A landing page with this slug already exists for the active client account.' };
+    }
+    throw err;
+  }
+}
+
+async function updateReservationEnquiryLandingPageForUser(input) {
+  const name = normaliseLandingPageName(input && input.name);
+  const slug = normaliseLandingPageSlug(input && input.publicSlug, name);
+  const preferredListingId = normaliseLandingPagePreferredListingId(input && input.preferredListingId);
+  const isActive = !(input && input.isActive === false);
+
+  if (!name) {
+    return { error: 'Landing page name is required.' };
+  }
+  if (!slug) {
+    return { error: 'Landing page slug is required.' };
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        UPDATE reservation_enquiry_landing_pages
+        SET name = $1,
+            public_slug = $2,
+            preferred_listing_id = $3,
+            is_active = $4,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $5
+          AND user_id = $6
+          AND client_account_id = $7
+        RETURNING id,
+                  user_id,
+                  client_account_id,
+                  name,
+                  public_slug,
+                  preferred_listing_id,
+                  is_active,
+                  created_at,
+                  updated_at
+      `,
+      [
+        name,
+        slug,
+        preferredListingId,
+        isActive,
+        Number(input.id),
+        Number(input.userId),
+        Number(input.clientAccountId)
+      ]
+    );
+    if (!result.rows[0]) {
+      return { error: 'Landing page not found.' };
+    }
+    return { landingPage: mapReservationEnquiryLandingPageRow(result.rows[0]) };
+  } catch (err) {
+    if (err && err.code === '23505') {
+      return { error: 'A landing page with this slug already exists for the active client account.' };
+    }
+    throw err;
+  }
+}
+
+async function deleteReservationEnquiryLandingPageForUser(id, userId, clientAccountId) {
+  const result = await pool.query(
+    `
+      DELETE FROM reservation_enquiry_landing_pages
+      WHERE id = $1
+        AND user_id = $2
+        AND client_account_id = $3
+      RETURNING id
+    `,
+    [Number(id), Number(userId), Number(clientAccountId)]
+  );
+  if (!result.rows[0]) {
+    return { error: 'Landing page not found.' };
+  }
+  return { deletedLandingPageId: Number(result.rows[0].id) };
+}
+
+function isReservationEnquiryLandingPageAllowedByScope(req, row) {
+  if (!hasManagerAssignmentScope(req)) {
+    return true;
+  }
+
+  const listingId = Number(row && row.preferred_listing_id || 0);
+  if (Number.isInteger(listingId) && listingId > 0) {
+    return req.accessContext.assignmentScope.listingIdSet.has(listingId);
+  }
+
+  return false;
 }
 
 async function getListingIdsForSharedResource(resource) {
@@ -9912,6 +10171,158 @@ app.get('/api/shared-resources', requireScopedRole('Staff'), async (req, res) =>
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to load shared resources.' });
+  }
+});
+
+// GET /api/reservation-enquiry-landing-pages — all landing pages for current user/client account
+app.get('/api/reservation-enquiry-landing-pages', requireScopedRole('Staff'), async (req, res) => {
+  try {
+    let landingPages = await getReservationEnquiryLandingPagesForUser(
+      req.accessContext.effectiveOwnerUserId,
+      req.accessContext.activeClientAccountId
+    );
+    if (hasManagerAssignmentScope(req)) {
+      landingPages = landingPages.filter((row) => isReservationEnquiryLandingPageAllowedByScope(req, row));
+    }
+    return res.json({ landingPages });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load reservation enquiry landing pages.' });
+  }
+});
+
+// GET /api/reservation-enquiry-landing-pages/:id — one landing page
+app.get('/api/reservation-enquiry-landing-pages/:id', requireScopedRole('Staff'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid landing page id.' });
+  }
+
+  try {
+    const landingPage = await getReservationEnquiryLandingPageByIdForUser(
+      id,
+      req.accessContext.effectiveOwnerUserId,
+      req.accessContext.activeClientAccountId
+    );
+    if (!landingPage || !isReservationEnquiryLandingPageAllowedByScope(req, landingPage)) {
+      return res.status(404).json({ error: 'Landing page not found.' });
+    }
+    return res.json({ landingPage });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load reservation enquiry landing page.' });
+  }
+});
+
+// POST /api/reservation-enquiry-landing-pages — create landing page
+app.post('/api/reservation-enquiry-landing-pages', requireScopedRole('Manager'), async (req, res) => {
+  try {
+    const preferredListingId = normaliseLandingPagePreferredListingId(req.body.preferredListingId);
+    if (preferredListingId) {
+      const listing = await getListingByIdForUser(preferredListingId, req.accessContext.effectiveOwnerUserId);
+      if (!listing || !isListingAllowedByScope(req, listing)) {
+        return res.status(403).json({ error: 'You are not allowed to use the selected preferred listing.' });
+      }
+    } else if (hasManagerAssignmentScope(req)) {
+      return res.status(403).json({ error: 'Preferred listing is required for your manager assignment scope.' });
+    }
+
+    const result = await createReservationEnquiryLandingPageForUser({
+      userId: req.accessContext.effectiveOwnerUserId,
+      clientAccountId: req.accessContext.activeClientAccountId,
+      name: req.body.name,
+      publicSlug: req.body.publicSlug,
+      preferredListingId,
+      isActive: req.body.isActive !== false
+    });
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.status(201).json(result);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to create reservation enquiry landing page.' });
+  }
+});
+
+// PUT /api/reservation-enquiry-landing-pages/:id — update landing page
+app.put('/api/reservation-enquiry-landing-pages/:id', requireScopedRole('Manager'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid landing page id.' });
+  }
+
+  try {
+    const existing = await getReservationEnquiryLandingPageByIdForUser(
+      id,
+      req.accessContext.effectiveOwnerUserId,
+      req.accessContext.activeClientAccountId
+    );
+    if (!existing || !isReservationEnquiryLandingPageAllowedByScope(req, existing)) {
+      return res.status(404).json({ error: 'Landing page not found.' });
+    }
+
+    const preferredListingId = normaliseLandingPagePreferredListingId(req.body.preferredListingId);
+    if (preferredListingId) {
+      const listing = await getListingByIdForUser(preferredListingId, req.accessContext.effectiveOwnerUserId);
+      if (!listing || !isListingAllowedByScope(req, listing)) {
+        return res.status(403).json({ error: 'You are not allowed to use the selected preferred listing.' });
+      }
+    } else if (hasManagerAssignmentScope(req)) {
+      return res.status(403).json({ error: 'Preferred listing is required for your manager assignment scope.' });
+    }
+
+    const result = await updateReservationEnquiryLandingPageForUser({
+      id,
+      userId: req.accessContext.effectiveOwnerUserId,
+      clientAccountId: req.accessContext.activeClientAccountId,
+      name: req.body.name,
+      publicSlug: req.body.publicSlug,
+      preferredListingId,
+      isActive: req.body.isActive !== false
+    });
+    if (result.error === 'Landing page not found.') {
+      return res.status(404).json({ error: result.error });
+    }
+    if (result.error) {
+      return res.status(400).json({ error: result.error });
+    }
+    return res.json(result);
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to update reservation enquiry landing page.' });
+  }
+});
+
+// DELETE /api/reservation-enquiry-landing-pages/:id — delete landing page
+app.delete('/api/reservation-enquiry-landing-pages/:id', requireScopedRole('Manager'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid landing page id.' });
+  }
+
+  try {
+    const existing = await getReservationEnquiryLandingPageByIdForUser(
+      id,
+      req.accessContext.effectiveOwnerUserId,
+      req.accessContext.activeClientAccountId
+    );
+    if (!existing || !isReservationEnquiryLandingPageAllowedByScope(req, existing)) {
+      return res.status(404).json({ error: 'Landing page not found.' });
+    }
+
+    const result = await deleteReservationEnquiryLandingPageForUser(
+      id,
+      req.accessContext.effectiveOwnerUserId,
+      req.accessContext.activeClientAccountId
+    );
+    if (result.error) {
+      return res.status(404).json({ error: result.error });
+    }
+    return res.json({ message: 'Landing page deleted.', deletedLandingPageId: result.deletedLandingPageId });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to delete reservation enquiry landing page.' });
   }
 });
 

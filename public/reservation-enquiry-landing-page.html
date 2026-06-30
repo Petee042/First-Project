@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reservation Enquiry Landing Page - AutomaticPeople</title>
+  <link rel="stylesheet" href="styles.v20260520.css" />
+</head>
+<body class="logged-page">
+  <div class="sticky-page-chrome">
+    <div class="sticky-page-inner">
+      <nav class="dashboard-tab-bar page-top-nav" aria-label="Main navigation">
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-dashboard">Dashboard</a>
+        <a class="dashboard-tab-link active" href="/dashboard.html?tab=panel-config">Config</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-ops">Ops</a>
+        <a class="dashboard-tab-link" href="/dashboard.html?tab=panel-account">Account</a>
+      </nav>
+      <p id="stickyMessageBar" class="sticky-message-bar" aria-live="polite">No current messages.</p>
+    </div>
+  </div>
+
+  <main class="dashboard">
+    <div class="card-container wide">
+      <div class="feed-actions back-row" style="margin-bottom: 0.7rem;">
+        <button id="backBtn" type="button" class="back-arrow-control" aria-label="Back"></button>
+      </div>
+      <h2 id="landingPageTitle">Reservation Enquiry Landing Page</h2>
+      <p id="landingPageMessage" class="message"></p>
+
+      <section class="listing-form-section">
+        <h3>Landing Page Configuration</h3>
+        <form id="landingPageForm" novalidate>
+          <div class="calendar-source-row">
+            <label for="landingPageName">Name</label>
+            <input id="landingPageName" type="text" maxlength="160" required />
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="landingPageSlug">Public Slug</label>
+            <input id="landingPageSlug" type="text" maxlength="120" placeholder="e.g. summer-family-offer" required />
+          </div>
+
+          <div class="calendar-source-row">
+            <label for="landingPagePreferredListing">Preferred Listing</label>
+            <select id="landingPagePreferredListing">
+              <option value="">None</option>
+            </select>
+          </div>
+
+          <div class="calendar-source-row checkbox-row">
+            <label for="landingPageIsActive">Active</label>
+            <input id="landingPageIsActive" type="checkbox" checked />
+          </div>
+
+          <div class="feed-actions floating-action-bar">
+            <button type="submit" id="saveLandingPageBtn" class="btn primary action-icon action-save" aria-label="Save Landing Page">Save Landing Page</button>
+            <button type="button" id="deleteLandingPageBtn" class="btn secondary action-icon action-delete" aria-label="Delete Landing Page">Delete Landing Page</button>
+            <button type="button" id="cancelLandingPageBtn" class="btn secondary action-icon action-cancel" aria-label="Cancel">Cancel</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  </main>
+
+  <script src="sticky-layout.js"></script>
+  <script src="reservation-enquiry-landing-page.js"></script>
+</body>
+</html>

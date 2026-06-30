@@ -1114,6 +1114,40 @@ async function fetchGuests() {
   renderGuests(data.guests || []);
 }
 
+async function fetchReservationEnquiryLandingPages() {
+  const containerId = 'configReservationEnquiryLandingPagesList';
+  const container = document.getElementById(containerId);
+  if (!container) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/reservation-enquiry-landing-pages');
+    if (response.status === 401) {
+      window.location.href = '/';
+      return;
+    }
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to load reservation enquiry landing pages.');
+    }
+
+    const rows = Array.isArray(data.landingPages) ? data.landingPages : [];
+    renderConfigRows(
+      containerId,
+      rows.map((row) => ({
+        name: (row.name || ('Landing Page #' + row.id)) + (row.is_active === false ? ' (Inactive)' : ''),
+        href: '/reservation-enquiry-landing-page.html?id=' + encodeURIComponent(row.id)
+      })),
+      'No reservation enquiry landing pages yet.'
+    );
+  } catch (err) {
+    renderConfigRows(containerId, [], 'No reservation enquiry landing pages yet.');
+    setMessage(err.message || 'Failed to load reservation enquiry landing pages.', true);
+  }
+}
+
 function sortListingsByProperty(listings) {
   return (listings || []).slice().sort((a, b) => {
     const pa = (a.property_name || '').toLowerCase();
@@ -3462,6 +3496,7 @@ async function loadDashboardData() {
   await fetchTeamMembers();
   await fetchManagerAssignments();
   await fetchGuests();
+  await fetchReservationEnquiryLandingPages();
   await fetchStripeConnectStatus();
   await fetchBankDetails();
 
@@ -3820,6 +3855,13 @@ const createGuestConfigBtn = document.getElementById('createGuestConfigBtn');
 if (createGuestConfigBtn) {
   createGuestConfigBtn.addEventListener('click', () => {
     window.location.href = '/guest.html?new=1';
+  });
+}
+
+const createReservationEnquiryLandingPageConfigBtn = document.getElementById('createReservationEnquiryLandingPageConfigBtn');
+if (createReservationEnquiryLandingPageConfigBtn) {
+  createReservationEnquiryLandingPageConfigBtn.addEventListener('click', () => {
+    window.location.href = '/reservation-enquiry-landing-page.html?new=1';
   });
 }
 
