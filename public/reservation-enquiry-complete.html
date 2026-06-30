@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Request Submitted - AutomaticPeople</title>
+  <link rel="stylesheet" href="styles.v20260520.css" />
+</head>
+<body class="reservation-enquiry-page">
+  <main class="dashboard">
+    <div class="card-container wide public-booking-card reservation-enquiry-card">
+      <h2>Request Submitted</h2>
+
+      <section class="listing-form-section">
+        <h3>Reservation Details</h3>
+        <dl class="reservation-enquiry-detail-list">
+          <dt>Stay</dt>
+          <dd id="completionStay">-</dd>
+          <dt>Guests</dt>
+          <dd id="completionGuests">-</dd>
+          <dt>Selected Option</dt>
+          <dd id="completionOption">-</dd>
+          <dt>Amount Payable</dt>
+          <dd id="completionAmount">-</dd>
+        </dl>
+      </section>
+
+      <section class="listing-form-section">
+        <h3>Bank Account for Payment</h3>
+        <dl class="reservation-enquiry-detail-list">
+          <dt>Account Name</dt>
+          <dd id="completionAccountName">-</dd>
+          <dt>Account Type</dt>
+          <dd id="completionAccountType">-</dd>
+          <dt>Sort Code</dt>
+          <dd id="completionSortCode">-</dd>
+          <dt>Account Number</dt>
+          <dd id="completionAccountNumber">-</dd>
+          <dt>IBAN</dt>
+          <dd id="completionIban">-</dd>
+          <dt>BIC</dt>
+          <dd id="completionBic">-</dd>
+        </dl>
+      </section>
+
+      <section class="listing-form-section">
+        <p class="completion-note">Your reservation will be held for 24 hours from now. If payment is not received by then, the reservation will be automatically released.</p>
+      </section>
+    </div>
+  </main>
+
+  <script src="reservation-enquiry-complete.js"></script>
+</body>
+</html>

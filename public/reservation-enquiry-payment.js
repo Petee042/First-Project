@@ -219,9 +219,20 @@ document.getElementById('reservationEnquiryPaymentSubmitBtn').addEventListener('
     if (reservationEnquirySelection.paymentMethod === 'bank_transfer') {
       setReservationEnquiryPaymentMessage('Submitting reservation enquiry...', false);
       const data = await submitBankTransferReservation(guest.payload);
-      setReservationEnquiryPaymentMessage(data.message || 'Reservation enquiry submitted.', false);
-      setReservationEnquirySubmitButton('Reservation Submitted', true);
+      const payableAmount = reservationEnquirySelection.option && reservationEnquirySelection.option.discountedTotalPrice
+        ? Number(reservationEnquirySelection.option.discountedTotalPrice)
+        : Number(reservationEnquirySelection.option && reservationEnquirySelection.option.totalPrice || 0);
+      const completionData = {
+        arrivalDate: reservationEnquirySelection.arrivalDate,
+        departureDate: reservationEnquirySelection.departureDate,
+        guestCount: reservationEnquirySelection.guestCount,
+        option: reservationEnquirySelection.option,
+        totalAmount: payableAmount,
+        bankAccount: data.bankAccount || {}
+      };
+      window.sessionStorage.setItem('reservationEnquiryCompletionContext', JSON.stringify(completionData));
       window.sessionStorage.removeItem(RESERVATION_ENQUIRY_SELECTION_STORAGE_KEY);
+      window.location.href = '/reservation-enquiry-complete.html';
       return;
     }
 

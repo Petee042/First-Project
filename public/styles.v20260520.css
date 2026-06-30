@@ -1506,6 +1506,17 @@ textarea:focus {
   font-size: 0.95rem;
 }
 
+.completion-note {
+  padding: 0.8rem 1rem;
+  border: 1px solid #dce5f7;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #2b3d5a;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 0;
+}
+
 .admin-card {
   max-width: 720px;
 }

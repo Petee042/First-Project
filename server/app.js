@@ -11379,6 +11379,14 @@ app.post('/api/public/reservation-enquiry-landing-pages/:slug/bank-transfer-subm
     return res.status(201).json({
       message: 'Payment request sent and reservation enquiry logged.',
       reservationIdentifiers: reservationRows.map((row) => String(row.reservation && row.reservation.reservation_identifier || '')).filter(Boolean),
+      bankAccount: {
+        accountName: bankAccountName,
+        sortCode: bankSortCode,
+        accountNumber: bankAccountNumber,
+        iban: bankIban,
+        bic: bankBic,
+        accountType: bankType
+      },
       emailDeliveryWarning,
       emailDeliveryReason
     });
