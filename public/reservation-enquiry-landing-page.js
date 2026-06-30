@@ -42,7 +42,7 @@ function buildPublicUrl(slug) {
   if (!cleanSlug) {
     return '';
   }
-  return window.location.origin + '/private-reservation.html?landingPage=' + encodeURIComponent(cleanSlug);
+  return window.location.origin + '/reservation-enquiry.html?landingPage=' + encodeURIComponent(cleanSlug);
 }
 
 function refreshPublicUrlDisplay() {

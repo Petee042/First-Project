@@ -1042,6 +1042,42 @@ async function initializeUserStore() {
   `);
 
   await pool.query(`
+    ALTER TABLE reservation_activity
+    ADD COLUMN IF NOT EXISTS payment_provider TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE reservation_activity
+    ADD COLUMN IF NOT EXISTS payment_intent_id TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE reservation_activity
+    ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE reservation_activity
+    ADD COLUMN IF NOT EXISTS payment_currency TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    ALTER TABLE reservation_activity
+    ADD COLUMN IF NOT EXISTS payment_amount_minor INTEGER
+  `);
+
+  await pool.query(`
+    ALTER TABLE reservation_activity
+    ADD COLUMN IF NOT EXISTS payment_last_error TEXT NOT NULL DEFAULT ''
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_reservation_activity_payment_intent_id
+    ON reservation_activity (payment_intent_id)
+    WHERE payment_intent_id IS NOT NULL
+  `);
+
+  await pool.query(`
     ALTER TABLE listing_calendar_events
     DROP CONSTRAINT IF EXISTS listing_calendar_events_reservation_activity_id_fkey
   `);
@@ -1940,6 +1976,484 @@ function parseLandingPageListingFiltersJson(value) {
   } catch {
     return [];
   }
+}
+
+function getReservationEnquiryDiscountMultiplier(discountPct) {
+  const discount = Number(discountPct || 0);
+  if (!Number.isFinite(discount) || discount <= 0) {
+    return 1;
+  }
+  return Math.max(0, 1 - (discount / 100));
+}
+
+function calculateReservationEnquiryListingPrice(listing, stayNights, guestCount) {
+  const nights = Number(stayNights || 0);
+  const guests = Number(guestCount || 0);
+  if (!Number.isInteger(nights) || nights <= 0) {
+    return 0;
+  }
+
+  const perNight = Number(listing && listing.per_night_price);
+  const perStay = Number(listing && listing.per_stay_price);
+  const baseOccupancy = Number(listing && listing.base_occupancy);
+  const upliftPct = Number(listing && listing.additional_guest_uplift_pct);
+
+  const baseTotal = (Number.isFinite(perNight) ? perNight : 0) * nights + (Number.isFinite(perStay) ? perStay : 0);
+  const extraGuests = Math.max(0, guests - (Number.isFinite(baseOccupancy) ? baseOccupancy : 0));
+  const perGuestUpliftPct = Number.isFinite(upliftPct) && upliftPct > 0 ? upliftPct : 0;
+  const totalMultiplier = 1 + ((extraGuests * perGuestUpliftPct) / 100);
+
+  return Math.round(baseTotal * totalMultiplier * 100) / 100;
+}
+
+function calculateReservationEnquiryDiscountedPrice(totalPrice, discountPct) {
+  const total = Number(totalPrice || 0);
+  if (!Number.isFinite(total)) {
+    return 0;
+  }
+  return Math.round(total * getReservationEnquiryDiscountMultiplier(discountPct) * 100) / 100;
+}
+
+function getListingConflictRangesForReservationEnquiry(listing, events) {
+  return appendAvailabilityPolicyBlockEvents(listing, Array.isArray(events) ? events : [])
+    .filter((event) => event && (event.isReservation !== false || event.isUnavailableBlock === true))
+    .map((event) => getNormalisedConflictRangeForEvent(event))
+    .filter(Boolean);
+}
+
+function isReservationEnquiryRangeAvailable(conflictRanges, arrivalDate, departureDate) {
+  return !(Array.isArray(conflictRanges) ? conflictRanges : []).some((range) => {
+    return range.startKey < departureDate && range.endKey > arrivalDate;
+  });
+}
+
+function getReservationEnquiryMaxContinuousCheckout(conflictRanges, arrivalDate, finalDepartureDate) {
+  let currentDate = arrivalDate;
+  while (currentDate < finalDepartureDate) {
+    const nextDate = addDaysToDateKey(currentDate, 1);
+    if (!nextDate) {
+      break;
+    }
+    const blocked = (Array.isArray(conflictRanges) ? conflictRanges : []).some((range) => {
+      return range.startKey < nextDate && range.endKey > currentDate;
+    });
+    if (blocked) {
+      return currentDate;
+    }
+    currentDate = nextDate;
+  }
+  return finalDepartureDate;
+}
+
+function buildReservationEnquiryOptionKey(segments) {
+  return (Array.isArray(segments) ? segments : []).map((segment) => {
+    return [
+      Number(segment && segment.listingId || 0),
+      String(segment && segment.arrivalDate || ''),
+      String(segment && segment.departureDate || '')
+    ].join(':');
+  }).join('|');
+}
+
+function buildReservationEnquiryDisplayLabel(segments) {
+  return (Array.isArray(segments) ? segments : []).map((segment) => {
+    const propertyName = String(segment && segment.propertyName || '').trim();
+    const listingName = String(segment && segment.listingName || '').trim() || 'Listing';
+    const stayText = String(segment && segment.arrivalDate || '') + ' to ' + String(segment && segment.departureDate || '');
+    return [propertyName, listingName].filter(Boolean).join(' / ') + ' (' + stayText + ')';
+  }).join(' + ');
+}
+
+function rankReservationEnquirySingleOptions(options) {
+  return (Array.isArray(options) ? options : []).slice().sort((left, right) => {
+    const leftValue = Number(left && left.totalPrice);
+    const rightValue = Number(right && right.totalPrice);
+    const safeLeft = Number.isFinite(leftValue) ? leftValue : Number.POSITIVE_INFINITY;
+    const safeRight = Number.isFinite(rightValue) ? rightValue : Number.POSITIVE_INFINITY;
+    if (safeLeft !== safeRight) {
+      return safeLeft - safeRight;
+    }
+    return String(left && left.label || '').localeCompare(String(right && right.label || ''));
+  });
+}
+
+function buildReservationEnquiryOptionFromSegments(segments, discountPct) {
+  const safeSegments = Array.isArray(segments) ? segments : [];
+  const totalPrice = Math.round(safeSegments.reduce((sum, segment) => {
+    const price = Number(segment && segment.price);
+    return sum + (Number.isFinite(price) ? price : 0);
+  }, 0) * 100) / 100;
+  const discountedTotalPrice = calculateReservationEnquiryDiscountedPrice(totalPrice, discountPct);
+  const label = buildReservationEnquiryDisplayLabel(safeSegments);
+  const propertyName = safeSegments.length === 1 ? String(safeSegments[0].propertyName || '') : 'Multiple properties';
+  const listingName = safeSegments.length === 1 ? String(safeSegments[0].listingName || '') : 'Split stay';
+  const listingUrl = safeSegments.length === 1 ? String(safeSegments[0].listingUrl || '') : '';
+
+  return {
+    key: buildReservationEnquiryOptionKey(safeSegments),
+    optionType: safeSegments.length === 1 ? 'single' : 'split',
+    propertyName,
+    listingName,
+    listingUrl,
+    label,
+    totalPrice,
+    discountedTotalPrice,
+    segments: safeSegments.map((segment) => ({
+      listingId: Number(segment.listingId),
+      propertyName: String(segment.propertyName || ''),
+      listingName: String(segment.listingName || ''),
+      listingUrl: String(segment.listingUrl || ''),
+      arrivalDate: String(segment.arrivalDate || ''),
+      departureDate: String(segment.departureDate || ''),
+      nights: Number(segment.nights || 0),
+      price: Number(segment.price || 0),
+      discountedPrice: calculateReservationEnquiryDiscountedPrice(Number(segment.price || 0), discountPct)
+    }))
+  };
+}
+
+function buildReservationEnquirySingleStayOptions(listings, listingFiltersById, conflictRangesByListingId, arrivalDate, departureDate, guestCount, discountPct) {
+  const nights = Math.max(0, differenceInDaysBetweenDateKeys(arrivalDate, departureDate));
+  if (nights <= 0) {
+    return [];
+  }
+
+  const options = (Array.isArray(listings) ? listings : []).flatMap((listing) => {
+    const listingId = Number(listing && listing.id || 0);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+      return [];
+    }
+    const maxGuests = Number(listing && listing.max_guests || 0);
+    if (Number.isInteger(maxGuests) && maxGuests > 0 && guestCount > maxGuests) {
+      return [];
+    }
+    const conflictRanges = conflictRangesByListingId.get(listingId) || [];
+    if (!isReservationEnquiryRangeAvailable(conflictRanges, arrivalDate, departureDate)) {
+      return [];
+    }
+
+    const filter = listingFiltersById.get(listingId) || {};
+    const segmentPrice = calculateReservationEnquiryListingPrice(listing, nights, guestCount);
+    const segment = {
+      listingId,
+      propertyName: String(listing.property_name || ''),
+      listingName: String(listing.name || ''),
+      listingUrl: String(filter.listingUrl || ''),
+      arrivalDate,
+      departureDate,
+      nights,
+      price: segmentPrice
+    };
+
+    return [buildReservationEnquiryOptionFromSegments([segment], discountPct)];
+  });
+
+  return rankReservationEnquirySingleOptions(options);
+}
+
+function differenceInDaysBetweenDateKeys(startKey, endKey) {
+  const start = new Date(startKey + 'T00:00:00Z');
+  const end = new Date(endKey + 'T00:00:00Z');
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+    return 0;
+  }
+  return Math.round((end.getTime() - start.getTime()) / 86400000);
+}
+
+function buildReservationEnquirySplitStayOptions(listings, listingFiltersById, conflictRangesByListingId, arrivalDate, departureDate, guestCount, discountPct) {
+  const listingMap = new Map((Array.isArray(listings) ? listings : []).map((listing) => [Number(listing.id), listing]));
+  const options = [];
+  const seen = new Set();
+  const maxSegments = Math.min(4, Math.max(2, listingMap.size));
+
+  function walk(currentArrivalDate, segments, usedListingIds) {
+    if (currentArrivalDate >= departureDate) {
+      if (segments.length > 1) {
+        const option = buildReservationEnquiryOptionFromSegments(segments, discountPct);
+        if (!seen.has(option.key)) {
+          seen.add(option.key);
+          options.push(option);
+        }
+      }
+      return;
+    }
+
+    if (segments.length >= maxSegments) {
+      return;
+    }
+
+    listingMap.forEach((listing, listingId) => {
+      const maxGuests = Number(listing && listing.max_guests || 0);
+      if (Number.isInteger(maxGuests) && maxGuests > 0 && guestCount > maxGuests) {
+        return;
+      }
+      const conflictRanges = conflictRangesByListingId.get(listingId) || [];
+      const maxCheckout = getReservationEnquiryMaxContinuousCheckout(conflictRanges, currentArrivalDate, departureDate);
+      if (!maxCheckout || maxCheckout <= currentArrivalDate) {
+        return;
+      }
+
+      let cursorDate = maxCheckout;
+      while (cursorDate > currentArrivalDate) {
+        const nights = differenceInDaysBetweenDateKeys(currentArrivalDate, cursorDate);
+        if (nights > 0) {
+          const filter = listingFiltersById.get(listingId) || {};
+          const nextSegment = {
+            listingId,
+            propertyName: String(listing.property_name || ''),
+            listingName: String(listing.name || ''),
+            listingUrl: String(filter.listingUrl || ''),
+            arrivalDate: currentArrivalDate,
+            departureDate: cursorDate,
+            nights,
+            price: calculateReservationEnquiryListingPrice(listing, nights, guestCount)
+          };
+
+          walk(cursorDate, segments.concat(nextSegment), usedListingIds.concat(listingId));
+        }
+
+        cursorDate = addDaysToDateKey(cursorDate, -1);
+        if (!cursorDate) {
+          break;
+        }
+      }
+    });
+  }
+
+  walk(arrivalDate, [], []);
+
+  return rankSplitStayOptions(options.map((option) => ({
+    ...option,
+    totalPrice: option.totalPrice,
+    segments: option.segments.map((segment) => ({
+      listingId: segment.listingId,
+      nights: segment.nights
+    }))
+  })), null).map((rankedOption) => {
+    return options.find((option) => option.key === rankedOption.key) || rankedOption;
+  }).filter((option) => option && option.key);
+}
+
+async function getActiveReservationEnquiryLandingPageBySlug(slug) {
+  const normalisedSlug = normaliseLandingPageSlug(slug);
+  if (!normalisedSlug) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `
+      SELECT relp.id,
+             relp.user_id,
+             relp.client_account_id,
+             relp.name,
+             relp.public_slug,
+             relp.preferred_listing_id,
+             relp.description_html,
+             relp.notes_html,
+             relp.listing_filters_json,
+             relp.percentage_discount,
+             relp.payment_method,
+             relp.is_active,
+             relp.created_at,
+             relp.updated_at,
+             l.name AS preferred_listing_name
+      FROM reservation_enquiry_landing_pages relp
+      LEFT JOIN listings l ON l.id = relp.preferred_listing_id
+      WHERE relp.public_slug = $1
+        AND relp.is_active = TRUE
+      LIMIT 1
+    `,
+    [normalisedSlug]
+  );
+
+  return result.rows[0] ? mapReservationEnquiryLandingPageRow(result.rows[0]) : null;
+}
+
+async function getPublicReservationEnquiryListingsForLandingPage(landingPage) {
+  const filters = Array.isArray(landingPage && landingPage.listing_filters) ? landingPage.listing_filters : [];
+  const listingIds = filters.map((item) => Number(item && item.listingId)).filter((id) => Number.isInteger(id) && id > 0);
+  if (!listingIds.length) {
+    return [];
+  }
+
+  const listings = await getListingsForUser(Number(landingPage.user_id || 0));
+  const filterMap = new Map(filters.map((item) => [Number(item.listingId), item]));
+  return listings
+    .filter((listing) => filterMap.has(Number(listing.id)))
+    .map((listing) => ({
+      ...listing,
+      listing_url: String((filterMap.get(Number(listing.id)) || {}).listingUrl || '')
+    }))
+    .sort((left, right) => {
+      const propertySort = String(left.property_name || '').localeCompare(String(right.property_name || ''));
+      if (propertySort !== 0) {
+        return propertySort;
+      }
+      return String(left.name || '').localeCompare(String(right.name || ''));
+    });
+}
+
+async function buildPublicReservationEnquiryCalendarData(landingPage) {
+  const listings = await getPublicReservationEnquiryListingsForLandingPage(landingPage);
+  const listingCalendars = await Promise.all(listings.map(async (listing) => {
+    const events = await getReservationEventsForListing(Number(listing.id));
+    return {
+      listingId: Number(listing.id),
+      propertyName: String(listing.property_name || ''),
+      listingName: String(listing.name || ''),
+      listingUrl: String(listing.listing_url || ''),
+      events: appendAvailabilityPolicyBlockEvents(listing, events).map((event) => ({
+        start: event && event.start ? String(event.start) : '',
+        end: event && event.end ? String(event.end) : '',
+        title: event && event.title ? String(event.title) : '',
+        isReservation: event && event.isReservation !== false,
+        isUnavailableBlock: event && event.isUnavailableBlock === true
+      }))
+    };
+  }));
+
+  return listingCalendars;
+}
+
+async function buildPublicReservationEnquiryAvailability(landingPage, arrivalDate, departureDate, guestCount) {
+  const listings = await getPublicReservationEnquiryListingsForLandingPage(landingPage);
+  const listingFiltersById = new Map((Array.isArray(landingPage.listing_filters) ? landingPage.listing_filters : []).map((row) => [Number(row.listingId), row]));
+  const conflictRangesByListingId = new Map();
+
+  await Promise.all(listings.map(async (listing) => {
+    const events = await getReservationEventsForListing(Number(listing.id));
+    conflictRangesByListingId.set(Number(listing.id), getListingConflictRangesForReservationEnquiry(listing, events));
+  }));
+
+  const singleOptions = buildReservationEnquirySingleStayOptions(
+    listings,
+    listingFiltersById,
+    conflictRangesByListingId,
+    arrivalDate,
+    departureDate,
+    guestCount,
+    landingPage.percentage_discount
+  );
+
+  const splitOptions = singleOptions.length
+    ? []
+    : buildReservationEnquirySplitStayOptions(
+        listings,
+        listingFiltersById,
+        conflictRangesByListingId,
+        arrivalDate,
+        departureDate,
+        guestCount,
+        landingPage.percentage_discount
+      );
+
+  return {
+    paymentMethod: String(landingPage.payment_method || ''),
+    discountPct: Number(landingPage.percentage_discount || 0),
+    options: singleOptions.length ? singleOptions : splitOptions
+  };
+}
+
+async function getReservationActivityRowsByPaymentIntentId(paymentIntentId) {
+  const id = String(paymentIntentId || '').trim();
+  if (!id) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `
+      SELECT id,
+             user_id,
+             client_account_id,
+             listing_id,
+             reservation_identifier,
+             reservation_checkin_date::text AS reservation_checkin_date,
+             reservation_checkout_date::text AS reservation_checkout_date,
+             first_name,
+             family_name,
+             email_address,
+             guest_count,
+             reservation_amount,
+             hold_until_at,
+             payment_method,
+             payment_due_at,
+             status,
+             payment_provider,
+             payment_intent_id,
+             payment_status,
+             payment_currency,
+             payment_amount_minor,
+             payment_last_error,
+             notes,
+             created_at,
+             updated_at
+      FROM reservation_activity
+      WHERE payment_intent_id = $1
+      ORDER BY id ASC
+    `,
+    [id]
+  );
+
+  return result.rows;
+}
+
+async function updateReservationActivityPaymentById(id, nextState) {
+  const reservationId = Number(id || 0);
+  if (!Number.isInteger(reservationId) || reservationId <= 0) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `
+      UPDATE reservation_activity
+      SET payment_provider = COALESCE($2, payment_provider),
+          payment_intent_id = COALESCE($3, payment_intent_id),
+          payment_status = COALESCE($4, payment_status),
+          payment_currency = COALESCE($5, payment_currency),
+          payment_amount_minor = COALESCE($6, payment_amount_minor),
+          payment_last_error = COALESCE($7, payment_last_error),
+          status = COALESCE($8, status),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING id,
+                user_id,
+                client_account_id,
+                listing_id,
+                reservation_identifier,
+                reservation_checkin_date::text AS reservation_checkin_date,
+                reservation_checkout_date::text AS reservation_checkout_date,
+                first_name,
+                family_name,
+                email_address,
+                guest_count,
+                reservation_amount,
+                hold_until_at,
+                payment_method,
+                payment_due_at,
+                status,
+                payment_provider,
+                payment_intent_id,
+                payment_status,
+                payment_currency,
+                payment_amount_minor,
+                payment_last_error,
+                notes,
+                created_at,
+                updated_at
+    `,
+    [
+      reservationId,
+      nextState && nextState.paymentProvider !== undefined ? String(nextState.paymentProvider || '') : null,
+      nextState && nextState.paymentIntentId !== undefined ? String(nextState.paymentIntentId || '') : null,
+      nextState && nextState.paymentStatus !== undefined ? String(nextState.paymentStatus || '') : null,
+      nextState && nextState.paymentCurrency !== undefined ? String(nextState.paymentCurrency || '') : null,
+      nextState && Number.isInteger(nextState.paymentAmountMinor) ? Number(nextState.paymentAmountMinor) : null,
+      nextState && nextState.paymentLastError !== undefined ? String(nextState.paymentLastError || '') : null,
+      nextState && nextState.status !== undefined ? String(nextState.status || '') : null
+    ]
+  );
+
+  return result.rows[0] || null;
 }
 
 function normaliseSharedResourceReservationEmail(value) {
@@ -10215,6 +10729,54 @@ app.post('/api/stripe/webhook', async (req, res) => {
           } else {
             await updateSharedResourceReservationPaymentById(reservation.id, commonUpdate);
           }
+        } else {
+          const reservationRows = await getReservationActivityRowsByPaymentIntentId(paymentIntentId);
+          if (reservationRows.length) {
+            const commonUpdate = {
+              paymentProvider: 'stripe',
+              paymentIntentId,
+              paymentStatus: String(paymentIntent.status || '').toLowerCase(),
+              paymentCurrency: String(paymentIntent.currency || 'gbp').toLowerCase(),
+              paymentAmountMinor: Number.isInteger(paymentIntent.amount_received)
+                ? paymentIntent.amount_received
+                : (Number.isInteger(paymentIntent.amount) ? paymentIntent.amount : null),
+              paymentLastError: paymentIntent.last_payment_error && paymentIntent.last_payment_error.message
+                ? String(paymentIntent.last_payment_error.message)
+                : ''
+            };
+
+            if (event.type === 'payment_intent.succeeded') {
+              await Promise.all(reservationRows.map((row) => updateReservationActivityPaymentById(row.id, {
+                ...commonUpdate,
+                status: 'confirmed'
+              })));
+
+              const firstReservation = reservationRows[0] || null;
+              if (firstReservation) {
+                await ensureGuestSiteUserForClientAccount({
+                  clientAccountId: firstReservation.client_account_id,
+                  ownerUserId: firstReservation.user_id,
+                  firstName: firstReservation.first_name,
+                  familyName: firstReservation.family_name,
+                  email: firstReservation.email_address,
+                  sourceType: 'private_reservation',
+                  sourceId: String(firstReservation.id)
+                });
+              }
+            } else if (event.type === 'payment_intent.payment_failed') {
+              await Promise.all(reservationRows.map((row) => updateReservationActivityPaymentById(row.id, {
+                ...commonUpdate,
+                status: 'awaiting_online_payment'
+              })));
+            } else if (event.type === 'payment_intent.canceled') {
+              await Promise.all(reservationRows.map((row) => updateReservationActivityPaymentById(row.id, {
+                ...commonUpdate,
+                status: 'cancelled'
+              })));
+            } else {
+              await Promise.all(reservationRows.map((row) => updateReservationActivityPaymentById(row.id, commonUpdate)));
+            }
+          }
         }
       }
     }
@@ -10606,6 +11168,359 @@ app.delete('/api/reservation-enquiry-landing-pages/:id', requireScopedRole('Mana
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: 'Failed to delete reservation enquiry landing page.' });
+  }
+});
+
+// GET /api/public/reservation-enquiry-landing-pages/:slug — public landing page configuration + calendar data
+app.get('/api/public/reservation-enquiry-landing-pages/:slug', async (req, res) => {
+  try {
+    const landingPage = await getActiveReservationEnquiryLandingPageBySlug(req.params.slug);
+    if (!landingPage) {
+      return res.status(404).json({ error: 'Reservation enquiry landing page not found.' });
+    }
+
+    const listingCalendars = await buildPublicReservationEnquiryCalendarData(landingPage);
+    const baseUrl = getPreferredAppBaseUrl(req) || '';
+    const publicUrl = (baseUrl ? baseUrl : '') + '/reservation-enquiry.html?landingPage=' + encodeURIComponent(String(landingPage.public_slug || ''));
+    const termsUrl = (baseUrl ? baseUrl : '') + '/guest-terms-and-conditions.html';
+
+    return res.json({
+      landingPage: {
+        id: landingPage.id,
+        title: landingPage.name,
+        description_html: landingPage.description_html,
+        notes_html: landingPage.notes_html,
+        public_slug: landingPage.public_slug,
+        payment_method: landingPage.payment_method,
+        percentage_discount: Number(landingPage.percentage_discount || 0),
+        show_discount_column: Number(landingPage.percentage_discount || 0) > 0,
+        public_url: publicUrl,
+        terms_url: termsUrl,
+        listing_calendars: listingCalendars
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to load reservation enquiry landing page.' });
+  }
+});
+
+// POST /api/public/reservation-enquiry-landing-pages/:slug/check-availability — public availability + pricing search
+app.post('/api/public/reservation-enquiry-landing-pages/:slug/check-availability', async (req, res) => {
+  const arrivalDate = normaliseDateKey(req.body.arrivalDate);
+  const departureDate = normaliseDateKey(req.body.departureDate);
+  const guestCount = normaliseOptionalPositiveInteger(req.body.guestCount);
+
+  if (!arrivalDate || !departureDate || departureDate <= arrivalDate) {
+    return res.status(400).json({ error: 'Requested Arrival Date and Requested Departure Date are required.' });
+  }
+  if (!Number.isInteger(guestCount) || guestCount <= 0 || guestCount > 50) {
+    return res.status(400).json({ error: 'Number of Guests is required.' });
+  }
+
+  try {
+    const landingPage = await getActiveReservationEnquiryLandingPageBySlug(req.params.slug);
+    if (!landingPage) {
+      return res.status(404).json({ error: 'Reservation enquiry landing page not found.' });
+    }
+
+    const availability = await buildPublicReservationEnquiryAvailability(landingPage, arrivalDate, departureDate, guestCount);
+    return res.json({
+      paymentMethod: availability.paymentMethod,
+      discountPct: availability.discountPct,
+      options: availability.options || []
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to check availability.' });
+  }
+});
+
+// POST /api/public/reservation-enquiry-landing-pages/:slug/bank-transfer-submit — create public bank transfer reservation enquiry records
+app.post('/api/public/reservation-enquiry-landing-pages/:slug/bank-transfer-submit', async (req, res) => {
+  const arrivalDate = normaliseDateKey(req.body.arrivalDate);
+  const departureDate = normaliseDateKey(req.body.departureDate);
+  const guestCount = normaliseOptionalPositiveInteger(req.body.guestCount);
+  const optionKey = String(req.body.optionKey || '').trim();
+  const firstName = normaliseSharedResourceReservationText(req.body.firstName, 120);
+  const familyName = normaliseSharedResourceReservationText(req.body.familyName, 120);
+  const emailAddress = normaliseSharedResourceReservationEmail(req.body.emailAddress);
+  const telephone = normaliseSharedResourceReservationText(req.body.telephone, 60);
+
+  if (!arrivalDate || !departureDate || departureDate <= arrivalDate) {
+    return res.status(400).json({ error: 'Requested Arrival Date and Requested Departure Date are required.' });
+  }
+  if (!Number.isInteger(guestCount) || guestCount <= 0 || guestCount > 50) {
+    return res.status(400).json({ error: 'Number of Guests is required.' });
+  }
+  if (!optionKey) {
+    return res.status(400).json({ error: 'Exactly one reservation option must be selected.' });
+  }
+  if (!firstName || !familyName || !emailAddress || !telephone) {
+    return res.status(400).json({ error: 'First name, family name, email address and telephone are required.' });
+  }
+
+  try {
+    const landingPage = await getActiveReservationEnquiryLandingPageBySlug(req.params.slug);
+    if (!landingPage) {
+      return res.status(404).json({ error: 'Reservation enquiry landing page not found.' });
+    }
+    if (String(landingPage.payment_method || '') !== 'bank_transfer') {
+      return res.status(400).json({ error: 'This landing page is not configured for bank transfer.' });
+    }
+
+    const availability = await buildPublicReservationEnquiryAvailability(landingPage, arrivalDate, departureDate, guestCount);
+    const selectedOption = (availability.options || []).find((option) => String(option.key || '') === optionKey) || null;
+    if (!selectedOption) {
+      return res.status(409).json({ error: 'The selected reservation option is no longer available.' });
+    }
+
+    const bankResult = await pool.query(
+      'SELECT bank_account_name, bank_sort_code, bank_account_number, bank_is_business, bank_iban, bank_bic FROM client_accounts WHERE id = $1 LIMIT 1',
+      [landingPage.client_account_id]
+    );
+    const bankRow = bankResult.rows[0] || {};
+    const bankAccountName = String(bankRow.bank_account_name || '').trim();
+    const bankSortCode = String(bankRow.bank_sort_code || '').trim();
+    const bankAccountNumber = String(bankRow.bank_account_number || '').trim();
+    const bankIban = String(bankRow.bank_iban || '').trim();
+    const bankBic = String(bankRow.bank_bic || '').trim();
+    const bankType = bankRow.bank_is_business === true ? 'Business' : 'Personal';
+    if (!bankAccountName || !bankSortCode || !bankAccountNumber || !bankIban || !bankBic) {
+      return res.status(400).json({ error: 'Bank transfer details must include account name, sort code, account number, IBAN, and BIC.' });
+    }
+
+    const holdUntilAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const reservationRows = [];
+    for (const segment of (selectedOption.segments || [])) {
+      const reservationIdentifier = await generateGlobalReservationIdentifier('private_reservation');
+      const listing = await getListingByIdForUser(Number(segment.listingId), Number(landingPage.user_id || 0));
+      if (!listing) {
+        return res.status(404).json({ error: 'One of the selected listings could not be found.' });
+      }
+
+      const reservation = await createReservationActivityForListing({
+        userId: Number(landingPage.user_id || 0),
+        clientAccountId: Number(landingPage.client_account_id || 0),
+        listingId: Number(segment.listingId),
+        reservationIdentifier,
+        checkinDate: segment.arrivalDate,
+        checkoutDate: segment.departureDate,
+        firstName,
+        familyName,
+        emailAddress,
+        guestCount,
+        reservationAmount: Number(segment.discountedPrice || segment.price || 0),
+        holdUntilAt,
+        paymentMethod: 'Bank Transfer',
+        paymentDueAt: holdUntilAt,
+        status: 'awaiting_bank_transfer',
+        notes: 'Reservation enquiry landing page: ' + String(landingPage.public_slug || '')
+      });
+
+      reservationRows.push({ reservation, segment, listing });
+    }
+
+    const totalAmount = Number(availability.discountPct || 0) > 0
+      ? Number(selectedOption.discountedTotalPrice || 0)
+      : Number(selectedOption.totalPrice || 0);
+    const baseUrl = getPreferredAppBaseUrl(req) || '';
+    const termsUrl = (baseUrl ? baseUrl : '') + '/guest-terms-and-conditions.html';
+    const textLines = [
+      'Payment Request For Accommodation',
+      '',
+      'Guest: ' + firstName + ' ' + familyName,
+      'Number of guests: ' + String(guestCount),
+      'Amount payable: ' + totalAmount.toFixed(2),
+      'Payment due by: ' + formatDateTimeForMessage(holdUntilAt),
+      '',
+      'Stay details:'
+    ];
+
+    reservationRows.forEach((row) => {
+      textLines.push(
+        '- ' + String(row.listing.property_name || '').trim() + ' / ' + String(row.listing.name || '').trim()
+        + ' | ' + String(row.segment.arrivalDate || '') + ' to ' + String(row.segment.departureDate || '')
+        + ' | Amount: ' + Number(row.segment.discountedPrice || row.segment.price || 0).toFixed(2)
+      );
+    });
+
+    textLines.push(
+      '',
+      'Bank details:',
+      'Account name: ' + bankAccountName,
+      'Sort code: ' + bankSortCode,
+      'Account number: ' + bankAccountNumber,
+      'IBAN: ' + bankIban,
+      'BIC: ' + bankBic,
+      'Account type: ' + bankType,
+      '',
+      'By making payment you as The Guest are accepting the terms of The Host for The Reservation as stated in this email.',
+      'Terms and Conditions: ' + termsUrl
+    );
+
+    let emailDeliveryWarning = false;
+    let emailDeliveryReason = '';
+    const emailResult = await sendAppEmail({
+      to: emailAddress,
+      subject: 'Payment Request For Accommodation',
+      textBody: textLines.join('\n')
+    });
+    if (!emailResult.ok && !String(emailResult.error || '').includes('not configured')) {
+      return res.status(502).json({ error: emailResult.error || 'Failed to send payment request email.' });
+    }
+    if (!emailResult.ok) {
+      emailDeliveryWarning = true;
+      emailDeliveryReason = String(emailResult.error || '').trim();
+    }
+
+    return res.status(201).json({
+      message: 'Payment request sent and reservation enquiry logged.',
+      reservationIdentifiers: reservationRows.map((row) => String(row.reservation && row.reservation.reservation_identifier || '')).filter(Boolean),
+      emailDeliveryWarning,
+      emailDeliveryReason
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to submit bank transfer reservation enquiry.' });
+  }
+});
+
+// POST /api/public/reservation-enquiry-landing-pages/:slug/online-payment/prepare — create public online payment reservation enquiry records + payment intent
+app.post('/api/public/reservation-enquiry-landing-pages/:slug/online-payment/prepare', async (req, res) => {
+  if (!stripeClient || !STRIPE_PUBLISHABLE_KEY) {
+    return res.status(503).json({ error: 'Stripe is not configured on the server.' });
+  }
+
+  const arrivalDate = normaliseDateKey(req.body.arrivalDate);
+  const departureDate = normaliseDateKey(req.body.departureDate);
+  const guestCount = normaliseOptionalPositiveInteger(req.body.guestCount);
+  const optionKey = String(req.body.optionKey || '').trim();
+  const firstName = normaliseSharedResourceReservationText(req.body.firstName, 120);
+  const familyName = normaliseSharedResourceReservationText(req.body.familyName, 120);
+  const emailAddress = normaliseSharedResourceReservationEmail(req.body.emailAddress);
+  const telephone = normaliseSharedResourceReservationText(req.body.telephone, 60);
+
+  if (!arrivalDate || !departureDate || departureDate <= arrivalDate) {
+    return res.status(400).json({ error: 'Requested Arrival Date and Requested Departure Date are required.' });
+  }
+  if (!Number.isInteger(guestCount) || guestCount <= 0 || guestCount > 50) {
+    return res.status(400).json({ error: 'Number of Guests is required.' });
+  }
+  if (!optionKey) {
+    return res.status(400).json({ error: 'Exactly one reservation option must be selected.' });
+  }
+  if (!firstName || !familyName || !emailAddress || !telephone) {
+    return res.status(400).json({ error: 'First name, family name, email address and telephone are required.' });
+  }
+
+  try {
+    const landingPage = await getActiveReservationEnquiryLandingPageBySlug(req.params.slug);
+    if (!landingPage) {
+      return res.status(404).json({ error: 'Reservation enquiry landing page not found.' });
+    }
+    if (String(landingPage.payment_method || '') !== 'online') {
+      return res.status(400).json({ error: 'This landing page is not configured for online payment.' });
+    }
+
+    const hostUser = await getUserById(Number(landingPage.user_id || 0));
+    if (!hostUser || !hostUser.stripe_account_id) {
+      return res.status(400).json({ error: 'Host Stripe account is not connected yet.' });
+    }
+    if (!isOnlinePaymentAvailableForHostUser(hostUser)) {
+      return res.status(400).json({ error: 'Host online payment is currently unavailable.' });
+    }
+
+    const availability = await buildPublicReservationEnquiryAvailability(landingPage, arrivalDate, departureDate, guestCount);
+    const selectedOption = (availability.options || []).find((option) => String(option.key || '') === optionKey) || null;
+    if (!selectedOption) {
+      return res.status(409).json({ error: 'The selected reservation option is no longer available.' });
+    }
+
+    const stripeAccount = await stripeClient.accounts.retrieve(String(hostUser.stripe_account_id));
+    await setUserStripeConnectState(hostUser.id, {
+      stripe_account_id: stripeAccount.id,
+      stripe_onboarding_complete: stripeAccount.details_submitted === true,
+      stripe_charges_enabled: stripeAccount.charges_enabled === true,
+      stripe_payouts_enabled: stripeAccount.payouts_enabled === true
+    });
+    if (stripeAccount.charges_enabled !== true || stripeAccount.payouts_enabled !== true) {
+      return res.status(400).json({ error: 'Host Stripe account onboarding is incomplete.' });
+    }
+
+    const payableAmount = Number(availability.discountPct || 0) > 0
+      ? Number(selectedOption.discountedTotalPrice || 0)
+      : Number(selectedOption.totalPrice || 0);
+    if (!Number.isFinite(payableAmount) || payableAmount <= 0) {
+      return res.status(400).json({ error: 'A valid reservation amount is required for online payment.' });
+    }
+
+    const holdUntilAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const reservationRows = [];
+    for (const segment of (selectedOption.segments || [])) {
+      const reservationIdentifier = await generateGlobalReservationIdentifier('private_reservation');
+      const reservation = await createReservationActivityForListing({
+        userId: Number(landingPage.user_id || 0),
+        clientAccountId: Number(landingPage.client_account_id || 0),
+        listingId: Number(segment.listingId),
+        reservationIdentifier,
+        checkinDate: segment.arrivalDate,
+        checkoutDate: segment.departureDate,
+        firstName,
+        familyName,
+        emailAddress,
+        guestCount,
+        reservationAmount: Number(segment.discountedPrice || segment.price || 0),
+        holdUntilAt,
+        paymentMethod: 'Online Payment',
+        paymentDueAt: holdUntilAt,
+        status: 'awaiting_online_payment',
+        notes: 'Reservation enquiry landing page: ' + String(landingPage.public_slug || '')
+      });
+      reservationRows.push(reservation);
+    }
+
+    const paymentIntent = await stripeClient.paymentIntents.create(
+      {
+        amount: toMinorUnits(payableAmount),
+        currency: 'gbp',
+        automatic_payment_methods: { enabled: true },
+        transfer_data: {
+          destination: String(stripeAccount.id)
+        },
+        metadata: {
+          reservation_type: 'reservation_enquiry_landing_page',
+          landing_page_slug: String(landingPage.public_slug || ''),
+          host_user_id: String(landingPage.user_id || ''),
+          first_reservation_id: String(reservationRows[0] && reservationRows[0].id || ''),
+          first_reservation_identifier: String(reservationRows[0] && reservationRows[0].reservation_identifier || '')
+        },
+        receipt_email: emailAddress
+      },
+      {
+        idempotencyKey: 'reservation-enquiry-' + String((reservationRows[0] && reservationRows[0].reservation_identifier) || Date.now())
+      }
+    );
+
+    await Promise.all(reservationRows.map((reservation) => updateReservationActivityPaymentById(reservation.id, {
+      paymentProvider: 'stripe',
+      paymentIntentId: paymentIntent.id,
+      paymentStatus: String(paymentIntent.status || '').toLowerCase(),
+      paymentCurrency: String(paymentIntent.currency || 'gbp').toLowerCase(),
+      paymentAmountMinor: Number.isInteger(paymentIntent.amount) ? paymentIntent.amount : toMinorUnits(payableAmount),
+      paymentLastError: ''
+    })));
+
+    return res.status(201).json({
+      publishableKey: STRIPE_PUBLISHABLE_KEY,
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+      reservationIdentifiers: reservationRows.map((row) => String(row && row.reservation_identifier || '')).filter(Boolean),
+      payableAmount
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Failed to prepare online payment.' });
   }
 });
 

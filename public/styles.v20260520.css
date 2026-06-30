@@ -1166,6 +1166,209 @@ textarea:focus {
   -webkit-appearance: checkbox;
 }
 
+.reservation-enquiry-page {
+  background: linear-gradient(180deg, #f5f8ff 0%, #eef3fb 100%);
+  min-height: 100vh;
+}
+
+.reservation-enquiry-card {
+  margin-top: 1.6rem;
+}
+
+.reservation-enquiry-description,
+.reservation-enquiry-notes,
+.reservation-enquiry-payment-notes {
+  color: #243557;
+  line-height: 1.55;
+}
+
+.reservation-enquiry-month-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  margin-bottom: 0.85rem;
+}
+
+.reservation-enquiry-month-label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #17346f;
+}
+
+.reservation-enquiry-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 0.9rem;
+}
+
+.reservation-enquiry-calendar-card {
+  border: 1px solid #dce5f7;
+  border-radius: 14px;
+  background: #fff;
+  padding: 0.8rem;
+  box-shadow: 0 6px 18px rgba(18, 33, 70, 0.05);
+}
+
+.reservation-enquiry-calendar-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #17346f;
+}
+
+.reservation-enquiry-calendar-subtitle {
+  margin: 0.15rem 0 0.65rem;
+  font-size: 0.82rem;
+  color: #5d6c8f;
+}
+
+.reservation-enquiry-weekdays,
+.reservation-enquiry-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.28rem;
+}
+
+.reservation-enquiry-weekdays span {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #62749b;
+}
+
+.reservation-enquiry-day {
+  min-height: 2.2rem;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.reservation-enquiry-day.is-blank {
+  background: transparent;
+}
+
+.reservation-enquiry-day.is-available {
+  background: #d9f6df;
+  color: #166534;
+  border-color: #b8e7c3;
+}
+
+.reservation-enquiry-day.is-unavailable {
+  background: #f4f6fb;
+  color: #98a2bb;
+  border-color: #e4e8f1;
+}
+
+.reservation-enquiry-day.is-past {
+  opacity: 0.65;
+}
+
+.reservation-enquiry-request-grid,
+.reservation-enquiry-guest-grid {
+  display: grid;
+  grid-template-columns: minmax(130px, 170px) minmax(0, 1fr);
+  gap: 0.7rem 0.85rem;
+  align-items: center;
+}
+
+.reservation-enquiry-request-grid label,
+.reservation-enquiry-guest-grid label {
+  width: auto;
+}
+
+.reservation-enquiry-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin-top: 0.95rem;
+}
+
+.reservation-enquiry-results-table th,
+.reservation-enquiry-results-table td {
+  vertical-align: top;
+}
+
+.reservation-enquiry-option-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  white-space: normal;
+}
+
+.reservation-enquiry-option-line {
+  font-size: 0.84rem;
+  color: #30415f;
+}
+
+.reservation-enquiry-view-btn {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.reservation-enquiry-view-btn::before {
+  content: '👁';
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.reservation-enquiry-option-select {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.reservation-enquiry-footer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.reservation-enquiry-selection-summary {
+  font-size: 0.82rem;
+  color: #60708f;
+}
+
+.reservation-enquiry-detail-list {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(0, 1fr);
+  gap: 0.55rem 0.85rem;
+}
+
+.reservation-enquiry-detail-list dt {
+  font-weight: 700;
+  color: #17346f;
+}
+
+.reservation-enquiry-detail-list dd {
+  margin: 0;
+  color: #30415f;
+}
+
+@media (max-width: 720px) {
+  .reservation-enquiry-request-grid,
+  .reservation-enquiry-guest-grid,
+  .reservation-enquiry-detail-list {
+    grid-template-columns: 1fr;
+  }
+
+  .reservation-enquiry-month-header {
+    flex-wrap: wrap;
+  }
+}
+
 .config-item-empty {
   padding: 0.52rem 0.56rem;
   color: #5e6a86;

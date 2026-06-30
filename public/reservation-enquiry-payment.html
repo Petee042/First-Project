@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reservation Enquiry Payment - AutomaticPeople</title>
+  <link rel="stylesheet" href="styles.v20260520.css" />
+</head>
+<body class="reservation-enquiry-page">
+  <main class="dashboard">
+    <div class="card-container wide public-booking-card reservation-enquiry-card">
+      <div class="feed-actions back-row" style="margin-bottom: 0.7rem;">
+        <button type="button" id="reservationEnquiryPaymentBackBtn" class="back-arrow-control" aria-label="Back"></button>
+      </div>
+      <h2 id="reservationEnquiryPaymentTitle">Reservation Enquiry</h2>
+      <p id="reservationEnquiryPaymentMessage" class="message"></p>
+
+      <section class="listing-form-section">
+        <h3>Reservation Details</h3>
+        <dl class="reservation-enquiry-detail-list">
+          <dt>Stay</dt>
+          <dd id="reservationEnquiryPaymentStay">-</dd>
+          <dt>Guests</dt>
+          <dd id="reservationEnquiryPaymentGuests">-</dd>
+          <dt>Selected Option</dt>
+          <dd id="reservationEnquiryPaymentOption">-</dd>
+          <dt>Amount Payable</dt>
+          <dd id="reservationEnquiryPaymentAmount">-</dd>
+          <dt>Payment</dt>
+          <dd id="reservationEnquiryPaymentMethod">-</dd>
+        </dl>
+      </section>
+
+      <section id="reservationEnquiryPaymentNotesSection" class="listing-form-section hidden">
+        <h3>Information</h3>
+        <div id="reservationEnquiryPaymentNotes" class="reservation-enquiry-payment-notes"></div>
+      </section>
+
+      <section class="listing-form-section">
+        <h3>Guest Details</h3>
+        <div class="reservation-enquiry-guest-grid">
+          <label for="reservationEnquiryGuestFirstName">First name</label>
+          <input id="reservationEnquiryGuestFirstName" type="text" maxlength="120" autocomplete="given-name" required />
+
+          <label for="reservationEnquiryGuestFamilyName">Family name</label>
+          <input id="reservationEnquiryGuestFamilyName" type="text" maxlength="120" autocomplete="family-name" required />
+
+          <label for="reservationEnquiryGuestEmailAddress">Email address</label>
+          <input id="reservationEnquiryGuestEmailAddress" type="email" maxlength="254" autocomplete="email" required />
+
+          <label for="reservationEnquiryGuestTelephone">Telephone</label>
+          <input id="reservationEnquiryGuestTelephone" type="tel" maxlength="60" autocomplete="tel" required />
+        </div>
+      </section>
+
+      <section id="reservationEnquiryStripeSection" class="listing-form-section hidden">
+        <h3>Card Payment</h3>
+        <p class="public-booking-placeholder">Enter card details, then click Pay and Confirm Reservation.</p>
+        <div id="reservationEnquiryStripePaymentElement"></div>
+      </section>
+
+      <div class="feed-actions">
+        <button type="button" id="reservationEnquiryPaymentSubmitBtn" class="btn primary">Confirm Reservation</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="https://js.stripe.com/v3/"></script>
+  <script src="reservation-enquiry-payment.js"></script>
+</body>
+</html>

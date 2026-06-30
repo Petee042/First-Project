@@ -423,7 +423,7 @@ function buildReservationEnquiryLandingPublicUrl(row) {
   }
 
   const query = params.toString();
-  return window.location.origin + '/private-reservation.html' + (query ? ('?' + query) : '');
+  return window.location.origin + '/reservation-enquiry.html' + (query ? ('?' + query) : '');
 }
 
 function renderReservationEnquiryLandingPageRows(containerId, rows) {
