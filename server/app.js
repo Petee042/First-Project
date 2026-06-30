@@ -4928,6 +4928,8 @@ function mapReservationEnquiryLandingPageRow(row) {
   const paymentMethod = normaliseLandingPagePaymentMethod(row && row.payment_method) || 'bank_transfer';
   return {
     id: Number(row && row.id || 0),
+    user_id: Number(row && row.user_id || 0),
+    client_account_id: row && row.client_account_id ? Number(row.client_account_id) : null,
     name: String(row && row.name || ''),
     public_slug: String(row && row.public_slug || ''),
     preferred_listing_id: row && row.preferred_listing_id ? Number(row.preferred_listing_id) : null,
